@@ -1,0 +1,28 @@
+[package]
+name = "goral"
+version = "0.1.0"
+edition = "2021"
+author = "Maksim Ryndin"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+clap = { version = "4.4.6", features = ["derive"] }
+config = { version = "0.13.3", features = ["toml"] }
+google-sheets4 = "*"
+prometheus-parse = "0.2.4"
+serde = "^1.0"
+serde_derive = "^1.0"
+serde_json = "^1.0"
+serde_valid = { version = "0.16.3", features = ["toml"] }
+tokio = "^1.0"
+tokio-retry = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "json"] }
+url = { version = "2", features = ["serde"] }
+
+[dev-dependencies]
+lazy_static = "1.4.0"
+prometheus = "0.13"
