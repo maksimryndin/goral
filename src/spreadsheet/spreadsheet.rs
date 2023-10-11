@@ -1,17 +1,18 @@
 use anyhow::Result;
 use google_sheets4::api::{
-    AddSheetRequest, BasicFilter, BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse,
-    CellData, CreateDeveloperMetadataRequest, GridProperties, GridRange, Request, RowData,
-    SetBasicFilterRequest, SheetProperties, Spreadsheet, UpdateCellsRequest,
+    BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
 };
 
-use crate::spreadsheet::sheet::{sheet_headers, Header, Sheet, SheetId, SheetType, VirtualSheet};
+use crate::spreadsheet::sheet::{
+    sheet_headers, Header, Rows, Sheet, SheetId, SheetType, UpdateSheet, VirtualSheet,
+};
 use crate::spreadsheet::HyperConnector;
-use google_sheets4::{hyper, hyper_rustls, oauth2, Error, FieldMask, Sheets};
+use google_sheets4::{hyper, hyper_rustls, oauth2, Error, Sheets};
 
 use std::collections::{BTreeMap, HashSet};
 
-use std::str::FromStr;
+use crate::spreadsheet::Metadata;
+
 use std::time::Duration;
 use tokio_retry::strategy::{jitter, FibonacciBackoff};
 use tokio_retry::Retry;
@@ -89,11 +90,11 @@ impl SpreadsheetAPI {
             .param("fields", "sheets.properties(sheetId,title,hidden,index,tabColorStyle,sheetType,gridProperties),sheets.developerMetadata")
             .doit()
             .await;
-        tracing::info!("{:?}", result);
+        tracing::debug!("{:?}", result);
         Ok(handle_error!(result)?)
     }
 
-    #[instrument(skip(self, sheets))]
+    #[instrument(skip_all)]
     async fn sheets_headers(
         &self,
         spreadsheet_id: &str,
@@ -129,13 +130,22 @@ impl SpreadsheetAPI {
             .collect())
     }
 
-    #[instrument(skip(self))]
-    pub(crate) async fn sheets_managed_by_service(
+    fn calculate_usage(num_of_cells: i32) -> u8 {
+        (100.0 * (num_of_cells as f64 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f64)) as u8
+    }
+
+    fn calculate_cells(sheets: &Vec<Sheet>) -> i32 {
+        sheets
+            .iter()
+            .fold(0, |acc, s| acc + s.number_of_cells().unwrap_or(0))
+    }
+
+    #[instrument(skip_all)]
+    pub(crate) async fn sheets_filtered_by_metadata(
         &self,
         spreadsheet_id: &str,
-        service: &str,
-        host_id: &str,
-    ) -> Result<Vec<Sheet>> {
+        metadata: &Metadata,
+    ) -> Result<(Vec<Sheet>, u8, u8)> {
         let retry_strategy = FibonacciBackoff::from_millis(100)
             .max_delay(Duration::from_secs(10))
             .map(jitter);
@@ -148,12 +158,17 @@ impl SpreadsheetAPI {
             tracing::error!("{}", e);
             e
         })?;
+        let mut total_cells: i32 = 0;
         let mut sheets: Vec<Sheet> = response
             .sheets
             .expect("spreadsheet should contain sheets property even if no sheets")
             .into_iter()
             .map(|s| s.into())
-            .filter(|s: &Sheet| s.host_id == host_id && s.service == service)
+            .map(|s: Sheet| {
+                total_cells += s.number_of_cells().unwrap_or(0);
+                s
+            })
+            .filter(|s: &Sheet| s.metadata.contains(metadata))
             .collect();
 
         let mut sheets_headers = Retry::spawn(retry_strategy, || {
@@ -165,34 +180,29 @@ impl SpreadsheetAPI {
             e
         })?;
 
+        let mut filtered_cells: i32 = 0;
         // update headers for sheets
         sheets.iter_mut().for_each(|s| {
+            filtered_cells += s.number_of_cells().unwrap_or(0);
             s.headers = sheets_headers
                 .remove(&s.sheet_id)
                 .expect("managed sheet is not found")
         });
 
-        let num_of_cells = sheets
-            .iter()
-            .fold(0, |acc, s| acc + s.number_of_cells().unwrap_or(0));
-        let usage = (100.0 * (num_of_cells as f64 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f64)) as u8;
-        // TODO run sheets truncation here
-        // deleting old sheets first
-        tracing::debug!(
-            "usage for spreadsheet {} is {}% ({} cells, {} sheets)",
-            spreadsheet_id,
-            usage,
-            num_of_cells,
-            sheets.len()
-        );
-        Ok(sheets)
+        Ok((
+            sheets,
+            Self::calculate_usage(total_cells),
+            Self::calculate_usage(filtered_cells),
+        ))
     }
 
     #[instrument(skip(self, sheets))]
-    async fn _create_sheets(
+    async fn _crud_sheets(
         &self,
         spreadsheet_id: &str,
+        updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
+        data: Vec<Rows>,
     ) -> Result<BatchUpdateSpreadsheetResponse> {
         let ranges: Vec<String> = sheets
             .iter()
@@ -200,84 +210,21 @@ impl SpreadsheetAPI {
             .map(|s| s.sheet.header_range_r1c1().unwrap())
             .collect();
 
-        let mut requests = Vec::with_capacity(sheets.len() * 5);
+        let mut requests = Vec::with_capacity(sheets.len() * 5 + data.len() + updates.len());
+
+        for update in updates.into_iter() {
+            requests.append(&mut update.into_api_requests());
+        }
 
         for s in sheets.into_iter() {
-            let grid_properties = if s.sheet.sheet_type == SheetType::Grid {
-                assert!(s.sheet.column_count.unwrap() > 0);
-                Some(GridProperties {
-                    column_count: s.sheet.column_count,
-                    row_count: s.sheet.row_count,
-                    frozen_row_count: s.sheet.frozen_row_count,
-                    ..Default::default()
-                })
-            } else {
-                None
-            };
-
-            let metadata = s.generate_developer_metadata();
-
-            let range = GridRange {
-                sheet_id: Some(s.sheet.sheet_id),
-                start_row_index: Some(0),
-                end_row_index: Some(1),
-                start_column_index: Some(0),
-                end_column_index: s.sheet.column_count,
-            };
-            let filter_range = GridRange {
-                sheet_id: Some(s.sheet.sheet_id),
-                start_row_index: Some(0),
-                end_row_index: None,
-                start_column_index: Some(0),
-                end_column_index: s.sheet.column_count,
-            };
-            let header_values: Vec<CellData> =
-                s.sheet.headers.into_iter().map(|h| h.into()).collect();
-            let data = vec![RowData {
-                values: Some(header_values),
-            }];
-            requests.push(Request {
-                add_sheet: Some(AddSheetRequest {
-                    properties: Some(SheetProperties {
-                        sheet_id: Some(s.sheet.sheet_id),
-                        hidden: Some(s.sheet.hidden),
-                        sheet_type: Some(s.sheet.sheet_type.to_string()),
-                        grid_properties,
-                        title: Some(s.sheet.title),
-                        ..Default::default()
-                    }),
-                }),
-                ..Default::default()
-            });
-            requests.push(Request {
-                update_cells: Some(UpdateCellsRequest {
-                    fields: Some(
-                        FieldMask::from_str("userEnteredValue,userEnteredFormat,note").unwrap(),
-                    ),
-                    range: Some(range),
-                    rows: Some(data),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            });
-            requests.push(Request {
-                set_basic_filter: Some(SetBasicFilterRequest {
-                    filter: Some(BasicFilter {
-                        range: Some(filter_range),
-                        ..Default::default()
-                    }),
-                }),
-                ..Default::default()
-            });
-            for m in metadata {
-                requests.push(Request {
-                    create_developer_metadata: Some(CreateDeveloperMetadataRequest {
-                        developer_metadata: Some(m),
-                    }),
-                    ..Default::default()
-                })
-            }
+            requests.append(&mut s.into_api_requests())
         }
+
+        for rows in data.into_iter() {
+            requests.append(&mut rows.into_api_requests())
+        }
+
+        tracing::debug!("requests:\n{:?}", requests);
 
         let req = BatchUpdateSpreadsheetRequest {
             include_spreadsheet_in_response: Some(true),
@@ -309,24 +256,22 @@ impl SpreadsheetAPI {
     }
 
     #[instrument(skip(self, sheets))]
-    pub(crate) async fn add_sheets(
+    pub(crate) async fn crud_sheets(
         &self,
         spreadsheet_id: &str,
+        updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
+        data: Vec<Rows>,
     ) -> Result<Vec<Sheet>> {
         // We do not retry sheet creation as this call usually goes after
         // `sheets_managed_by_service` which is retriable and should either fix an error
         // or fail.
         // Retrying `add_sheets` would require cloning all sheets at every retry attempt
-        if sheets.is_empty() {
-            return Ok(vec![]);
-        }
-
         let sheet_titles_headers: HashSet<String> =
             sheets.iter().map(|s| s.sheet.title.to_string()).collect();
 
         let response = self
-            ._create_sheets(spreadsheet_id, sheets)
+            ._crud_sheets(spreadsheet_id, updates, sheets, data)
             .await
             .map_err(|e| {
                 tracing::error!("{}", e);
@@ -340,8 +285,7 @@ impl SpreadsheetAPI {
             .filter(|s| sheet_titles_headers.contains(&s.title))
             .collect();
 
-        // TODO update cache for all sheets
-        // Filter sheets
+        // Filter sheets by metadata? or ignore the result?
         Ok(sheets)
     }
 }

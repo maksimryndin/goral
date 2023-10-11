@@ -4,17 +4,20 @@ mod configuration;
 mod messenger;
 mod services;
 mod spreadsheet;
+mod storage;
 use clap::Parser;
 use configuration::Configuration;
-use messenger::get_messenger;
+use messenger::{get_messenger, BoxedMessenger};
 use services::general::GeneralService;
 use services::logs::LogsService;
 use services::metrics::MetricsService;
 use services::resources::ResourcesService;
-use services::{Service, Shared};
+use services::Service;
 use spreadsheet::{get_google_auth, SpreadsheetAPI};
 use std::collections::HashMap;
+use std::fmt::{self, Debug};
 use std::sync::Arc;
+use storage::Storage;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -118,6 +121,19 @@ fn collect_services(
     services
 }
 
+#[derive(Clone)]
+pub(crate) struct Shared<'a> {
+    pub(crate) storage: &'a Storage,
+    pub(crate) messenger: Option<Arc<BoxedMessenger>>,
+    pub(crate) host_id: &'a str,
+}
+
+impl Debug for Shared<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Shared({})", self.host_id)
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // Retrieve configuration
@@ -147,10 +163,11 @@ async fn main() {
     let auth = get_google_auth(&config.general.service_account_credentials_path).await;
 
     let sheets_api = SpreadsheetAPI::new(auth);
+    let storage = Storage::new(args.id.to_string(), sheets_api);
 
     // TODO shared channel for health events
     let shared = Shared {
-        google: &sheets_api,
+        storage: &storage,
         messenger: None,
         host_id: &args.id,
     };
@@ -158,11 +175,19 @@ async fn main() {
     // collect services and group them by messengers hosts (for proper connection pooling)
     let mut services = collect_services(config, shared.clone());
 
+    // for s in &mut services {
+    //     println!("{:?}", s.name());
+    //     s.initialize()
+    //         .await
+    //         .expect(format!("failed to initialize service `{}`", s.name()).as_str());
+    //     // TODO finish say hello for other components
+    //     // get current spreadsheet info and update cells limits and sheets
+    //     // prepare sheets and charts
+    // }
     for s in &mut services {
-        println!("{:?}", s.name());
-        s.initialize()
+        s.run(storage.create_log(s.spreadsheet_id().to_string(), s.name().to_string()))
             .await
-            .expect(format!("failed to initialize service `{}`", s.name()).as_str());
+            .expect(format!("failed to run service `{}`", s.name()).as_str());
         // TODO finish say hello for other components
         // get current spreadsheet info and update cells limits and sheets
         // prepare sheets and charts

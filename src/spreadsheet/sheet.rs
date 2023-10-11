@@ -1,15 +1,19 @@
+use crate::spreadsheet::Metadata;
 use google_sheets4::api::Sheet as GoogleSheet;
 use google_sheets4::api::{
-    CellData, CellFormat, Color, ColorStyle, DeveloperMetadata, DeveloperMetadataLocation,
-    ExtendedValue, TextFormat,
+    AddSheetRequest, AppendCellsRequest, BasicFilter, CellData, CellFormat, Color, ColorStyle,
+    CreateDeveloperMetadataRequest, DeveloperMetadata, DeveloperMetadataLocation, ExtendedValue,
+    GridProperties, GridRange, Request, RowData, SetBasicFilterRequest, SheetProperties,
+    TextFormat, UpdateCellsRequest, UpdateDeveloperMetadataRequest, UpdateSheetPropertiesRequest,
 };
+use google_sheets4::FieldMask;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hasher;
+use std::mem;
+use std::str::FromStr;
 
-pub const METADATA_SERVICE_KEY: &str = "service";
-pub const METADATA_HOSTD_ID_KEY: &str = "host";
 pub(crate) type SheetId = i32;
 
 #[derive(Debug, PartialEq)]
@@ -69,9 +73,9 @@ impl Into<CellData> for Header {
                 background_color_style: Some(ColorStyle {
                     rgb_color: Some(Color {
                         alpha: Some(0.0),
-                        red: Some(0.5),
-                        green: Some(0.5),
-                        blue: Some(0.5),
+                        red: Some(1.0),
+                        green: Some(0.8),
+                        blue: Some(0.0),
                     }),
                     ..Default::default()
                 }),
@@ -100,13 +104,11 @@ pub(crate) struct Sheet {
     pub(super) row_count: Option<i32>,
     pub(super) column_count: Option<i32>,
     pub(super) headers: Vec<Header>,
-    pub(super) service: String,
-    pub(super) host_id: String,
-    // TODO last_row_timestamp
+    pub(super) metadata: Metadata,
 }
 
 impl Sheet {
-    pub(crate) fn header_range_r1c1(&self) -> Option<String> {
+    pub(super) fn header_range_r1c1(&self) -> Option<String> {
         if self.sheet_type == SheetType::Grid {
             Some(format!(
                 "{}!R1C1:R1C{}",
@@ -125,6 +127,26 @@ impl Sheet {
             None
         }
     }
+
+    pub(crate) fn meta_value(&self, key: &str) -> Option<&String> {
+        self.metadata.get(key)
+    }
+
+    pub(crate) fn pop_meta_value(&mut self, key: &str) -> Option<String> {
+        self.metadata.0.remove(key)
+    }
+
+    pub(crate) fn headers_titles(&self) -> Vec<&str> {
+        self.headers.iter().map(|h| h.title.as_str()).collect()
+    }
+
+    pub(crate) fn sheet_id(&self) -> SheetId {
+        self.sheet_id
+    }
+
+    pub(crate) fn row_count(&self) -> Option<i32> {
+        self.row_count
+    }
 }
 
 impl PartialEq for Sheet {
@@ -137,7 +159,7 @@ impl Eq for Sheet {}
 impl From<GoogleSheet> for Sheet {
     fn from(mut sh: GoogleSheet) -> Self {
         let headers = sheet_headers(&mut sh);
-        let mut metadata: HashMap<String, String> = sh
+        let metadata: HashMap<String, String> = sh
             .developer_metadata
             .take()
             .unwrap_or(vec![])
@@ -166,12 +188,7 @@ impl From<GoogleSheet> for Sheet {
                 .grid_properties
                 .as_ref()
                 .and_then(|gp| gp.column_count),
-            service: metadata
-                .remove(METADATA_SERVICE_KEY)
-                .unwrap_or_else(|| "".to_string()),
-            host_id: metadata
-                .remove(METADATA_HOSTD_ID_KEY)
-                .unwrap_or_else(|| "".to_string()),
+            metadata: Metadata::from(metadata),
             headers,
         }
     }
@@ -183,106 +200,155 @@ pub(crate) struct VirtualSheet {
 }
 
 impl VirtualSheet {
-    pub(crate) fn is_equal_to(&self, sheet: &Sheet) -> bool {
-        self.sheet.title == sheet.title
-            && self.sheet.sheet_type == sheet.sheet_type
-            && self.sheet.headers == sheet.headers
-            && self.sheet.service == sheet.service
-            && self.sheet.host_id == sheet.host_id
+    fn take_developer_metadata(&mut self) -> Vec<DeveloperMetadata> {
+        let metadata = mem::replace(&mut self.sheet.metadata, Metadata::new(vec![]));
+        metadata
+            .0
+            .into_iter()
+            .map(|(k, v)| DeveloperMetadata {
+                metadata_id: Some(generate_metadata_id(&k, self.sheet.sheet_id)),
+                location: Some(DeveloperMetadataLocation {
+                    sheet_id: Some(self.sheet.sheet_id),
+                    ..Default::default()
+                }),
+                metadata_key: Some(k),
+                metadata_value: Some(v),
+                visibility: Some("PROJECT".to_string()),
+            })
+            .collect()
     }
 
-    pub(super) fn generate_developer_metadata(&self) -> Vec<DeveloperMetadata> {
-        vec![
-            DeveloperMetadata {
-                location: Some(DeveloperMetadataLocation {
+    pub(super) fn into_api_requests(mut self) -> Vec<Request> {
+        let mut requests = vec![];
+        let grid_properties = if self.sheet.sheet_type == SheetType::Grid {
+            assert!(self.sheet.column_count.unwrap() > 0);
+            Some(GridProperties {
+                column_count: self.sheet.column_count,
+                row_count: self.sheet.row_count,
+                frozen_row_count: self.sheet.frozen_row_count,
+                ..Default::default()
+            })
+        } else {
+            None
+        };
+
+        let range = GridRange {
+            sheet_id: Some(self.sheet.sheet_id),
+            start_row_index: Some(0),
+            end_row_index: Some(1),
+            start_column_index: Some(0),
+            end_column_index: self.sheet.column_count,
+        };
+        let filter_range = GridRange {
+            sheet_id: Some(self.sheet.sheet_id),
+            start_row_index: Some(0),
+            end_row_index: None,
+            start_column_index: Some(0),
+            end_column_index: self.sheet.column_count,
+        };
+        let metadata = self.take_developer_metadata();
+        let header_values: Vec<CellData> =
+            self.sheet.headers.into_iter().map(|h| h.into()).collect();
+        let data = vec![RowData {
+            values: Some(header_values),
+        }];
+
+        requests.push(Request {
+            add_sheet: Some(AddSheetRequest {
+                properties: Some(SheetProperties {
                     sheet_id: Some(self.sheet.sheet_id),
+                    hidden: Some(self.sheet.hidden),
+                    sheet_type: Some(self.sheet.sheet_type.to_string()),
+                    grid_properties,
+                    title: Some(self.sheet.title),
                     ..Default::default()
                 }),
-                metadata_key: Some(METADATA_SERVICE_KEY.to_string()),
-                metadata_value: Some(self.sheet.service.clone()),
-                visibility: Some("PROJECT".to_string()),
-                metadata_id: Some(str_to_id(
-                    format!(
-                        "{}{}{}{}",
-                        self.sheet.host_id,
-                        self.sheet.service,
-                        self.sheet.sheet_id,
-                        METADATA_SERVICE_KEY
-                    )
-                    .as_str(),
-                )),
-            },
-            DeveloperMetadata {
-                location: Some(DeveloperMetadataLocation {
-                    sheet_id: Some(self.sheet.sheet_id),
+            }),
+            ..Default::default()
+        });
+        requests.push(Request {
+            update_cells: Some(UpdateCellsRequest {
+                fields: Some(
+                    FieldMask::from_str("userEnteredValue,userEnteredFormat,note").unwrap(),
+                ),
+                range: Some(range),
+                rows: Some(data),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        requests.push(Request {
+            set_basic_filter: Some(SetBasicFilterRequest {
+                filter: Some(BasicFilter {
+                    range: Some(filter_range),
                     ..Default::default()
                 }),
-                metadata_key: Some(METADATA_HOSTD_ID_KEY.to_string()),
-                metadata_value: Some(self.sheet.host_id.clone()),
-                visibility: Some("PROJECT".to_string()),
-                metadata_id: Some(str_to_id(
-                    format!(
-                        "{}{}{}{}",
-                        self.sheet.host_id,
-                        self.sheet.service,
-                        self.sheet.sheet_id,
-                        METADATA_HOSTD_ID_KEY
-                    )
-                    .as_str(),
-                )),
-            },
-        ]
+            }),
+            ..Default::default()
+        });
+        for m in metadata {
+            requests.push(Request {
+                create_developer_metadata: Some(CreateDeveloperMetadataRequest {
+                    developer_metadata: Some(m),
+                }),
+                ..Default::default()
+            })
+        }
+        requests
     }
 
     pub(crate) fn new_grid(
         title: String,
-        service: String,
-        host_id: String,
         headers: Vec<Header>,
+        metadata: Metadata,
+        meta_keys_for_id: &[&str],
     ) -> Self {
-        Self::new(title, false, SheetType::Grid, service, host_id, headers)
+        Self::new(title, SheetType::Grid, headers, metadata, meta_keys_for_id)
     }
 
     fn new(
         title: String,
-        hidden: bool,
         sheet_type: SheetType,
-        service: String,
-        host_id: String,
         headers: Vec<Header>,
+        metadata: Metadata,
+        meta_keys_for_id: &[&str],
     ) -> Self {
+        let id_string_parts: Vec<String> = meta_keys_for_id
+            .into_iter()
+            .map(|k| {
+                metadata
+                    .get(k)
+                    .expect("key should be in metadata")
+                    .to_string()
+            })
+            .collect();
         let sheet = Sheet {
-            sheet_id: str_to_id(format!("{}{}{}", host_id, service, title).as_str()),
+            sheet_id: str_to_id(id_string_parts.join("_").as_str()),
             title, // TODO no more than 50 chars
-            hidden,
+            hidden: false,
             index: 0,
             sheet_type,
             // for Grid sheets - we use the same type (i32) as an upstream libs
             frozen_row_count: Some(1),
             row_count: Some(2), // for headers and 1 row for data is required otherwise "You can't freeze all visible rows on the sheet.","status":"INVALID_ARGUMENT""
             column_count: Some(headers.len() as i32),
-            service,
-            host_id,
             headers,
+            metadata,
         };
         Self { sheet }
     }
-}
 
-pub(crate) fn filter_virtual_sheets(
-    virtual_sheets: Vec<VirtualSheet>,
-    sheets: &Vec<Sheet>,
-) -> Vec<VirtualSheet> {
-    let sheets: HashMap<&String, &Sheet> = sheets.iter().map(|s| (&s.title, s)).collect();
-    virtual_sheets
-        .into_iter()
-        .filter(|vs| {
-            sheets
-                .get(&vs.sheet.title)
-                .map(|sheet| vs.is_equal_to(sheet))
-                != Some(true)
-        })
-        .collect()
+    pub(crate) fn sheet_id(&self) -> SheetId {
+        self.sheet.sheet_id()
+    }
+
+    pub(crate) fn row_count(&self) -> Option<i32> {
+        self.sheet.row_count()
+    }
+
+    pub(crate) fn headers_titles(&self) -> Vec<&str> {
+        self.sheet.headers_titles()
+    }
 }
 
 pub(super) fn sheet_headers(sh: &mut GoogleSheet) -> Vec<Header> {
@@ -334,4 +400,112 @@ fn str_to_id(s: &str) -> i32 {
     hasher.write(s.as_bytes());
     let bytes = hasher.finish().to_be_bytes();
     (u32::from_be_bytes(bytes[4..8].try_into().unwrap()) as i32).abs()
+}
+
+fn generate_metadata_id(key: &str, sheet_id: SheetId) -> i32 {
+    str_to_id(&format!("{}{}", sheet_id, key))
+}
+
+#[derive(Debug)]
+pub(crate) struct UpdateSheet {
+    sheet_id: SheetId,
+    title: String,
+    metadata: Metadata,
+}
+
+impl UpdateSheet {
+    pub(crate) fn new(sheet_id: SheetId, title: String, metadata: Metadata) -> Self {
+        Self {
+            sheet_id,
+            title,
+            metadata,
+        }
+    }
+
+    pub(super) fn into_api_requests(self) -> Vec<Request> {
+        let mut requests = Vec::with_capacity(1 + self.metadata.0.len());
+        let UpdateSheet {
+            sheet_id,
+            title,
+            metadata,
+        } = self;
+        requests.push(Request {
+            update_sheet_properties: Some(UpdateSheetPropertiesRequest {
+                fields: Some(FieldMask::from_str("sheetId,title").unwrap()),
+                properties: Some(SheetProperties {
+                    sheet_id: Some(sheet_id),
+                    title: Some(title),
+                    ..Default::default()
+                }),
+            }),
+            ..Default::default()
+        });
+        for (k, v) in metadata.0.into_iter() {
+            requests.push(Request {
+                update_developer_metadata: Some(UpdateDeveloperMetadataRequest {
+                    developer_metadata: Some(DeveloperMetadata {
+                        metadata_id: Some(generate_metadata_id(&k, sheet_id)),
+                        metadata_value: Some(v),
+                        ..Default::default()
+                    }),
+                    fields: Some(FieldMask::from_str("metadataId,metadataValue").unwrap()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        }
+        requests
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Rows {
+    sheet_id: SheetId,
+    row_count: i32,
+    rows: Vec<RowData>,
+}
+
+impl Rows {
+    pub(crate) fn new(sheet_id: SheetId, row_count: i32) -> Self {
+        Self {
+            sheet_id,
+            row_count,
+            rows: vec![],
+        }
+    }
+
+    pub(crate) fn push(&mut self, row: RowData) {
+        self.rows.push(row)
+    }
+
+    pub(super) fn into_api_requests(self) -> Vec<Request> {
+        let filter_range = GridRange {
+            sheet_id: Some(self.sheet_id),
+            start_row_index: Some(0),
+            end_row_index: Some(self.row_count + self.rows.len() as i32),
+            start_column_index: Some(0),
+            end_column_index: None,
+        };
+        vec![
+            Request {
+                append_cells: Some(AppendCellsRequest {
+                    fields: Some(
+                        FieldMask::from_str("userEnteredValue,userEnteredFormat").unwrap(),
+                    ),
+                    sheet_id: Some(self.sheet_id),
+                    rows: Some(self.rows),
+                }),
+                ..Default::default()
+            },
+            Request {
+                set_basic_filter: Some(SetBasicFilterRequest {
+                    filter: Some(BasicFilter {
+                        range: Some(filter_range),
+                        ..Default::default()
+                    }),
+                }),
+                ..Default::default()
+            },
+        ]
+    }
 }

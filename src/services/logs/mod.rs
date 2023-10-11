@@ -3,8 +3,7 @@ use crate::messenger::configuration::MessengerConfig;
 use crate::messenger::BoxedMessenger;
 use crate::services::logs::configuration::Logs;
 use crate::services::Service;
-use crate::services::Shared;
-use crate::spreadsheet::Sheet;
+use crate::Shared;
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +14,6 @@ pub(crate) struct LogsService<'s> {
     spreadsheet_id: String,
     push_interval: Duration,
     scrape_interval: Duration,
-    sheets: Vec<Sheet>,
     messenger_config: Option<MessengerConfig>,
 }
 
@@ -27,7 +25,6 @@ impl<'s> LogsService<'s> {
             spreadsheet_id: config.spreadsheet_id,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
             scrape_interval: Duration::from_secs(config.scrape_interval_secs.into()),
-            sheets: vec![],
             messenger_config: config.messenger,
         }
     }

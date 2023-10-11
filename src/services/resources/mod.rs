@@ -3,8 +3,7 @@ use crate::messenger::configuration::MessengerConfig;
 use crate::messenger::BoxedMessenger;
 use crate::services::resources::configuration::Resources;
 use crate::services::Service;
-use crate::services::Shared;
-use crate::spreadsheet::Sheet;
+use crate::Shared;
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +14,6 @@ pub(crate) struct ResourcesService<'s> {
     spreadsheet_id: String,
     push_interval: Duration,
     scrape_interval: Duration,
-    sheets: Vec<Sheet>,
     messenger_config: Option<MessengerConfig>,
     alert_if_cpu_usage_percent_more_than: Option<u8>,
     alert_if_free_disk_space_percent_less_than: Option<u8>,
@@ -30,7 +28,6 @@ impl<'s> ResourcesService<'s> {
             spreadsheet_id: config.spreadsheet_id,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
             scrape_interval: Duration::from_secs(config.scrape_interval_secs.into()),
-            sheets: vec![],
             messenger_config: config.messenger,
             alert_if_cpu_usage_percent_more_than: config.alert_if_cpu_usage_percent_more_than,
             alert_if_free_disk_space_percent_less_than: config

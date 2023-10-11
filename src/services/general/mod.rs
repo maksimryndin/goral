@@ -4,10 +4,11 @@ use crate::messenger::configuration::MessengerConfig;
 use crate::messenger::BoxedMessenger;
 use crate::services::general::configuration::{General, Liveness as LivenessConfig, LivenessType};
 use crate::services::Service;
-use crate::services::Shared;
-use crate::spreadsheet::{filter_virtual_sheets, Header, Sheet, VirtualSheet};
+use crate::storage::{AppendableLog, Datarow, Datavalue};
+use crate::Shared;
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::NaiveDate;
 
 use std::fmt::{self, Debug, Display};
 use std::sync::Arc;
@@ -64,7 +65,6 @@ pub(crate) struct GeneralService<'s> {
     shared: Shared<'s>,
     spreadsheet_id: String,
     liveness: Vec<Liveness>,
-    sheets: Vec<Sheet>,
     messenger_config: MessengerConfig,
 }
 
@@ -74,7 +74,6 @@ impl<'s> GeneralService<'s> {
             shared,
             spreadsheet_id: config.spreadsheet_id,
             liveness: config.liveness.into_iter().map(|l| l.into()).collect(),
-            sheets: vec![],
             messenger_config: config.messenger,
         }
     }
@@ -94,64 +93,30 @@ impl<'s> Service<'s> for GeneralService<'s> {
         self.shared.messenger = Some(messenger);
     }
 
-    #[instrument(skip(self))]
-    async fn initialize(&mut self) -> Result<()> {
-        let existing_sheets = self
-            .shared
-            .google
-            .sheets_managed_by_service(self.spreadsheet_id(), self.name(), self.shared.host_id)
-            .await?;
-
-        tracing::info!(
-            "existing sheets for service {}:\n{:?}",
-            self.name(),
-            existing_sheets
-        );
-        let headers: Vec<Header> = [Header::new(
-            "timestamp".to_string(),
-            Some("Datetime of check".to_string()),
-        )]
-        .into_iter()
-        .chain(
-            self.liveness
-                .iter()
-                .map(|l| Header::new(l.to_string(), None)),
-        )
-        .collect();
-
-        let expected_sheets = vec![VirtualSheet::new_grid(
-            format!("{}_{}", self.name(), self.shared.host_id),
-            self.name().to_string(),
-            self.shared.host_id.to_string(),
-            headers,
-        )];
-
-        let sheets_to_add: Vec<VirtualSheet> =
-            filter_virtual_sheets(expected_sheets, &existing_sheets);
-
-        tracing::info!("sheets_to_add {:?}", sheets_to_add);
-
-        let sheets = self
-            .shared
-            .google
-            .add_sheets(&self.spreadsheet_id, sheets_to_add)
-            .await?;
-        self.sheets = existing_sheets
-            .into_iter()
-            .chain(sheets.into_iter())
-            .collect();
-        tracing::info!("{} initialized with sheets {:?}", self.name(), self.sheets);
+    #[instrument(skip_all)]
+    async fn run(&mut self, mut log: AppendableLog<'_>) -> Result<()> {
+        log.append(vec![Datarow::new(
+            "liveness".to_string(),
+            NaiveDate::from_ymd_opt(1900, 02, 1)
+                .unwrap()
+                .and_hms_opt(15, 0, 0)
+                .unwrap(),
+            vec![("log(http)".to_string(), Datavalue::Number(3.6))],
+        )])
+        .await?;
         let message = format!(
             "*{APP_NAME}* service _{}_ started for liveness probes `{:?}` and [spreadsheet]({})",
             self.name(),
             self.liveness,
-            self.shared.google.spreadsheet_url(&self.spreadsheet_id)
+            log.spreadsheet_url()
         );
         self.shared
             .messenger
             .clone()
             .unwrap()
             .send_info(&self.messenger_config, &message)
-            .await
+            .await;
+        tracing::info!("{} initialized", self.name());
+        Ok(())
     }
 }
