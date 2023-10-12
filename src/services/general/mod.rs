@@ -1,122 +1,127 @@
 pub(crate) mod configuration;
-use crate::configuration::APP_NAME;
+
 use crate::messenger::configuration::MessengerConfig;
 use crate::messenger::BoxedMessenger;
-use crate::services::general::configuration::{General, Liveness as LivenessConfig, LivenessType};
+use crate::services::general::configuration::General;
 use crate::services::Service;
-use crate::storage::{AppendableLog, Datarow, Datavalue};
-use crate::Shared;
+use crate::storage::AppendableLog;
+use crate::{Notification, Shared};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::NaiveDate;
 
-use std::fmt::{self, Debug, Display};
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::instrument;
-use url::Url;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc::Receiver;
+use tracing::{instrument, Level};
 
-const GENERAL_SERVICE_NAME: &str = "general";
-
-pub(crate) struct Liveness {
-    pub(crate) initial_delay: Duration,
-    pub(crate) period: Duration,
-    pub(crate) timeout: Duration,
-    pub(crate) endpoint: Option<Url>,
-    pub(crate) command: Option<String>,
-    pub(crate) typ: LivenessType,
-}
-
-impl Debug for Liveness {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(endpoint) = &self.endpoint {
-            write!(f, "{} ({})", endpoint.as_str(), self.typ)
-        } else {
-            write!(f, "{}", self.command.as_ref().unwrap())
-        }
-    }
-}
-
-impl Display for Liveness {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(endpoint) = &self.endpoint {
-            write!(f, "{} ({})", endpoint.as_str(), self.typ)
-        } else {
-            write!(f, "{}", self.command.as_ref().unwrap())
-        }
-    }
-}
-
-impl From<LivenessConfig> for Liveness {
-    fn from(c: LivenessConfig) -> Self {
-        Self {
-            initial_delay: Duration::from_secs(c.initial_delay_secs.into()),
-            period: Duration::from_secs(c.period_secs.into()),
-            timeout: Duration::from_millis(c.timeout_ms.into()),
-            endpoint: c.endpoint,
-            command: c.command,
-            typ: c.typ,
-        }
-    }
-}
+pub const GENERAL_SERVICE_NAME: &str = "general";
 
 #[derive(Debug)]
-pub(crate) struct GeneralService<'s> {
-    shared: Shared<'s>,
-    spreadsheet_id: String,
-    liveness: Vec<Liveness>,
+pub(crate) struct GeneralService {
+    shared: Shared,
     messenger_config: MessengerConfig,
+    log_level: Level,
+    channel: Receiver<Notification>,
 }
 
-impl<'s> GeneralService<'s> {
-    pub(crate) fn new(shared: Shared<'s>, config: General) -> GeneralService<'s> {
+impl GeneralService {
+    pub(crate) fn new(
+        shared: Shared,
+        config: General,
+        channel: Receiver<Notification>,
+    ) -> GeneralService {
         Self {
             shared,
-            spreadsheet_id: config.spreadsheet_id,
-            liveness: config.liveness.into_iter().map(|l| l.into()).collect(),
             messenger_config: config.messenger,
+            log_level: config.log_level,
+            channel,
+        }
+    }
+
+    async fn send_notification(&self, notification: Notification, messenger: &Arc<BoxedMessenger>) {
+        tracing::debug!(
+            "{} got notification to send: {:?}",
+            self.name(),
+            notification
+        );
+
+        let result = match notification.level {
+            Level::INFO | Level::DEBUG | Level::TRACE => {
+                messenger
+                    .send_info(&self.messenger_config, &notification.message)
+                    .await
+            }
+            Level::WARN => {
+                messenger
+                    .send_warning(&self.messenger_config, &notification.message)
+                    .await
+            }
+            Level::ERROR => {
+                messenger
+                    .send_error(&self.messenger_config, &notification.message)
+                    .await
+            }
+        };
+        if let Err(_) = result {
+            tracing::error!(
+                "{} service failed to send message: {:?}",
+                self.name(),
+                notification
+            );
         }
     }
 }
 
 #[async_trait]
-impl<'s> Service<'s> for GeneralService<'s> {
+impl Service for GeneralService {
     fn name(&self) -> &str {
         GENERAL_SERVICE_NAME
     }
 
     fn spreadsheet_id(&self) -> &str {
-        self.spreadsheet_id.as_str()
-    }
-
-    fn set_messenger(&mut self, messenger: Arc<BoxedMessenger>) {
-        self.shared.messenger = Some(messenger);
+        ""
     }
 
     #[instrument(skip_all)]
-    async fn run(&mut self, mut log: AppendableLog<'_>) -> Result<()> {
-        log.append(vec![Datarow::new(
-            "liveness".to_string(),
-            NaiveDate::from_ymd_opt(1900, 02, 1)
-                .unwrap()
-                .and_hms_opt(15, 0, 0)
-                .unwrap(),
-            vec![("log(http)".to_string(), Datavalue::Number(3.6))],
-        )])
-        .await?;
-        let message = format!(
-            "*{APP_NAME}* service _{}_ started for liveness probes `{:?}` and [spreadsheet]({})",
-            self.name(),
-            self.liveness,
-            log.spreadsheet_url()
-        );
-        self.shared
+    async fn run(&mut self, _: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
+        let messenger = self
+            .shared
             .messenger
             .clone()
-            .unwrap()
-            .send_info(&self.messenger_config, &message)
-            .await;
-        tracing::info!("{} initialized", self.name());
-        Ok(())
+            .expect("assert: messenger is always configured for general service");
+        tracing::info!(
+            "{} initialized with log level {}",
+            self.name(),
+            self.log_level
+        );
+        loop {
+            tokio::select! {
+                result = shutdown.recv() => {
+                    let graceful_shutdown_timeout = match result {
+                        Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
+                        Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
+                    };
+                    tracing::info!("{} service has got shutdown signal", self.name());
+                    if graceful_shutdown_timeout > 0 {
+                        let graceful_shutdown_timeout: u16 = graceful_shutdown_timeout - 1;
+                        loop {
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => return,
+                                Some(notification) = self.channel.recv() => {
+                                    self.send_notification(notification, &messenger).await;
+                                }
+                            }
+                        }
+                    }
+                    tracing::info!("{} service has successfully shutdowned", self.name());
+                    return;
+                },
+                Some(notification) = self.channel.recv() => {
+                    self.send_notification(notification, &messenger).await;
+                }
+            }
+        }
     }
 }

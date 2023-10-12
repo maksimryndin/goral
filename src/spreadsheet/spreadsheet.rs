@@ -9,9 +9,9 @@ use crate::spreadsheet::sheet::{
 use crate::spreadsheet::HyperConnector;
 use google_sheets4::{hyper, hyper_rustls, oauth2, Error, Sheets};
 
-use std::collections::{BTreeMap, HashSet};
-
 use crate::spreadsheet::Metadata;
+use crate::Sender;
+use std::collections::BTreeMap;
 
 use std::time::Duration;
 use tokio_retry::strategy::{jitter, FibonacciBackoff};
@@ -23,7 +23,7 @@ const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
 
 macro_rules! handle_error {
     // `()` indicates that the macro takes no argument.
-    ($expression:expr) => {
+    ($self:ident, $send_notification:ident, $expression:expr) => {
         match $expression {
             Err(e) => match e {
                 // fatal
@@ -32,7 +32,7 @@ macro_rules! handle_error {
                 | Error::UploadSizeLimitExceeded(_, _)
                 | Error::FieldClash(_) => {
                     tracing::error!("{}", e);
-                    // TODO perhaps don't panic, just return - module decides to notify by messenger
+                    $self.$send_notification.error(format!("Fatal error for Google API access: {:?}", e)).await;
                     panic!("{}", e);
                 }
                 Error::MissingToken(_) => {
@@ -40,7 +40,7 @@ macro_rules! handle_error {
                         "{}. Probably server time skewed. Sync server time with NTP.",
                         e
                     );
-                    // TODO perhaps don't panic, just return - module decides to notify by messenger
+                    $self.$send_notification.error("MissingToken error for Google API. Probably server time skewed. Sync server time with NTP.".to_string()).await;
                     panic!("{}", e);
                 }
                 // retry
@@ -55,12 +55,16 @@ macro_rules! handle_error {
     };
 }
 
-pub(crate) struct SpreadsheetAPI {
+pub struct SpreadsheetAPI {
     hub: Sheets<HyperConnector>,
+    send_notification: Sender,
 }
 
 impl SpreadsheetAPI {
-    pub(crate) fn new(authenticator: oauth2::authenticator::Authenticator<HyperConnector>) -> Self {
+    pub fn new(
+        authenticator: oauth2::authenticator::Authenticator<HyperConnector>,
+        send_notification: Sender,
+    ) -> Self {
         let hub = Sheets::new(
             hyper::Client::builder().build(
                 hyper_rustls::HttpsConnectorBuilder::new()
@@ -71,11 +75,21 @@ impl SpreadsheetAPI {
             ),
             authenticator,
         );
-        Self { hub }
+        Self {
+            hub,
+            send_notification,
+        }
     }
 
     pub(crate) fn spreadsheet_url(&self, spreadsheet_id: &str) -> String {
         format!("https://docs.google.com/spreadsheets/d/{}", spreadsheet_id)
+    }
+
+    pub(crate) fn sheet_url(&self, spreadsheet_id: &str, sheet_id: SheetId) -> String {
+        format!(
+            "https://docs.google.com/spreadsheets/d/{}#gid={}",
+            spreadsheet_id, sheet_id
+        )
     }
 
     #[instrument(skip(self))]
@@ -91,7 +105,7 @@ impl SpreadsheetAPI {
             .doit()
             .await;
         tracing::debug!("{:?}", result);
-        Ok(handle_error!(result)?)
+        Ok(handle_error!(self, send_notification, result)?)
     }
 
     #[instrument(skip_all)]
@@ -116,7 +130,7 @@ impl SpreadsheetAPI {
             .doit()
             .await;
         tracing::debug!("{:?}", result);
-        let response = handle_error!(result)?;
+        let response = handle_error!(self, send_notification, result)?;
         Ok(response
             .sheets
             .expect("spreadsheet should contain sheets property even if no sheets")
@@ -210,6 +224,7 @@ impl SpreadsheetAPI {
             .map(|s| s.sheet.header_range_r1c1().unwrap())
             .collect();
 
+        // TODO calculate capacity properly
         let mut requests = Vec::with_capacity(sheets.len() * 5 + data.len() + updates.len());
 
         for update in updates.into_iter() {
@@ -227,7 +242,7 @@ impl SpreadsheetAPI {
         tracing::debug!("requests:\n{:?}", requests);
 
         let req = BatchUpdateSpreadsheetRequest {
-            include_spreadsheet_in_response: Some(true),
+            include_spreadsheet_in_response: Some(false),
             requests: Some(requests),
             response_ranges: Some(ranges),
             response_include_grid_data: Some(false),
@@ -241,18 +256,7 @@ impl SpreadsheetAPI {
             .await;
 
         tracing::debug!("{:?}", result);
-        Ok(handle_error!(result)?)
-    }
-
-    fn batch_update_response_to_sheets(response: BatchUpdateSpreadsheetResponse) -> Vec<Sheet> {
-        response
-            .updated_spreadsheet
-            .expect("spreadsheet should contain updated_spreadsheet property")
-            .sheets
-            .expect("spreadsheet should contain sheets property even if no sheets")
-            .into_iter()
-            .map(|s| s.into())
-            .collect()
+        Ok(handle_error!(self, send_notification, result)?)
     }
 
     #[instrument(skip(self, sheets))]
@@ -262,30 +266,17 @@ impl SpreadsheetAPI {
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
-    ) -> Result<Vec<Sheet>> {
+    ) -> Result<()> {
         // We do not retry sheet creation as this call usually goes after
-        // `sheets_managed_by_service` which is retriable and should either fix an error
+        // `sheets_filtered_by_metadata` which is retriable and should either fix an error
         // or fail.
         // Retrying `add_sheets` would require cloning all sheets at every retry attempt
-        let sheet_titles_headers: HashSet<String> =
-            sheets.iter().map(|s| s.sheet.title.to_string()).collect();
-
-        let response = self
-            ._crud_sheets(spreadsheet_id, updates, sheets, data)
+        self._crud_sheets(spreadsheet_id, updates, sheets, data)
             .await
             .map_err(|e| {
                 tracing::error!("{}", e);
                 e
             })?;
-        let sheets = Self::batch_update_response_to_sheets(response);
-
-        // sheets contain all sheets in the spreadsheet so have to filter
-        let sheets = sheets
-            .into_iter()
-            .filter(|s| sheet_titles_headers.contains(&s.title))
-            .collect();
-
-        // Filter sheets by metadata? or ignore the result?
-        Ok(sheets)
+        Ok(())
     }
 }

@@ -1,9 +1,9 @@
-pub(crate) mod sheet;
-pub(crate) mod spreadsheet;
+pub mod sheet;
+pub mod spreadsheet;
 use google_sheets4::hyper::client::connect::HttpConnector;
 use google_sheets4::hyper_rustls::HttpsConnector;
 use google_sheets4::oauth2;
-pub(crate) use spreadsheet::*;
+pub use spreadsheet::*;
 use std::collections::HashMap;
 pub(crate) type HyperConnector = HttpsConnector<HttpConnector>;
 
@@ -37,7 +37,7 @@ impl From<HashMap<String, String>> for Metadata {
     }
 }
 
-pub(crate) async fn get_google_auth(
+pub async fn get_google_auth(
     service_account_credentials_path: &str,
 ) -> oauth2::authenticator::Authenticator<HyperConnector> {
     let key = oauth2::read_service_account_key(service_account_credentials_path)

@@ -1,10 +1,11 @@
 use crate::spreadsheet::Metadata;
 use google_sheets4::api::Sheet as GoogleSheet;
 use google_sheets4::api::{
-    AddSheetRequest, AppendCellsRequest, BasicFilter, CellData, CellFormat, Color, ColorStyle,
-    CreateDeveloperMetadataRequest, DeveloperMetadata, DeveloperMetadataLocation, ExtendedValue,
-    GridProperties, GridRange, Request, RowData, SetBasicFilterRequest, SheetProperties,
-    TextFormat, UpdateCellsRequest, UpdateDeveloperMetadataRequest, UpdateSheetPropertiesRequest,
+    AddSheetRequest, AppendCellsRequest, AutoResizeDimensionsRequest, BasicFilter, CellData,
+    CellFormat, Color, ColorStyle, CreateDeveloperMetadataRequest, DeveloperMetadata,
+    DeveloperMetadataLocation, DimensionRange, ExtendedValue, GridProperties, GridRange, Request,
+    RowData, SetBasicFilterRequest, SheetProperties, TextFormat, UpdateCellsRequest,
+    UpdateDeveloperMetadataRequest, UpdateSheetPropertiesRequest,
 };
 use google_sheets4::FieldMask;
 use std::collections::hash_map::DefaultHasher;
@@ -283,6 +284,17 @@ impl VirtualSheet {
                     range: Some(filter_range),
                     ..Default::default()
                 }),
+            }),
+            ..Default::default()
+        });
+        requests.push(Request {
+            auto_resize_dimensions: Some(AutoResizeDimensionsRequest {
+                dimensions: Some(DimensionRange {
+                    dimension: Some("COLUMNS".to_string()),
+                    sheet_id: Some(self.sheet.sheet_id),
+                    ..Default::default()
+                }),
+                ..Default::default()
             }),
             ..Default::default()
         });

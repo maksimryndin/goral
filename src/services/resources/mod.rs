@@ -8,8 +8,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub(crate) struct ResourcesService<'s> {
-    shared: Shared<'s>,
+pub const RESOURCES_SERVICE_NAME: &str = "resources";
+
+pub(crate) struct ResourcesService {
+    shared: Shared,
     name: &'static str,
     spreadsheet_id: String,
     push_interval: Duration,
@@ -20,8 +22,8 @@ pub(crate) struct ResourcesService<'s> {
     alert_if_free_memory_percent_less_than: Option<u8>,
 }
 
-impl<'s> ResourcesService<'s> {
-    pub(crate) fn new(shared: Shared<'s>, config: Resources) -> ResourcesService<'s> {
+impl ResourcesService {
+    pub(crate) fn new(shared: Shared, config: Resources) -> ResourcesService {
         Self {
             shared,
             name: "resources",
@@ -38,16 +40,12 @@ impl<'s> ResourcesService<'s> {
 }
 
 #[async_trait]
-impl<'s> Service<'s> for ResourcesService<'s> {
+impl Service for ResourcesService {
     fn name(&self) -> &str {
         self.name
     }
 
     fn spreadsheet_id(&self) -> &str {
         self.spreadsheet_id.as_str()
-    }
-
-    fn set_messenger(&mut self, messenger: Arc<BoxedMessenger>) {
-        self.shared.messenger = Some(messenger);
     }
 }

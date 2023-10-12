@@ -7,7 +7,7 @@ use url::{Host, Url};
 
 #[derive(Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct MessengerConfig {
+pub struct MessengerConfig {
     pub(crate) bot_token: String,
     pub(crate) chat_id: String,
     #[validate(custom(host_validation))]
@@ -15,7 +15,7 @@ pub(crate) struct MessengerConfig {
 }
 
 impl MessengerConfig {
-    pub(crate) fn host(&self) -> Host<&str> {
+    pub fn host(&self) -> Host<&str> {
         // safe to unwrap as we validate that host is not empty
         self.url.host().unwrap()
     }

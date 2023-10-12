@@ -1,11 +1,13 @@
 use crate::spreadsheet::sheet::{Header, Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
 use crate::spreadsheet::{Metadata, SpreadsheetAPI};
+use crate::Sender;
 use anyhow::Result;
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::mem;
+use std::sync::Arc;
 
 const METADATA_SERVICE_KEY: &str = "service";
 const METADATA_HOST_ID_KEY: &str = "host";
@@ -153,32 +155,37 @@ impl Into<RowData> for Datarow {
     }
 }
 
-pub(super) struct Storage {
+pub struct Storage {
     google: SpreadsheetAPI,
     host_id: String,
+    send_notification: Sender,
 }
 
 impl Storage {
-    pub(super) fn new(host_id: String, google: SpreadsheetAPI) -> Self {
-        Self { host_id, google }
-    }
-
-    pub(crate) fn create_log(&self, spreadsheet_id: String, service: String) -> AppendableLog {
-        AppendableLog {
-            storage: &self,
-            spreadsheet_id,
-            service,
+    pub fn new(host_id: String, google: SpreadsheetAPI, send_notification: Sender) -> Self {
+        Self {
+            host_id,
+            google,
+            send_notification,
         }
     }
 }
 
-pub(crate) struct AppendableLog<'a> {
-    storage: &'a Storage,
+pub fn create_log(storage: Arc<Storage>, spreadsheet_id: String, service: String) -> AppendableLog {
+    AppendableLog {
+        storage,
+        spreadsheet_id,
+        service,
+    }
+}
+
+pub struct AppendableLog {
+    storage: Arc<Storage>,
     service: String,
     spreadsheet_id: String,
 }
 
-impl AppendableLog<'_> {
+impl AppendableLog {
     async fn fetch_latest_sheets(&self) -> Result<HashMap<(String, String), Sheet>> {
         let basic_metadata = Metadata::new(vec![
             (METADATA_HOST_ID_KEY, self.storage.host_id.to_string()),
@@ -192,6 +199,7 @@ impl AppendableLog<'_> {
             .await?;
 
         // TODO check usage and prepare deletion requests for Sheets and Obsolete metadata
+        //self.storage.send_notification.warn(format!())
 
         let mut names_keys_versions: Vec<(String, String, DateTime<FixedOffset>, Sheet)> =
             existing_service_sheets
@@ -253,7 +261,7 @@ impl AppendableLog<'_> {
     // datarow field order is determined by the order of headers of the sheet
     // for newly created log sheet its order is determined by its first datarow. Fields for other datarows for the same sheet is sorted.
     // for example several metrics scraped - each has its own name and set of keys
-    pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<()> {
+    pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<Vec<SheetId>> {
         // check that contains timestamp and all keys are the same
         let latest_sheets = self.fetch_latest_sheets().await?;
 
@@ -267,66 +275,72 @@ impl AppendableLog<'_> {
 
         let timestamp = Utc::now();
 
-        for mut datarow in datarows.into_iter() {
-            let keys = datarow.keys_sorted().join(",");
-            let search_key = (datarow.log_name.clone(), keys);
-            if let Some(sheet) = latest_sheets.get(&search_key) {
-                let new_title = prepare_sheet_title(
-                    &self.storage.host_id,
-                    &self.service,
-                    &datarow.log_name,
-                    &timestamp,
-                );
-                let new_metadata = vec![(METADATA_UPDATED_AT, timestamp.to_rfc3339())];
-                sheets_to_update.push(UpdateSheet::new(
-                    sheet.sheet_id(),
-                    new_title,
-                    Metadata::new(new_metadata),
-                ));
-                datarow.sort_by_headers_titles(&sheet.headers_titles());
-                data_to_append
-                    .entry(sheet.sheet_id())
-                    .or_insert(Rows::new(sheet.sheet_id(), sheet.row_count().unwrap()))
-                    .push(datarow.into());
-            } else if let Some(sheet) = sheets_to_create.get(&search_key) {
-                // align data according to headers of sheet
-                datarow.sort_by_headers_titles(&sheet.headers_titles());
-                data_to_append
-                    .entry(sheet.sheet_id())
-                    .or_insert(Rows::new(sheet.sheet_id(), sheet.row_count().unwrap()))
-                    .push(datarow.into());
-            } else {
-                let (log_name, keys) = search_key;
-                let title = prepare_sheet_title(
-                    &self.storage.host_id,
-                    &self.service,
-                    &datarow.log_name,
-                    &timestamp,
-                );
-                let timestamp = timestamp.to_rfc3339();
-                let headers = datarow.headers();
-                let metadata = vec![
-                    (METADATA_HOST_ID_KEY, self.storage.host_id.to_string()),
-                    (METADATA_SERVICE_KEY, self.service.to_string()),
-                    (METADATA_LOG_NAME, datarow.log_name.clone()),
-                    (METADATA_CREATED_AT, timestamp.clone()),
-                    (METADATA_UPDATED_AT, timestamp.clone()),
-                ];
-                let sheet = VirtualSheet::new_grid(
-                    title,
-                    headers,
-                    Metadata::new(metadata),
-                    &METADATA_KEYS_FOR_ID,
-                );
-                let sheet_id = sheet.sheet_id();
-                let row_count = sheet.row_count().unwrap();
-                sheets_to_create.insert((log_name, keys), sheet);
-                data_to_append
-                    .entry(sheet_id)
-                    .or_insert(Rows::new(sheet_id, row_count))
-                    .push(datarow.into());
-            }
-        }
+        let sheet_ids = datarows
+            .into_iter()
+            .map(|mut datarow| {
+                let keys = datarow.keys_sorted().join(",");
+                let search_key = (datarow.log_name.clone(), keys);
+                if let Some(sheet) = latest_sheets.get(&search_key) {
+                    let new_title = prepare_sheet_title(
+                        &self.storage.host_id,
+                        &self.service,
+                        &datarow.log_name,
+                        &timestamp,
+                    );
+                    let new_metadata = vec![(METADATA_UPDATED_AT, timestamp.to_rfc3339())];
+                    sheets_to_update.push(UpdateSheet::new(
+                        sheet.sheet_id(),
+                        new_title,
+                        Metadata::new(new_metadata),
+                    ));
+                    datarow.sort_by_headers_titles(&sheet.headers_titles());
+                    data_to_append
+                        .entry(sheet.sheet_id())
+                        .or_insert(Rows::new(sheet.sheet_id(), sheet.row_count().unwrap()))
+                        .push(datarow.into());
+                    sheet.sheet_id()
+                } else if let Some(sheet) = sheets_to_create.get(&search_key) {
+                    // align data according to headers of sheet
+                    datarow.sort_by_headers_titles(&sheet.headers_titles());
+                    data_to_append
+                        .entry(sheet.sheet_id())
+                        .or_insert(Rows::new(sheet.sheet_id(), sheet.row_count().unwrap()))
+                        .push(datarow.into());
+                    sheet.sheet_id()
+                } else {
+                    let (log_name, keys) = search_key;
+                    let title = prepare_sheet_title(
+                        &self.storage.host_id,
+                        &self.service,
+                        &datarow.log_name,
+                        &timestamp,
+                    );
+                    let timestamp = timestamp.to_rfc3339();
+                    let headers = datarow.headers();
+                    let metadata = vec![
+                        (METADATA_HOST_ID_KEY, self.storage.host_id.to_string()),
+                        (METADATA_SERVICE_KEY, self.service.to_string()),
+                        (METADATA_LOG_NAME, datarow.log_name.clone()),
+                        (METADATA_CREATED_AT, timestamp.clone()),
+                        (METADATA_UPDATED_AT, timestamp.clone()),
+                    ];
+                    let sheet = VirtualSheet::new_grid(
+                        title,
+                        headers,
+                        Metadata::new(metadata),
+                        &METADATA_KEYS_FOR_ID,
+                    );
+                    let sheet_id = sheet.sheet_id();
+                    let row_count = sheet.row_count().unwrap();
+                    sheets_to_create.insert((log_name, keys), sheet);
+                    data_to_append
+                        .entry(sheet_id)
+                        .or_insert(Rows::new(sheet_id, row_count))
+                        .push(datarow.into());
+                    sheet_id
+                }
+            })
+            .collect();
 
         let sheets_to_add = sheets_to_create.into_iter().map(|(_, s)| s).collect();
         let data: Vec<Rows> = data_to_append.into_iter().map(|(_, rows)| rows).collect();
@@ -341,11 +355,17 @@ impl AppendableLog<'_> {
             .crud_sheets(&self.spreadsheet_id, sheets_to_update, sheets_to_add, data)
             .await?;
         tracing::info!("{} initialized with sheets {:?}", self.service, sheets);
-        Ok(())
+        Ok(sheet_ids)
     }
 
     pub(crate) fn spreadsheet_url(&self) -> String {
         self.storage.google.spreadsheet_url(&self.spreadsheet_id)
+    }
+
+    pub(crate) fn sheet_url(&self, sheet_id: SheetId) -> String {
+        self.storage
+            .google
+            .sheet_url(&self.spreadsheet_id, sheet_id)
     }
 }
 

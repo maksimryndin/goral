@@ -8,8 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
-pub(crate) struct MetricsService<'s> {
-    shared: Shared<'s>,
+pub const METRICS_SERVICE_NAME: &str = "metrics";
+
+pub(crate) struct MetricsService {
+    shared: Shared,
     name: &'static str,
     spreadsheet_id: String,
     push_interval: Duration,
@@ -17,8 +19,8 @@ pub(crate) struct MetricsService<'s> {
     endpoints: Vec<Url>,
 }
 
-impl<'s> MetricsService<'s> {
-    pub(crate) fn new(shared: Shared<'s>, config: Metrics) -> MetricsService<'s> {
+impl MetricsService {
+    pub(crate) fn new(shared: Shared, config: Metrics) -> MetricsService {
         Self {
             shared,
             name: "metrics",
@@ -31,7 +33,7 @@ impl<'s> MetricsService<'s> {
 }
 
 #[async_trait]
-impl<'s> Service<'s> for MetricsService<'s> {
+impl Service for MetricsService {
     fn name(&self) -> &str {
         self.name
     }
@@ -39,6 +41,4 @@ impl<'s> Service<'s> for MetricsService<'s> {
     fn spreadsheet_id(&self) -> &str {
         self.spreadsheet_id.as_str()
     }
-
-    fn set_messenger(&mut self, _: Arc<BoxedMessenger>) {}
 }

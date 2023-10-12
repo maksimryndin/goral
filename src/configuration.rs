@@ -1,4 +1,5 @@
 use crate::services::general::configuration::General;
+use crate::services::healthcheck::configuration::Healthcheck;
 use crate::services::logs::configuration::Logs;
 use crate::services::metrics::configuration::Metrics;
 use crate::services::resources::configuration::Resources;
@@ -11,7 +12,7 @@ use std::str::FromStr;
 
 use url::Url;
 
-pub(crate) const APP_NAME: &str = "GORAL";
+pub const APP_NAME: &str = "GORAL";
 
 pub(crate) fn scrape_interval_secs() -> u16 {
     10
@@ -61,9 +62,11 @@ where
 
 #[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Configuration {
+pub struct Configuration {
     #[validate]
-    pub(crate) general: General,
+    pub general: General,
+    #[validate]
+    pub(crate) healthcheck: Option<Healthcheck>,
     #[validate]
     pub(crate) logs: Option<Logs>,
     #[validate]

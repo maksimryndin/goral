@@ -8,8 +8,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub(crate) struct LogsService<'s> {
-    shared: Shared<'s>,
+pub const LOGS_SERVICE_NAME: &str = "logs";
+
+pub(crate) struct LogsService {
+    shared: Shared,
     name: &'static str,
     spreadsheet_id: String,
     push_interval: Duration,
@@ -17,8 +19,8 @@ pub(crate) struct LogsService<'s> {
     messenger_config: Option<MessengerConfig>,
 }
 
-impl<'s> LogsService<'s> {
-    pub(crate) fn new(shared: Shared<'s>, config: Logs) -> LogsService<'s> {
+impl LogsService {
+    pub(crate) fn new(shared: Shared, config: Logs) -> LogsService {
         Self {
             shared,
             name: "logs",
@@ -31,16 +33,12 @@ impl<'s> LogsService<'s> {
 }
 
 #[async_trait]
-impl<'s> Service<'s> for LogsService<'s> {
+impl Service for LogsService {
     fn name(&self) -> &str {
         self.name
     }
 
     fn spreadsheet_id(&self) -> &str {
         self.spreadsheet_id.as_str()
-    }
-
-    fn set_messenger(&mut self, messenger: Arc<BoxedMessenger>) {
-        self.shared.messenger = Some(messenger);
     }
 }
