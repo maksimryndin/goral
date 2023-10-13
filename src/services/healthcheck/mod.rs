@@ -265,9 +265,21 @@ impl Service for HealthcheckService {
 
     #[instrument(skip_all)]
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
-        tracing::info!("initialized with spreadsheet {}", self.spreadsheet_id());
         //  channel to collect liveness checks results
-        let (tx, mut data_receiver) = mpsc::channel(self.liveness.len());
+        // appending to log is time-consuming
+        // during the append we accumulate liveness outputs
+        // sum of <append duration>/<liveness.scrape> over each liveness
+        // we take 10 secs as append maximum duration
+        let channel_capacity = self
+            .liveness
+            .iter()
+            .fold(0, |acc, l| acc + 10 / l.period.as_secs() + 1);
+        tracing::info!(
+            "initialized with spreadsheet {}, channel_capacity {}",
+            self.spreadsheet_id(),
+            channel_capacity
+        );
+        let (tx, mut data_receiver) = mpsc::channel(channel_capacity as usize);
         self.run_checks(tx).await;
         let mut liveness_previous_state = vec![false; self.liveness.len()];
         let mut push_interval = tokio::time::interval(self.push_interval);
@@ -301,9 +313,6 @@ impl Service for HealthcheckService {
                     return;
                 },
                 _ = push_interval.tick() => {
-                    // appending to log is time-consuming
-                    // TODO fix channel capacity - should be calculated base on scrape - push intervals
-                    // in configuration we should check reasonable ratio of scrape/push to prevent accumulating too much data in a batch
                     tracing::info!("appending to log {} rows", accumulated_data.len());
                     let _ = log.append(accumulated_data).await;
                     accumulated_data = vec![];

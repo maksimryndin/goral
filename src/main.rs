@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use futures::future::join_all;
+use futures::future::try_join_all;
 use goral::configuration::{Configuration, APP_NAME};
 use goral::services::Service;
 use goral::spreadsheet::{get_google_auth, SpreadsheetAPI};
@@ -65,6 +65,13 @@ async fn main() {
     // Retrieve configuration
     let args = Args::parse();
 
+    // std::panic::set_hook(Box::new(|info| {
+    //     //let stacktrace = Backtrace::capture();
+    //     //let stacktrace = Backtrace::force_capture();
+    //     //println!("Got panic. @info:{}\n@stackTrace:{}", info, stacktrace);
+    //     std::process::abort();
+    // }));
+
     let config = Configuration::new(&args.config)
         .expect("Incorrect configuration (can be potentially overriden by environment variables starting with `GORAL__`)");
 
@@ -80,6 +87,7 @@ async fn main() {
             Some(tracing_subscriber::fmt::layer().with_target(true)),
         )
     };
+
     tracing_subscriber::registry()
         .with(level)
         .with(json)
@@ -123,16 +131,18 @@ async fn main() {
             tracing::warn!("{}", msg.as_str());
             tx.try_warn(msg);
         }
-    };
+        res = try_join_all(tasks) => {
+            res.unwrap(); // propagate panics from spawned tasks
+        }
+    }
     shutdown
         .send(graceful_shutdown_timeout)
         .expect("assert: services should run when shutdown signal is sent");
-    tokio::select! {
-        _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {
-            tracing::warn!("{} couldn't gracefully shutdown", APP_NAME);
-        }
-        _ = join_all(tasks) => {
-            tracing::info!("{} has gracefully shutdowned", APP_NAME);
-        }
-    };
+
+    tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())).await;
+    if shutdown.receiver_count() > 0 {
+        tracing::warn!("{} couldn't gracefully shutdown", APP_NAME);
+    } else {
+        tracing::info!("{} has gracefully shutdowned", APP_NAME);
+    }
 }

@@ -270,7 +270,7 @@ impl AppendableLog {
 
     pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<()> {
         let rows_count = datarows.len();
-        self._append(datarows).await.map_err(|e| {
+        let result = self._append(datarows).await.map_err(|e| {
             let message = format!(
                 "Saving batch data ({rows_count} rows) failed for service {}",
                 self.service
@@ -278,7 +278,8 @@ impl AppendableLog {
             tracing::error!("{}", message);
             self.storage.send_notification.try_error(message);
             e
-        })
+        });
+        result
     }
 
     // Assumptions
@@ -286,6 +287,7 @@ impl AppendableLog {
     // datarow field order is determined by the order of headers of the sheet
     // for newly created log sheet its order is determined by its first datarow. Fields for other datarows for the same sheet is sorted.
     // for example several metrics scraped - each has its own name and set of keys
+    // TODO test headers change
     async fn _append(&mut self, datarows: Vec<Datarow>) -> Result<()> {
         if datarows.is_empty() {
             return Ok(());
