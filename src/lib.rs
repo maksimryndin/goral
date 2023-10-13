@@ -19,7 +19,7 @@ pub use spreadsheet::*;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
-use storage::Storage;
+
 pub use storage::*;
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender as TokioSender};
 use tracing::Level;
@@ -236,7 +236,7 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub fn new(host_id: String, send_notification: Sender) -> Shared {
+    pub fn new(send_notification: Sender) -> Shared {
         Self {
             messenger: None,
             send_notification,

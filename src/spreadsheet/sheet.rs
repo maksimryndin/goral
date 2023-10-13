@@ -1,11 +1,10 @@
 use crate::spreadsheet::Metadata;
 use google_sheets4::api::Sheet as GoogleSheet;
 use google_sheets4::api::{
-    AddSheetRequest, AppendCellsRequest, AutoResizeDimensionsRequest, BasicFilter, CellData,
-    CellFormat, Color, ColorStyle, CreateDeveloperMetadataRequest, DeveloperMetadata,
-    DeveloperMetadataLocation, DimensionRange, ExtendedValue, GridProperties, GridRange, Request,
-    RowData, SetBasicFilterRequest, SheetProperties, TextFormat, UpdateCellsRequest,
-    UpdateDeveloperMetadataRequest, UpdateSheetPropertiesRequest,
+    AddSheetRequest, AppendCellsRequest, BasicFilter, CellData, CellFormat, Color, ColorStyle,
+    CreateDeveloperMetadataRequest, DeveloperMetadata, DeveloperMetadataLocation, ExtendedValue,
+    GridProperties, GridRange, Request, RowData, SetBasicFilterRequest, SheetProperties,
+    TextFormat, UpdateCellsRequest, UpdateDeveloperMetadataRequest, UpdateSheetPropertiesRequest,
 };
 use google_sheets4::FieldMask;
 use std::collections::hash_map::DefaultHasher;
@@ -309,17 +308,6 @@ impl VirtualSheet {
             }),
             ..Default::default()
         });
-        requests.push(Request {
-            auto_resize_dimensions: Some(AutoResizeDimensionsRequest {
-                dimensions: Some(DimensionRange {
-                    dimension: Some("COLUMNS".to_string()),
-                    sheet_id: Some(self.sheet.sheet_id),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
         for m in metadata {
             requests.push(Request {
                 create_developer_metadata: Some(CreateDeveloperMetadataRequest {
@@ -332,41 +320,32 @@ impl VirtualSheet {
     }
 
     pub(crate) fn new_grid(
+        sheet_id: SheetId,
         title: String,
         headers: Vec<Header>,
         metadata: Metadata,
-        meta_keys_for_id: &[&str],
         tab_color: TabColorRGB,
     ) -> Self {
         Self::new(
+            sheet_id,
             title,
             SheetType::Grid,
             headers,
             metadata,
-            meta_keys_for_id,
             tab_color,
         )
     }
 
     fn new(
+        sheet_id: SheetId,
         title: String,
         sheet_type: SheetType,
         headers: Vec<Header>,
         metadata: Metadata,
-        meta_keys_for_id: &[&str],
         tab_color: TabColorRGB,
     ) -> Self {
-        let id_string_parts: Vec<String> = meta_keys_for_id
-            .into_iter()
-            .map(|k| {
-                metadata
-                    .get(k)
-                    .expect("key should be in metadata")
-                    .to_string()
-            })
-            .collect();
         let sheet = Sheet {
-            sheet_id: str_to_id(id_string_parts.join("_").as_str()),
+            sheet_id,
             title, // TODO no more than 50 chars
             hidden: false,
             index: 0,
@@ -439,7 +418,7 @@ fn stringify_cell_value(value: ExtendedValue) -> String {
     "undefined".to_string()
 }
 
-fn str_to_id(s: &str) -> i32 {
+pub(crate) fn str_to_id(s: &str) -> i32 {
     let mut hasher = DefaultHasher::new();
     hasher.write(s.as_bytes());
     let bytes = hasher.finish().to_be_bytes();

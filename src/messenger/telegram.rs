@@ -5,10 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use google_sheets4::hyper::client::connect::HttpConnector;
 use google_sheets4::hyper_rustls::HttpsConnector;
-use google_sheets4::{
-    hyper::{self, Body, Method, Request},
-    hyper_rustls,
-};
+use hyper::{Body, Method, Request};
 use serde_derive::Serialize;
 
 pub(crate) struct Telegram {
@@ -42,7 +39,9 @@ impl Telegram {
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_string(&body)?))?;
         tracing::debug!("{:?}", req);
-        // TODO retries
+        // TODO retries ??
+        // TODO timeout
+        // TODO check trxt message for illegal characters for markdown??
         let resp = self.client.request(req).await?;
         tracing::debug!("{:?}", resp);
         if resp.status() == 400 {

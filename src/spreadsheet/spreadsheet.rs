@@ -32,7 +32,7 @@ macro_rules! handle_error {
                 | Error::UploadSizeLimitExceeded(_, _)
                 | Error::FieldClash(_) => {
                     tracing::error!("{}", e);
-                    $self.$send_notification.error(format!("Fatal error for Google API access: {:?}", e)).await;
+                    $self.$send_notification.error(format!("Fatal error for Google API access: `{:?}`", e)).await;
                     panic!("{}", e);
                 }
                 Error::MissingToken(_) => {

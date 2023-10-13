@@ -92,7 +92,7 @@ async fn main() {
     let tx = Sender::new(tx);
     let sheets_api = SpreadsheetAPI::new(auth, tx.clone());
     let storage = Arc::new(Storage::new(args.id.to_string(), sheets_api, tx.clone()));
-    let shared = Shared::new(args.id.to_string(), tx.clone());
+    let shared = Shared::new(tx.clone());
 
     let messengers = collect_messengers(&config);
     let mut services = collect_services(config, shared, messengers, rx);

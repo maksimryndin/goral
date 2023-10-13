@@ -16,12 +16,13 @@ pub struct MessengerConfig {
 
 impl MessengerConfig {
     pub fn host(&self) -> Host<&str> {
-        // safe to unwrap as we validate that host is not empty
-        self.url.host().unwrap()
+        self.url
+            .host()
+            .expect("assert: host is validated to be nonempty in config")
     }
 }
 
-// We should output token and full url in logs
+// We shouldn't output confidential token and full url in logs
 impl Debug for MessengerConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(

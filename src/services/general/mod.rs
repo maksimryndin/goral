@@ -6,7 +6,7 @@ use crate::services::general::configuration::General;
 use crate::services::Service;
 use crate::storage::AppendableLog;
 use crate::{Notification, Shared};
-use anyhow::Result;
+
 use async_trait::async_trait;
 
 use std::fmt::Debug;
@@ -47,29 +47,30 @@ impl GeneralService {
             notification
         );
 
-        let result = match notification.level {
-            Level::INFO | Level::DEBUG | Level::TRACE => {
-                messenger
-                    .send_info(&self.messenger_config, &notification.message)
-                    .await
-            }
-            Level::WARN => {
-                messenger
-                    .send_warning(&self.messenger_config, &notification.message)
-                    .await
-            }
-            Level::ERROR => {
-                messenger
-                    .send_error(&self.messenger_config, &notification.message)
-                    .await
-            }
-        };
+        let result = messenger
+            .send_by_level(
+                &self.messenger_config,
+                &notification.message,
+                notification.level,
+            )
+            .await;
         if let Err(_) = result {
             tracing::error!(
                 "{} service failed to send message: {:?}",
                 self.name(),
                 notification
             );
+        }
+    }
+
+    async fn collect_notifications(&mut self) {
+        let messenger = self
+            .shared
+            .messenger
+            .clone()
+            .expect("assert: messenger is always configured for general service");
+        while let Some(notification) = self.channel.recv().await {
+            self.send_notification(notification, &messenger).await;
         }
     }
 }
@@ -86,16 +87,7 @@ impl Service for GeneralService {
 
     #[instrument(skip_all)]
     async fn run(&mut self, _: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
-        let messenger = self
-            .shared
-            .messenger
-            .clone()
-            .expect("assert: messenger is always configured for general service");
-        tracing::info!(
-            "{} initialized with log level {}",
-            self.name(),
-            self.log_level
-        );
+        tracing::info!("running with log level {}", self.log_level);
         loop {
             tokio::select! {
                 result = shutdown.recv() => {
@@ -104,23 +96,17 @@ impl Service for GeneralService {
                         Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
                     };
                     tracing::info!("{} service has got shutdown signal", self.name());
-                    if graceful_shutdown_timeout > 0 {
-                        let graceful_shutdown_timeout: u16 = graceful_shutdown_timeout - 1;
-                        loop {
-                            tokio::select! {
-                                _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => return,
-                                Some(notification) = self.channel.recv() => {
-                                    self.send_notification(notification, &messenger).await;
-                                }
-                            }
-                        }
+                    // we read out messages from other services and componens as much as we can (so we don't close the channel)
+                    assert!(graceful_shutdown_timeout > 0, "graceful_shutdown_timeout is validated in configuration to be positive");
+                    let graceful_shutdown_timeout = graceful_shutdown_timeout - 1;
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {},
+                        _ = self.collect_notifications() => {}
                     }
                     tracing::info!("{} service has successfully shutdowned", self.name());
                     return;
                 },
-                Some(notification) = self.channel.recv() => {
-                    self.send_notification(notification, &messenger).await;
-                }
+                _ = self.collect_notifications() => {}
             }
         }
     }

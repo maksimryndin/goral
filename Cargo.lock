@@ -562,6 +562,8 @@ dependencies = [
  "config",
  "futures",
  "google-sheets4",
+ "hyper",
+ "hyper-rustls",
  "lazy_static",
  "prometheus",
  "prometheus-parse",

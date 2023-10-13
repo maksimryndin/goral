@@ -17,6 +17,8 @@ async-trait = "0.1"
 chrono = { version = "0.4" }
 clap = { version = "4.4.6", features = ["derive"] }
 config = { version = "0.13.3", features = ["toml"] }
+hyper = { version = "0.14", features = ["http1", "http2", "client"]} # using the same version as google-sheets4
+hyper-rustls = "0.24"
 futures = "0.3"
 google-sheets4 = "*"
 prometheus-parse = "0.2.4"

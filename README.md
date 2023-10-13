@@ -46,6 +46,16 @@ Basically, you can delete them (new sheets are autocreated) or filter them with 
 
 ### General
 Liveness probes follow the same rules as for k8s.
+
+### Healthcheck
+https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+gRPC
+Health service should be configured on the app side
+See also:
+- https://kubernetes.io/blog/2018/10/01/health-checking-grpc-servers-on-kubernetes/
+- https://github.com/grpc/grpc/blob/v1.59.1/doc/health-checking.md
+
+
 ### Metrics
 ### Logs
 ### Resources

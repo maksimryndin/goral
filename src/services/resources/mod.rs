@@ -1,11 +1,11 @@
 pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
-use crate::messenger::BoxedMessenger;
+
 use crate::services::resources::configuration::Resources;
 use crate::services::Service;
 use crate::Shared;
 use async_trait::async_trait;
-use std::sync::Arc;
+
 use std::time::Duration;
 
 pub const RESOURCES_SERVICE_NAME: &str = "resources";

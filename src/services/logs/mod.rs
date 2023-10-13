@@ -1,11 +1,11 @@
 pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
-use crate::messenger::BoxedMessenger;
+
 use crate::services::logs::configuration::Logs;
 use crate::services::Service;
 use crate::Shared;
 use async_trait::async_trait;
-use std::sync::Arc;
+
 use std::time::Duration;
 
 pub const LOGS_SERVICE_NAME: &str = "logs";

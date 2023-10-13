@@ -1,4 +1,6 @@
-use crate::configuration::{case_insensitive_enum, host_validation, port_validation};
+use crate::configuration::{
+    case_insensitive_enum, host_validation, port_validation, push_interval_secs,
+};
 use crate::messenger::configuration::MessengerConfig;
 
 use serde_derive::Deserialize;
@@ -47,7 +49,7 @@ fn liveness_timeout_ms() -> u32 {
     3000
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Clone, Validate)]
 pub(crate) enum LivenessType {
     Http,
     Tcp,
@@ -107,4 +109,7 @@ pub(crate) struct Healthcheck {
     pub(crate) messenger: Option<MessengerConfig>,
     pub(crate) spreadsheet_id: String,
     pub(crate) liveness: Vec<Liveness>,
+    #[validate(minimum = 10)]
+    #[serde(default = "push_interval_secs")]
+    pub(crate) push_interval_secs: u16,
 }

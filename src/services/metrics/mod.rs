@@ -1,10 +1,10 @@
 pub(crate) mod configuration;
-use crate::messenger::BoxedMessenger;
+
 use crate::services::metrics::configuration::Metrics;
 use crate::services::Service;
 use crate::Shared;
 use async_trait::async_trait;
-use std::sync::Arc;
+
 use std::time::Duration;
 use url::Url;
 
