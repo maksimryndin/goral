@@ -76,4 +76,4 @@ TODO
 - All messages and sheets must be identified by host id
 - host_id length validation (less than 16 chars)
 - Windows and MacOs support?
-- tab colors for service and column autowidth
+- tab colors for service

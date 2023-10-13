@@ -1,6 +1,8 @@
-use crate::spreadsheet::sheet::{Header, Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
+use crate::spreadsheet::sheet::{
+    Header, Rows, Sheet, SheetId, TabColorRGB, UpdateSheet, VirtualSheet,
+};
 use crate::spreadsheet::{Metadata, SpreadsheetAPI};
-use crate::Sender;
+use crate::{get_service_tab_color, Sender};
 use anyhow::Result;
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData};
@@ -172,10 +174,12 @@ impl Storage {
 }
 
 pub fn create_log(storage: Arc<Storage>, spreadsheet_id: String, service: String) -> AppendableLog {
+    let tab_color_rgb = get_service_tab_color(&service);
     AppendableLog {
         storage,
         spreadsheet_id,
         service,
+        tab_color_rgb,
     }
 }
 
@@ -183,6 +187,7 @@ pub struct AppendableLog {
     storage: Arc<Storage>,
     service: String,
     spreadsheet_id: String,
+    tab_color_rgb: TabColorRGB,
 }
 
 impl AppendableLog {
@@ -329,6 +334,7 @@ impl AppendableLog {
                         headers,
                         Metadata::new(metadata),
                         &METADATA_KEYS_FOR_ID,
+                        self.tab_color_rgb,
                     );
                     let sheet_id = sheet.sheet_id();
                     let row_count = sheet.row_count().unwrap();

@@ -16,6 +16,7 @@ use std::mem;
 use std::str::FromStr;
 
 pub(crate) type SheetId = i32;
+pub(crate) type TabColorRGB = (f32, f32, f32);
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum SheetType {
@@ -106,6 +107,7 @@ pub(crate) struct Sheet {
     pub(super) column_count: Option<i32>,
     pub(super) headers: Vec<Header>,
     pub(super) metadata: Metadata,
+    pub(super) tab_color: TabColorRGB,
 }
 
 impl Sheet {
@@ -190,6 +192,17 @@ impl From<GoogleSheet> for Sheet {
                 .as_ref()
                 .and_then(|gp| gp.column_count),
             metadata: Metadata::from(metadata),
+            tab_color: properties
+                .tab_color_style
+                .and_then(|tcs| tcs.rgb_color)
+                .map(|rgb_color| {
+                    (
+                        rgb_color.red.unwrap_or(0.0),
+                        rgb_color.green.unwrap_or(0.0),
+                        rgb_color.blue.unwrap_or(0.0),
+                    )
+                })
+                .unwrap_or((0.0, 0.0, 0.0)),
             headers,
         }
     }
@@ -262,6 +275,15 @@ impl VirtualSheet {
                     sheet_type: Some(self.sheet.sheet_type.to_string()),
                     grid_properties,
                     title: Some(self.sheet.title),
+                    tab_color_style: Some(ColorStyle {
+                        rgb_color: Some(Color {
+                            alpha: Some(0.0),
+                            red: Some(self.sheet.tab_color.0),
+                            green: Some(self.sheet.tab_color.1),
+                            blue: Some(self.sheet.tab_color.2),
+                        }),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
             }),
@@ -314,8 +336,16 @@ impl VirtualSheet {
         headers: Vec<Header>,
         metadata: Metadata,
         meta_keys_for_id: &[&str],
+        tab_color: TabColorRGB,
     ) -> Self {
-        Self::new(title, SheetType::Grid, headers, metadata, meta_keys_for_id)
+        Self::new(
+            title,
+            SheetType::Grid,
+            headers,
+            metadata,
+            meta_keys_for_id,
+            tab_color,
+        )
     }
 
     fn new(
@@ -324,6 +354,7 @@ impl VirtualSheet {
         headers: Vec<Header>,
         metadata: Metadata,
         meta_keys_for_id: &[&str],
+        tab_color: TabColorRGB,
     ) -> Self {
         let id_string_parts: Vec<String> = meta_keys_for_id
             .into_iter()
@@ -345,6 +376,7 @@ impl VirtualSheet {
             row_count: Some(2), // for headers and 1 row for data is required otherwise "You can't freeze all visible rows on the sheet.","status":"INVALID_ARGUMENT""
             column_count: Some(headers.len() as i32),
             headers,
+            tab_color,
             metadata,
         };
         Self { sheet }

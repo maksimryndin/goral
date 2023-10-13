@@ -14,6 +14,7 @@ use services::metrics::{MetricsService, METRICS_SERVICE_NAME};
 use services::resources::{ResourcesService, RESOURCES_SERVICE_NAME};
 use services::Service;
 pub use services::*;
+use spreadsheet::sheet::TabColorRGB;
 pub use spreadsheet::*;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
@@ -22,6 +23,22 @@ use storage::Storage;
 pub use storage::*;
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender as TokioSender};
 use tracing::Level;
+
+fn get_service_tab_color(service_name: &str) -> TabColorRGB {
+    let rgb = match service_name {
+        GENERAL_SERVICE_NAME => (0, 0, 0), // general service hasn't sheets
+        HEALTHCHECK_SERVICE_NAME => (255, 0, 0), // red
+        LOGS_SERVICE_NAME => (0, 0, 255),  // blue
+        METRICS_SERVICE_NAME => (153, 0, 255), // purple
+        RESOURCES_SERVICE_NAME => (0, 255, 0), // green,
+        _ => panic!("assert: every service has its tab color defined"),
+    };
+    (
+        rgb.0 as f32 / 255.0,
+        rgb.1 as f32 / 255.0,
+        rgb.2 as f32 / 255.0,
+    )
+}
 
 // collect messengers hosts (for proper connection pooling) because some service may share a messenger
 pub fn collect_messengers(
