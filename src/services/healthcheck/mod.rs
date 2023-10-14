@@ -3,7 +3,7 @@ pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
 
 use crate::services::healthcheck::configuration::{
-    Healthcheck, Liveness as LivenessConfig, LivenessType,
+    scrape_push_rule, Healthcheck, Liveness as LivenessConfig, LivenessType,
 };
 use crate::services::Service;
 use crate::storage::{AppendableLog, Datarow, Datavalue};
@@ -79,16 +79,20 @@ pub(crate) struct HealthcheckService {
     liveness: Vec<Liveness>,
     messenger_config: Option<MessengerConfig>,
     push_interval: Duration,
+    channel_capacity: usize,
 }
 
 impl HealthcheckService {
     pub(crate) fn new(shared: Shared, config: Healthcheck) -> HealthcheckService {
+        let channel_capacity = scrape_push_rule(&config.liveness, &config.push_interval_secs)
+            .expect("assert: push/scrate ratio is validated at configuration");
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
             liveness: config.liveness.into_iter().map(|l| l.into()).collect(),
             messenger_config: config.messenger,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
+            channel_capacity,
         }
     }
 
@@ -263,23 +267,17 @@ impl Service for HealthcheckService {
         self.spreadsheet_id.as_str()
     }
 
-    #[instrument(skip_all)]
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
-        //  channel to collect liveness checks results
-        // appending to log is time-consuming
-        // during the append we accumulate liveness outputs
-        // sum of <append duration>/<liveness.scrape> over each liveness
-        // we take 10 secs as append maximum duration
-        let channel_capacity = self
-            .liveness
-            .iter()
-            .fold(0, |acc, l| acc + 10 / l.period.as_secs() + 1);
+        log.healthcheck()
+            .await
+            .expect("failed to connect to Google API");
         tracing::info!(
-            "initialized with spreadsheet {}, channel_capacity {}",
+            "running with spreadsheet {}, channel_capacity {}",
             self.spreadsheet_id(),
-            channel_capacity
+            self.channel_capacity
         );
-        let (tx, mut data_receiver) = mpsc::channel(channel_capacity as usize);
+        //  channel to collect liveness checks results
+        let (tx, mut data_receiver) = mpsc::channel(self.channel_capacity);
         self.run_checks(tx).await;
         let mut liveness_previous_state = vec![false; self.liveness.len()];
         let mut push_interval = tokio::time::interval(self.push_interval);

@@ -1,5 +1,5 @@
 use crate::configuration::{
-    case_insensitive_enum, host_validation, port_validation, push_interval_secs,
+    case_insensitive_enum, ceiled_division, host_validation, port_validation, push_interval_secs,
 };
 use crate::messenger::configuration::MessengerConfig;
 
@@ -23,7 +23,7 @@ fn liveness_rule(
         },
         (None, Some(_), LivenessType::Command) => Ok(()),
         _ => Err(serde_valid::validation::Error::Custom(
-            "liveness probe type should be either `command` with respective field or `http/tcp/grpc` with `endpoint`".to_owned(),
+            "liveness probe type should be either `command` with respective field or `http/tcp/grpc` with `endpoint`".to_string(),
         )),
     }
 }
@@ -35,10 +35,42 @@ fn timeout_period_rule(
     let period_ms = *period_secs as u32 * 1000;
     if timeout_ms > &period_ms {
         return Err(serde_valid::validation::Error::Custom(
-            "liveness `timeout_ms` should be less than `period_secs`".to_owned(),
+            "liveness `timeout_ms` should be less than `period_secs`".to_string(),
         ));
     }
     Ok(())
+}
+
+pub(crate) fn scrape_push_rule(
+    liveness: &Vec<Liveness>,
+    push_interval_secs: &u16,
+) -> Result<usize, serde_valid::validation::Error> {
+    let number_of_rows_in_batch = liveness.iter().fold(0, |acc, l| {
+        acc + ceiled_division(*push_interval_secs, l.period_secs)
+    }); // add one for ceiling
+        // we truncate output of probe to 1024 bytes - so estimated payload (without other fields) is around 20 KiB
+    const LIMIT: u16 = 20;
+    if number_of_rows_in_batch > LIMIT {
+        return Err(serde_valid::validation::Error::Custom(
+            format!("push interval ({push_interval_secs}) is too big for current choices of liveness periods or liveness periods are too small - too much data ({number_of_rows_in_batch} rows) would be accumulated before saving to a spreadsheet")
+        ));
+    }
+    // appending to log is time-consuming
+    // during the append we accumulate liveness outputs in the channel
+    // Estimate of append duration - 1 sec per row
+    // it intuitively clear for the user in a typical case of one healthcheck with period 1 sec and push interval 20 secs
+    let append_duration = number_of_rows_in_batch;
+    let number_of_queued_rows = liveness
+        .iter()
+        .fold(0, |acc, l| acc + ceiled_division(append_duration, l.period_secs)) // add one for ceiling
+        as usize;
+    // we truncate output of probe to 1024 bytes - so estimated payload (without other fields) is around 20 KiB
+    if number_of_queued_rows > LIMIT as usize {
+        return Err(serde_valid::validation::Error::Custom(
+            format!("push interval ({push_interval_secs}) is too big for current choices of liveness periods or liveness periods are too small - too much data ({number_of_queued_rows} rows) would be accumulated before saving to a spreadsheet")
+        ));
+    }
+    Ok(number_of_queued_rows)
 }
 
 fn liveness_period_secs() -> u16 {
@@ -104,6 +136,7 @@ pub(crate) struct Liveness {
 }
 
 #[derive(Debug, Deserialize, Validate)]
+#[rule(scrape_push_rule(liveness, push_interval_secs))]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Healthcheck {
     pub(crate) messenger: Option<MessengerConfig>,

@@ -85,7 +85,6 @@ impl Service for GeneralService {
         ""
     }
 
-    #[instrument(skip_all)]
     async fn run(&mut self, _: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         tracing::info!("running with log level {}", self.log_level);
         loop {

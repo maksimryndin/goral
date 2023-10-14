@@ -16,5 +16,18 @@ pub trait Service {
 
     fn spreadsheet_id(&self) -> &str;
 
-    async fn run(&mut self, _appendable_log: AppendableLog, _shutdown: Receiver<u16>) {}
+    async fn run(&mut self, _appendable_log: AppendableLog, mut shutdown: Receiver<u16>) {
+        loop {
+            tokio::select! {
+                result = shutdown.recv() => {
+                    let graceful_shutdown_timeout = match result {
+                        Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
+                        Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
+                    };
+                    tracing::info!("{} service has got shutdown signal", self.name());
+                    return;
+                }
+            }
+        }
+    }
 }

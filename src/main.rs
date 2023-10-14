@@ -120,7 +120,12 @@ async fn main() {
         }));
     }
 
+    let goral = try_join_all(tasks);
+    tokio::pin!(goral);
+
     tokio::select! {
+        biased;
+
         _ = async { signal::ctrl_c().await.expect("failed to listen for Ctrl+C event") } => {
             let msg = format!("{APP_NAME} has received `Ctrl+C` signal, will try to gracefully shutdown within {graceful_shutdown_timeout} secs");
             tracing::warn!("{}", msg.as_str());
@@ -131,7 +136,7 @@ async fn main() {
             tracing::warn!("{}", msg.as_str());
             tx.try_warn(msg);
         }
-        res = try_join_all(tasks) => {
+        res = &mut goral => {
             res.unwrap(); // propagate panics from spawned tasks
         }
     }
@@ -139,10 +144,12 @@ async fn main() {
         .send(graceful_shutdown_timeout)
         .expect("assert: services should run when shutdown signal is sent");
 
-    tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())).await;
-    if shutdown.receiver_count() > 0 {
-        tracing::warn!("{} couldn't gracefully shutdown", APP_NAME);
-    } else {
-        tracing::info!("{} has gracefully shutdowned", APP_NAME);
+    tokio::select! {
+        _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {
+            tracing::warn!("{} couldn't gracefully shutdown", APP_NAME);
+        },
+        _ = &mut goral => {
+            tracing::info!("{} has gracefully shutdowned", APP_NAME);
+        }
     }
 }

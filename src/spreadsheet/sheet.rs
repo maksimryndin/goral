@@ -422,7 +422,12 @@ pub(crate) fn str_to_id(s: &str) -> i32 {
     let mut hasher = DefaultHasher::new();
     hasher.write(s.as_bytes());
     let bytes = hasher.finish().to_be_bytes();
-    (u32::from_be_bytes(bytes[4..8].try_into().unwrap()) as i32).abs()
+    (u32::from_be_bytes(
+        bytes[4..8]
+            .try_into()
+            .expect("assert: u32 is created from 4 bytes"),
+    ) as i32)
+        .abs()
 }
 
 fn generate_metadata_id(key: &str, sheet_id: SheetId) -> i32 {
@@ -432,37 +437,17 @@ fn generate_metadata_id(key: &str, sheet_id: SheetId) -> i32 {
 #[derive(Debug)]
 pub(crate) struct UpdateSheet {
     sheet_id: SheetId,
-    title: String,
     metadata: Metadata,
 }
 
 impl UpdateSheet {
-    pub(crate) fn new(sheet_id: SheetId, title: String, metadata: Metadata) -> Self {
-        Self {
-            sheet_id,
-            title,
-            metadata,
-        }
+    pub(crate) fn new(sheet_id: SheetId, metadata: Metadata) -> Self {
+        Self { sheet_id, metadata }
     }
 
     pub(super) fn into_api_requests(self) -> Vec<Request> {
         let mut requests = Vec::with_capacity(1 + self.metadata.0.len());
-        let UpdateSheet {
-            sheet_id,
-            title,
-            metadata,
-        } = self;
-        requests.push(Request {
-            update_sheet_properties: Some(UpdateSheetPropertiesRequest {
-                fields: Some(FieldMask::from_str("sheetId,title").unwrap()),
-                properties: Some(SheetProperties {
-                    sheet_id: Some(sheet_id),
-                    title: Some(title),
-                    ..Default::default()
-                }),
-            }),
-            ..Default::default()
-        });
+        let UpdateSheet { sheet_id, metadata } = self;
         for (k, v) in metadata.0.into_iter() {
             requests.push(Request {
                 update_developer_metadata: Some(UpdateDeveloperMetadataRequest {

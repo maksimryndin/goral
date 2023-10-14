@@ -40,7 +40,7 @@ Telegram setup:
 
 TODO https://api.slack.com/tutorials/tracks/posting-messages-with-curl
 
-You shouldn't change headers (first row) of sheets managed by Goral (which have titles <host_id>:<service>:<parameter> <update datetime>). If you change them, Goral will delete that sheet and recreate new one but you will lose your collected data.
+Sheet managed by Goral has title <host_id>:<service>:<parameter to collect data on> <update datetime> <sheet id>. You can change the title, column names and other elemens of the sheet but be aware that Goral will continue to append data in the same order as when the sheet was created by Goral if the form of the data hasn't changed (in that case a new sheet is created).
 
 # Services
 
@@ -67,6 +67,7 @@ Liveness probes follow the same rules as for [k8s](https://kubernetes.io/docs/ta
 * for gRPC Health service should be configured on the app side (see also [gRPC health checking protocol](https://github.com/grpc/grpc/blob/v1.59.1/doc/health-checking.md))
 
 Goral saves probe time, status (true for alive) and text output (for HTTP GET - response text, for command - stdout output, for all probes - error text). Each probe is saved at a separate sheet with its own uptime chart.
+
 
 ### Metrics
 ### Logs

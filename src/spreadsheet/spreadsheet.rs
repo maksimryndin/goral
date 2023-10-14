@@ -37,7 +37,7 @@ macro_rules! handle_error {
                 }
                 Error::MissingToken(_) => {
                     tracing::error!(
-                        "{}. Probably server time skewed. Sync server time with NTP.",
+                        "{}Probably server time skewed. Sync server time with NTP.",
                         e
                     );
                     $self.$send_notification.error("MissingToken error for Google API. Probably server time skewed. Sync server time with NTP.".to_string()).await;

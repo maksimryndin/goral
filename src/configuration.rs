@@ -14,6 +14,16 @@ use url::Url;
 
 pub const APP_NAME: &str = "GORAL";
 
+pub(crate) fn ceiled_division(divisable: u16, divisor: u16) -> u16 {
+    let quotient = divisable / divisor;
+    let remainder = divisable % divisor;
+    if remainder == 0 {
+        quotient
+    } else {
+        quotient + 1
+    }
+}
+
 pub(crate) fn scrape_interval_secs() -> u16 {
     10
 }
