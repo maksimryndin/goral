@@ -1,11 +1,9 @@
 pub mod sheet;
 pub mod spreadsheet;
-use google_sheets4::hyper::client::connect::HttpConnector;
-use google_sheets4::hyper_rustls::HttpsConnector;
+use crate::HyperConnector;
 use google_sheets4::oauth2;
 pub use spreadsheet::*;
 use std::collections::HashMap;
-pub(crate) type HyperConnector = HttpsConnector<HttpConnector>;
 
 #[derive(Debug)]
 pub(crate) struct Metadata(HashMap<String, String>);
@@ -39,12 +37,17 @@ impl From<HashMap<String, String>> for Metadata {
 
 pub async fn get_google_auth(
     service_account_credentials_path: &str,
-) -> oauth2::authenticator::Authenticator<HyperConnector> {
+) -> (String, oauth2::authenticator::Authenticator<HyperConnector>) {
     let key = oauth2::read_service_account_key(service_account_credentials_path)
         .await
         .expect("failed to read service account credentials file");
-    oauth2::ServiceAccountAuthenticator::builder(key)
-        .build()
-        .await
-        .expect("failed to create Google API authenticator")
+    (
+        key.project_id
+            .clone()
+            .expect("assert: service account has project id"),
+        oauth2::ServiceAccountAuthenticator::builder(key)
+            .build()
+            .await
+            .expect("failed to create Google API authenticator"),
+    )
 }

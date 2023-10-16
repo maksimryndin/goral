@@ -74,8 +74,8 @@ impl Into<CellData> for Header {
                 background_color_style: Some(ColorStyle {
                     rgb_color: Some(Color {
                         alpha: Some(0.0),
-                        red: Some(1.0),
-                        green: Some(0.8),
+                        red: Some(0.0),
+                        green: Some(0.0),
                         blue: Some(0.0),
                     }),
                     ..Default::default()
@@ -83,6 +83,15 @@ impl Into<CellData> for Header {
                 horizontal_alignment: Some("CENTER".to_string()),
                 text_format: Some(TextFormat {
                     bold: Some(true),
+                    foreground_color_style: Some(ColorStyle {
+                        rgb_color: Some(Color {
+                            alpha: Some(0.0),
+                            red: Some(1.0),
+                            green: Some(1.0),
+                            blue: Some(1.0),
+                        }),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
                 ..Default::default()

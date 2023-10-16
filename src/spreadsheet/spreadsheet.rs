@@ -6,16 +6,14 @@ use google_sheets4::api::{
 use crate::spreadsheet::sheet::{
     sheet_headers, Header, Rows, Sheet, SheetId, SheetType, UpdateSheet, VirtualSheet,
 };
-use crate::spreadsheet::HyperConnector;
+use crate::HyperConnector;
 use google_sheets4::{hyper, hyper_rustls, oauth2, Error, Sheets};
 
 use crate::spreadsheet::Metadata;
 use crate::Sender;
+use chrono::Utc;
 use std::collections::BTreeMap;
-
 use std::time::Duration;
-use tokio_retry::strategy::{jitter, FibonacciBackoff};
-use tokio_retry::Retry;
 use tracing::instrument;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en
@@ -32,16 +30,17 @@ macro_rules! handle_error {
                 | Error::UploadSizeLimitExceeded(_, _)
                 | Error::FieldClash(_) => {
                     tracing::error!("{}", e);
-                    $self.$send_notification.error(format!("Fatal error for Google API access: `{:?}`", e)).await;
-                    panic!("{}", e);
+                    $self.$send_notification.fatal(format!("Fatal error for Google API access\n```{}```", e)).await;
+                    panic!("Fatal error for Google API access: `{}`", e);
                 }
                 Error::MissingToken(_) => {
+                    let msg = format!("`MissingToken error` for Google API\nProbably server time skewed which is now `{}`\nSync server time with NTP", Utc::now());
                     tracing::error!(
-                        "{}Probably server time skewed. Sync server time with NTP.",
-                        e
+                        "{}{}",
+                        e, msg
                     );
-                    $self.$send_notification.error("MissingToken error for Google API. Probably server time skewed. Sync server time with NTP.".to_string()).await;
-                    panic!("{}", e);
+                    $self.$send_notification.fatal(msg).await;
+                    panic!("{}Probably server time skewed. Sync server time with NTP.", e);
                 }
                 // retry
                 Error::HttpError(_)
@@ -108,42 +107,6 @@ impl SpreadsheetAPI {
         Ok(handle_error!(self, send_notification, result)?)
     }
 
-    #[instrument(skip_all)]
-    async fn sheets_headers(
-        &self,
-        spreadsheet_id: &str,
-        sheets: &Vec<Sheet>,
-    ) -> Result<BTreeMap<SheetId, Vec<Header>>> {
-        // first get all spreadsheet sheets properties without data
-        // second for sheets in interest (by tab color) fetch headers
-        // and last row timestamp??
-        let call = self.hub.spreadsheets().get(spreadsheet_id).param(
-            "fields",
-            "sheets.properties.sheetId,sheets.data.row_data.values(effective_value,note)",
-        );
-        let result = sheets
-            .into_iter()
-            .filter(|s| s.sheet_type == SheetType::Grid)
-            .fold(call, |request, sheet| {
-                request.add_ranges(&sheet.header_range_r1c1().unwrap())
-            })
-            .doit()
-            .await;
-        tracing::debug!("{:?}", result);
-        let response = handle_error!(self, send_notification, result)?;
-        Ok(response
-            .sheets
-            .expect("spreadsheet should contain sheets property even if no sheets")
-            .into_iter()
-            .map(|mut s| {
-                (
-                    s.properties.as_ref().unwrap().sheet_id.unwrap(),
-                    sheet_headers(&mut s),
-                )
-            })
-            .collect())
-    }
-
     fn calculate_usage(num_of_cells: i32) -> u8 {
         (100.0 * (num_of_cells as f64 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f64)) as u8
     }
@@ -160,20 +123,14 @@ impl SpreadsheetAPI {
         spreadsheet_id: &str,
         metadata: &Metadata,
     ) -> Result<(Vec<Sheet>, u8, u8)> {
-        let retry_strategy = FibonacciBackoff::from_millis(100)
-            .max_delay(Duration::from_secs(10))
-            .map(jitter);
-
-        let response = Retry::spawn(retry_strategy.clone(), || {
-            self.spreadsheet_meta(spreadsheet_id)
-        })
-        .await
-        .map_err(|e| {
+        let response = self.spreadsheet_meta(spreadsheet_id).await.map_err(|e| {
             tracing::error!("{}", e);
             e
         })?;
+
         let mut total_cells: i32 = 0;
-        let mut sheets: Vec<Sheet> = response
+        let mut filtered_cells: i32 = 0;
+        let sheets: Vec<Sheet> = response
             .sheets
             .expect("spreadsheet should contain sheets property even if no sheets")
             .into_iter()
@@ -183,25 +140,11 @@ impl SpreadsheetAPI {
                 s
             })
             .filter(|s: &Sheet| s.metadata.contains(metadata))
+            .map(|s: Sheet| {
+                filtered_cells += s.number_of_cells().unwrap_or(0);
+                s
+            })
             .collect();
-
-        let mut sheets_headers = Retry::spawn(retry_strategy, || {
-            self.sheets_headers(spreadsheet_id, &sheets)
-        })
-        .await
-        .map_err(|e| {
-            tracing::error!("{}", e);
-            e
-        })?;
-
-        let mut filtered_cells: i32 = 0;
-        // update headers for sheets
-        sheets.iter_mut().for_each(|s| {
-            filtered_cells += s.number_of_cells().unwrap_or(0);
-            s.headers = sheets_headers
-                .remove(&s.sheet_id)
-                .expect("managed sheet is not found")
-        });
 
         Ok((
             sheets,
@@ -267,10 +210,6 @@ impl SpreadsheetAPI {
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
     ) -> Result<()> {
-        // We do not retry sheet creation as this call usually goes after
-        // `sheets_filtered_by_metadata` which is retriable and should either fix an error
-        // or fail.
-        // Retrying `add_sheets` would require cloning all sheets at every retry attempt
         self._crud_sheets(spreadsheet_id, updates, sheets, data)
             .await
             .map_err(|e| {

@@ -5,6 +5,8 @@ pub mod spreadsheet;
 pub mod storage;
 use configuration::Configuration;
 pub use configuration::*;
+use google_sheets4::hyper_rustls::HttpsConnector;
+use hyper::{client::connect::HttpConnector, Client};
 pub use messenger::*;
 use messenger::{get_messenger, BoxedMessenger};
 use services::general::{GeneralService, GENERAL_SERVICE_NAME};
@@ -19,10 +21,16 @@ pub use spreadsheet::*;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use storage::*;
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender as TokioSender};
 use tracing::Level;
+
+pub(crate) type HyperConnector = HttpsConnector<HttpConnector>;
+pub(crate) type HttpsClient = Client<HyperConnector>;
+
+pub(crate) const HOST_ID_CHARS_LIMIT: usize = 8;
 
 fn get_service_tab_color(service_name: &str) -> TabColorRGB {
     let rgb = match service_name {
@@ -226,6 +234,16 @@ impl Sender {
     pub fn try_error(&self, message: String) {
         let notification = Notification::new(message, Level::ERROR);
         self.send_nonblock(notification)
+    }
+
+    pub async fn fatal(&self, message: String) {
+        let notification = Notification::new(message, Level::ERROR);
+        self.send(notification).await;
+        // for fatal errors we need some time to send error
+        // It is more important to notify user via messenger than to
+        // restart quickly because restart doesn't help for recovery
+        // user is required to fix a problem
+        tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
 

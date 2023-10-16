@@ -46,7 +46,7 @@ struct Args {
     /// overwrite config values.
     #[arg(short, long)]
     config: String,
-    /// Host identifier. Keep this argument persistent for this instance of Goral
+    /// Host identifier (8 characters). Keep this argument persistent for this instance of Goral
     /// to properly identify your apps running at this host.
     /// It should be unique among all your hosts where Gorals observe your apps
     /// as in case of the same spreadsheet used for several hosts the host id allows
@@ -65,13 +65,6 @@ async fn main() {
     // Retrieve configuration
     let args = Args::parse();
 
-    // std::panic::set_hook(Box::new(|info| {
-    //     //let stacktrace = Backtrace::capture();
-    //     //let stacktrace = Backtrace::force_capture();
-    //     //println!("Got panic. @info:{}\n@stackTrace:{}", info, stacktrace);
-    //     std::process::abort();
-    // }));
-
     let config = Configuration::new(&args.config)
         .expect("Incorrect configuration (can be potentially overriden by environment variables starting with `GORAL__`)");
 
@@ -84,7 +77,11 @@ async fn main() {
     } else {
         (
             None,
-            Some(tracing_subscriber::fmt::layer().with_target(true)),
+            Some(
+                tracing_subscriber::fmt::layer()
+                    .with_thread_names(true)
+                    .with_target(true),
+            ),
         )
     };
 
@@ -95,17 +92,23 @@ async fn main() {
         .init();
 
     let graceful_shutdown_timeout = config.general.graceful_timeout_secs;
-    let auth = get_google_auth(&config.general.service_account_credentials_path).await;
-    let (tx, rx) = mpsc::channel(5);
+    let (project_id, auth) =
+        get_google_auth(&config.general.service_account_credentials_path).await;
+    let (tx, rx) = mpsc::channel(5); // TODO estimate capacity via services quantity + some reserve
     let tx = Sender::new(tx);
     let sheets_api = SpreadsheetAPI::new(auth, tx.clone());
-    let storage = Arc::new(Storage::new(args.id.to_string(), sheets_api, tx.clone()));
+    let storage = Arc::new(Storage::new(
+        args.id.to_string(),
+        project_id,
+        sheets_api,
+        tx.clone(),
+    ));
     let shared = Shared::new(tx.clone());
 
     let messengers = collect_messengers(&config);
     let mut services = collect_services(config, shared, messengers, rx);
 
-    let (shutdown, _shutdown_receiver) = broadcast::channel(1);
+    let (shutdown, _) = broadcast::channel(1);
     let mut tasks = Vec::with_capacity(services.len());
     while let Some(mut service) = services.pop() {
         let storage = storage.clone();
@@ -122,6 +125,7 @@ async fn main() {
 
     let goral = try_join_all(tasks);
     tokio::pin!(goral);
+    storage.welcome().await;
 
     tokio::select! {
         biased;

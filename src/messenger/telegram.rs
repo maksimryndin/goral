@@ -1,20 +1,19 @@
 use crate::messenger::configuration::MessengerConfig;
 use crate::messenger::Messenger;
+use crate::HttpsClient;
 use anyhow::anyhow;
 use anyhow::Result;
 use async_trait::async_trait;
-use google_sheets4::hyper::client::connect::HttpConnector;
-use google_sheets4::hyper_rustls::HttpsConnector;
 use hyper::{Body, Method, Request};
 use serde_derive::Serialize;
 
 pub(crate) struct Telegram {
-    client: hyper::Client<HttpsConnector<HttpConnector>>,
+    client: HttpsClient,
 }
 
 impl Telegram {
     pub(crate) fn new() -> Self {
-        let client = hyper::Client::builder().build(
+        let client: HttpsClient = hyper::Client::builder().build(
             hyper_rustls::HttpsConnectorBuilder::new()
                 .with_native_roots()
                 .https_or_http()

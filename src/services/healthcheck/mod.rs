@@ -5,23 +5,22 @@ use crate::messenger::configuration::MessengerConfig;
 use crate::services::healthcheck::configuration::{
     scrape_push_rule, Healthcheck, Liveness as LivenessConfig, LivenessType,
 };
-use crate::services::Service;
+use crate::services::{HttpClient, Service};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::Shared;
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hyper::client::connect::HttpConnector;
-use hyper::{body::HttpBody as _, Client, StatusCode, Uri};
+use futures::future::try_join_all;
+use hyper::{body::HttpBody as _, StatusCode, Uri};
 use std::fmt::{self, Debug, Display};
 use std::result::Result as StdResult;
-
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, error::TrySendError};
+use tokio::task::JoinHandle;
 use tracing::{instrument, Level};
 
-pub const HEALTHCHECK_SERVICE_NAME: &str = "healthcheck";
+pub const HEALTHCHECK_SERVICE_NAME: &str = "health";
 const MAX_BYTES_LIVENESS_OUTPUT: usize = 1024;
 type LivenessOutput = (usize, DateTime<Utc>, StdResult<String, String>);
 
@@ -100,49 +99,20 @@ impl HealthcheckService {
         tracing::trace!("making probe for {:?}", liveness);
         match liveness.typ {
             LivenessType::Http => {
-                let url = liveness
-                    .endpoint
-                    .as_ref()
-                    .expect("assert: http endpoint is set for http liveness type");
+                let url = liveness.endpoint.as_ref().expect(
+                    "assert: http endpoint is set for http liveness type, checked at configuration",
+                );
                 match url.scheme_str() {
-                    Some("http") => {
+                    Some("http") | Some("https") => {
                         // we setup a new connection for the checked app each time as a new client would do
                         // https://docs.rs/hyper/latest/hyper/client/struct.Builder.html
-                        let client: Client<HttpConnector> = Client::builder()
-                            .http09_responses(true)
-                            .http1_max_buf_size(8192)
-                            .retry_canceled_requests(false)
-                            .pool_max_idle_per_host(1)
-                            .pool_idle_timeout(Some(liveness.timeout))
-                            .build_http();
-                        let mut res = client.get(url.clone()).await.map_err(|e| e.to_string())?;
-                        let mut size = 0;
-                        let mut body = vec![];
-                        while size < MAX_BYTES_LIVENESS_OUTPUT {
-                            if let Some(next) = res.data().await {
-                                let chunk = next.map_err(|e| e.to_string())?;
-                                size += chunk.len();
-                                body.extend_from_slice(&chunk);
-                            }
-                        }
-                        if size >= MAX_BYTES_LIVENESS_OUTPUT {
-                            tracing::warn!(
-                                "output body for probe {:?} was truncated to {} bytes.",
-                                liveness,
-                                MAX_BYTES_LIVENESS_OUTPUT
-                            );
-                        }
-                        let text =
-                            String::from_utf8_lossy(&body[..MAX_BYTES_LIVENESS_OUTPUT]).to_string();
-                        if res.status() >= StatusCode::OK || res.status() < StatusCode::BAD_REQUEST
-                        {
-                            Ok(text)
-                        } else {
-                            Err(text)
-                        }
-                    }
-                    Some("https") => {
-                        todo!()
+                        let client = HttpClient::new(
+                            MAX_BYTES_LIVENESS_OUTPUT,
+                            false,
+                            liveness.timeout,
+                            url.clone(),
+                        );
+                        client.get().await
                     }
                     _ => return Err(format!("unknown url scheme for probe {:?}", liveness)),
                 }
@@ -183,14 +153,18 @@ impl HealthcheckService {
         }
     }
 
-    async fn run_checks(&self, sender: mpsc::Sender<LivenessOutput>) {
-        self.liveness.iter().enumerate().for_each(|(i, l)| {
-            let liveness = l.clone();
-            let sender = sender.clone();
-            tokio::spawn(async move {
-                Self::run_check(i, liveness, sender).await;
-            });
-        });
+    fn run_checks(&self, sender: mpsc::Sender<LivenessOutput>) -> Vec<JoinHandle<()>> {
+        self.liveness
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let liveness = l.clone();
+                let sender = sender.clone();
+                tokio::spawn(async move {
+                    Self::run_check(i, liveness, sender).await;
+                })
+            })
+            .collect()
     }
 
     async fn send_message(
@@ -252,6 +226,7 @@ impl HealthcheckService {
                     ("is_alive".to_string(), Datavalue::Bool(is_alive)),
                     ("output".to_string(), Datavalue::Text(text)),
                 ],
+                None,
             ),
         )
     }
@@ -277,8 +252,9 @@ impl Service for HealthcheckService {
             self.channel_capacity
         );
         //  channel to collect liveness checks results
-        let (tx, mut data_receiver) = mpsc::channel(self.channel_capacity);
-        self.run_checks(tx).await;
+        let (tx, mut data_receiver) = mpsc::channel(2 * self.channel_capacity);
+        let tasks = try_join_all(self.run_checks(tx));
+        tokio::pin!(tasks);
         let mut liveness_previous_state = vec![false; self.liveness.len()];
         let mut push_interval = tokio::time::interval(self.push_interval);
         let mut accumulated_data = vec![];
@@ -311,7 +287,6 @@ impl Service for HealthcheckService {
                     return;
                 },
                 _ = push_interval.tick() => {
-                    tracing::info!("appending to log {} rows", accumulated_data.len());
                     let _ = log.append(accumulated_data).await;
                     accumulated_data = vec![];
                 }
@@ -323,6 +298,9 @@ impl Service for HealthcheckService {
                         is_first_iteration = false;
                     }
                     accumulated_data.push(datarow);
+                }
+                res = &mut tasks => {
+                    res.unwrap(); // propagate panics from spawned tasks
                 }
             }
         }

@@ -2,7 +2,7 @@ use crate::spreadsheet::sheet::{
     str_to_id, Header, Rows, Sheet, SheetId, TabColorRGB, UpdateSheet, VirtualSheet,
 };
 use crate::spreadsheet::{Metadata, SpreadsheetAPI};
-use crate::{get_service_tab_color, Sender};
+use crate::{get_service_tab_color, Sender, APP_NAME, HOST_ID_CHARS_LIMIT};
 use anyhow::Result;
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData};
@@ -10,6 +10,9 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio_retry::strategy::{jitter, ExponentialBackoff};
+use tokio_retry::Retry;
 
 const METADATA_SERVICE_KEY: &str = "service";
 const METADATA_HOST_ID_KEY: &str = "host";
@@ -35,6 +38,7 @@ pub(crate) struct Datarow {
     timestamp: NaiveDateTime,
     data: Vec<(String, Datavalue)>,
     sheet_id: Option<SheetId>,
+    note: Option<String>,
 }
 
 impl Datarow {
@@ -42,12 +46,14 @@ impl Datarow {
         log_name: String,
         timestamp: NaiveDateTime,
         data: Vec<(String, Datavalue)>,
+        note: Option<String>,
     ) -> Self {
         Self {
             log_name,
             timestamp,
             data,
             sheet_id: None,
+            note,
         }
     }
 
@@ -178,16 +184,35 @@ impl Into<RowData> for Datarow {
 pub struct Storage {
     google: SpreadsheetAPI,
     host_id: String,
+    project_id: String,
     send_notification: Sender,
 }
 
 impl Storage {
-    pub fn new(host_id: String, google: SpreadsheetAPI, send_notification: Sender) -> Self {
+    pub fn new(
+        host_id: String,
+        project_id: String,
+        google: SpreadsheetAPI,
+        send_notification: Sender,
+    ) -> Self {
+        assert!(
+            host_id.chars().count() <= HOST_ID_CHARS_LIMIT,
+            "host id should be no more than {HOST_ID_CHARS_LIMIT} characters"
+        );
         Self {
             host_id,
+            project_id,
             google,
             send_notification,
         }
+    }
+
+    pub async fn welcome(&self) {
+        let msg = format!(
+            "{APP_NAME} started with [api usage page](https://console.cloud.google.com/apis/dashboard?project={}&show=all) and [api quota page](https://console.cloud.google.com/iam-admin/quotas?project={})", 
+            self.project_id, self.project_id);
+        tracing::info!("{}", msg);
+        self.send_notification.info(msg).await;
     }
 }
 
@@ -244,26 +269,67 @@ impl AppendableLog {
     }
 
     pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<()> {
+        self._append(datarows, 32).await
+    }
+
+    pub(crate) async fn append_no_retry(&mut self, datarows: Vec<Datarow>) -> Result<()> {
+        self._append(datarows, 0).await
+    }
+
+    async fn _append(&mut self, datarows: Vec<Datarow>, retry_duration: u64) -> Result<()> {
         let rows_count = datarows.len();
-        let result = self._append(datarows).await.map_err(|e| {
-            let message = format!(
-                "Saving batch data ({rows_count} rows) failed for service {}",
-                self.service
-            );
-            tracing::error!("{}", message);
-            self.storage.send_notification.try_error(message);
-            e
-        });
+        tracing::info!(
+            "appending to log {} rows for service {}",
+            rows_count,
+            self.service
+        );
+        let result = self
+            ._core_append(datarows, retry_duration)
+            .await
+            .map_err(|e| {
+                let message = format!(
+                    "Saving batch data of {rows_count} rows failed for service {}",
+                    self.service
+                );
+                tracing::error!("{}", message);
+                self.storage.send_notification.try_error(message);
+                e
+            });
+        tracing::info!(
+            "appended to log {} rows for service {}",
+            rows_count,
+            self.service
+        );
         result
     }
 
     // for newly created log sheet its headers order is determined by its first datarow. Fields for other datarows for the same sheet are sorted accordingly.
-    async fn _append(&mut self, datarows: Vec<Datarow>) -> Result<()> {
+    async fn _core_append(&mut self, datarows: Vec<Datarow>, retry_duration: u64) -> Result<()> {
         if datarows.is_empty() {
             return Ok(());
         }
-        // check that contains timestamp and all keys are the same
-        let existing_sheets = self.fetch_sheets().await?;
+        // We do not retry sheet `crud` as it goes after
+        // `fetch_sheets` which is retriable and should either fix an error
+        // or fail.
+        // Retrying `crud` would require cloning all sheets at every retry attempt
+        // https://developers.google.com/sheets/api/limits#example-algorithm
+        let retry_strategy = ExponentialBackoff::from_millis(2)
+            .max_delay(Duration::from_secs(retry_duration))
+            .map(jitter);
+
+        let mut retries = 0;
+        let existing_sheets = Retry::spawn(retry_strategy.clone(), || {
+            if retries > 0 {
+                tracing::warn!(
+                    "retrying #{} to fetch sheets for service {}",
+                    retries,
+                    self.service
+                );
+            }
+            retries += 1;
+            self.fetch_sheets()
+        })
+        .await?;
 
         tracing::debug!("existing sheets:\n{:?}", existing_sheets);
 
@@ -376,13 +442,18 @@ fn prepare_sheet_title(
     timestamp: &DateTime<Utc>,
     sheet_id: &SheetId,
 ) -> String {
+    // to prevent sheet titles conflicts we "randomize" a little bit sheet creation datetime
+    let jitter = *sheet_id as u8;
+    let timestamp = *timestamp + Duration::from_secs(jitter.into());
+    //TODO limit to 50 chars
+    // use @ as a delimeter
+    // see https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
     format!(
-        "{}:{}:{} {} {}",
+        "{}@{}@{} {}",
+        log_name,
         host_id,
         service,
-        log_name,
         timestamp.format("%yy/%m/%d %H:%M:%S").to_string(),
-        sheet_id
     )
 }
 

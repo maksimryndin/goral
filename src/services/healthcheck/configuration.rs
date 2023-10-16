@@ -41,18 +41,26 @@ fn timeout_period_rule(
     Ok(())
 }
 
-pub(crate) fn scrape_push_rule(
+pub(super) fn scrape_push_rule(
     liveness: &Vec<Liveness>,
     push_interval_secs: &u16,
 ) -> Result<usize, serde_valid::validation::Error> {
+    for l in liveness {
+        if l.period_secs > *push_interval_secs {
+            return Err(serde_valid::validation::Error::Custom(
+                format!("push interval ({push_interval_secs}) should be greater or equal than liveness period {}", l.period_secs)
+            ));
+        }
+    }
+
     let number_of_rows_in_batch = liveness.iter().fold(0, |acc, l| {
         acc + ceiled_division(*push_interval_secs, l.period_secs)
-    }); // add one for ceiling
-        // we truncate output of probe to 1024 bytes - so estimated payload (without other fields) is around 20 KiB
+    });
+    // we truncate output of probe to 1024 bytes - so estimated payload (without other fields) is around 20 KiB
     const LIMIT: u16 = 20;
     if number_of_rows_in_batch > LIMIT {
         return Err(serde_valid::validation::Error::Custom(
-            format!("push interval ({push_interval_secs}) is too big for current choices of liveness periods or liveness periods are too small - too much data ({number_of_rows_in_batch} rows) would be accumulated before saving to a spreadsheet")
+            format!("push interval ({push_interval_secs}) is too big for current choices of liveness periods or liveness periods are too small - too much data ({number_of_rows_in_batch} rows vs limit of {LIMIT}) would be accumulated before saving to a spreadsheet")
         ));
     }
     // appending to log is time-consuming
@@ -60,14 +68,12 @@ pub(crate) fn scrape_push_rule(
     // Estimate of append duration - 1 sec per row
     // it intuitively clear for the user in a typical case of one healthcheck with period 1 sec and push interval 20 secs
     let append_duration = number_of_rows_in_batch;
-    let number_of_queued_rows = liveness
-        .iter()
-        .fold(0, |acc, l| acc + ceiled_division(append_duration, l.period_secs)) // add one for ceiling
-        as usize;
-    // we truncate output of probe to 1024 bytes - so estimated payload (without other fields) is around 20 KiB
+    let number_of_queued_rows = liveness.iter().fold(0, |acc, l| {
+        acc + ceiled_division(append_duration, l.period_secs)
+    }) as usize;
     if number_of_queued_rows > LIMIT as usize {
         return Err(serde_valid::validation::Error::Custom(
-            format!("push interval ({push_interval_secs}) is too big for current choices of liveness periods or liveness periods are too small - too much data ({number_of_queued_rows} rows) would be accumulated before saving to a spreadsheet")
+            format!("push interval ({push_interval_secs}) is too big for current choices of liveness periods or liveness periods are too small - too much data ({number_of_queued_rows} rows vs limit of {LIMIT}) would be accumulated before saving to a spreadsheet")
         ));
     }
     Ok(number_of_queued_rows)
