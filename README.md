@@ -1,9 +1,9 @@
-Goral
+# Goral
 ---
 Observability toolkit for small projects. Easy-to-use and compatible with industry standards.
 
 
-# Overview
+## Overview
 
 Goral is a simple observability daemon developed with the following idea in mind: when you have your favorite application in its infantry, you usually don't need a full-blown observability toolkit (which require much more setup, maintenance and resources) around as the amount of data is not so huge. It is especially true for pet projects when you just want to test an idea and deploy the app at some free-tier commodity VPS.
 
@@ -18,7 +18,7 @@ So Goral provides the following features being deployed next to your app(s):
 * You can configure different messengers and/or channels for every service (healthchecks/metrics/logs/resources) to get notifications on errors in logs of your service, liveness updates, resources overlimit etc
 * All the data collected is stored in Google Sheet with an automatic quota and limits checks and automatic data rotation - old data is deleted with a preliminary notification via configured messenger (see below). That way you don't have to buy a separate storage or overload your app VPS with Prometheus etc. Just lean process next to your brilliant one which just sends app data in batches to Google Sheets for your ease of use. Google Sheets allow you to build your own diagrams over the metrics and analyse them, analyse liveness statistics and calculate uptime etc. By default Goral builds some charts for you.
 
-# Setup
+## Setup
 
 To use Goral you need to have a Google account and obtain a service account:
 1) Create a project https://console.cloud.google.com/projectcreate (we suggest creating a separate GCP for Goral project for security reasons)
@@ -123,7 +123,7 @@ So following Erlang's idea of [supervision trees](https://adoptingerlang.org/doc
 If you plan to use Resources service then you should not containerize Goral to get the actual system data.
 Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ctrl+C) and SIGTERM signals to safely send all the data in process to the permanent spreadsheet storage.
 
-# Development
+## Development
 Run an example server
 ```
 cargo run --example testapp

@@ -11,14 +11,14 @@ use crate::Shared;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::future::try_join_all;
-use hyper::{body::HttpBody as _, StatusCode, Uri};
+use hyper::{Uri};
 use std::fmt::{self, Debug, Display};
 use std::result::Result as StdResult;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinHandle;
-use tracing::{instrument, Level};
+use tracing::{Level};
 
 pub const HEALTHCHECK_SERVICE_NAME: &str = "health";
 const MAX_BYTES_LIVENESS_OUTPUT: usize = 1024;

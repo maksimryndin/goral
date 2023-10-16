@@ -3,11 +3,11 @@
 use clap::Parser;
 use futures::future::try_join_all;
 use goral::configuration::{Configuration, APP_NAME};
-use goral::services::Service;
 use goral::spreadsheet::{get_google_auth, SpreadsheetAPI};
 use goral::storage::{create_log, Storage};
 use goral::{collect_messengers, collect_services, Sender, Shared};
 use std::fmt::Debug;
+use std::panic;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
@@ -62,6 +62,21 @@ struct Args {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    panic::set_hook(Box::new(|panic_info| {
+        let base_message = format!("\nCould you please open an issue https://github.com/maksimryndin/goral/issues with Bug label? Thank you for using {APP_NAME}!");
+        if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            if s.starts_with("assert:") {
+                println!(
+                    "key assumption about {APP_NAME} behaviour is violated: {s:?}{base_message}"
+                );
+            } else {
+                println!("Unexpected error happened: {}{base_message}", panic_info);
+            }
+        } else {
+            println!("Unexpected error happened.{base_message}");
+        }
+    }));
+
     // Retrieve configuration
     let args = Args::parse();
 

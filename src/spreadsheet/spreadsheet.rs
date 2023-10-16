@@ -4,7 +4,7 @@ use google_sheets4::api::{
 };
 
 use crate::spreadsheet::sheet::{
-    sheet_headers, Header, Rows, Sheet, SheetId, SheetType, UpdateSheet, VirtualSheet,
+    Rows, Sheet, SheetId, SheetType, UpdateSheet, VirtualSheet,
 };
 use crate::HyperConnector;
 use google_sheets4::{hyper, hyper_rustls, oauth2, Error, Sheets};
@@ -12,8 +12,8 @@ use google_sheets4::{hyper, hyper_rustls, oauth2, Error, Sheets};
 use crate::spreadsheet::Metadata;
 use crate::Sender;
 use chrono::Utc;
-use std::collections::BTreeMap;
-use std::time::Duration;
+
+
 use tracing::instrument;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en

@@ -21,7 +21,7 @@ pub trait Service {
         loop {
             tokio::select! {
                 result = shutdown.recv() => {
-                    let graceful_shutdown_timeout = match result {
+                    let _graceful_shutdown_timeout = match result {
                         Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
                         Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
                     };

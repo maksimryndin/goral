@@ -4,7 +4,7 @@ use google_sheets4::api::{
     AddSheetRequest, AppendCellsRequest, BasicFilter, CellData, CellFormat, Color, ColorStyle,
     CreateDeveloperMetadataRequest, DeveloperMetadata, DeveloperMetadataLocation, ExtendedValue,
     GridProperties, GridRange, Request, RowData, SetBasicFilterRequest, SheetProperties,
-    TextFormat, UpdateCellsRequest, UpdateDeveloperMetadataRequest, UpdateSheetPropertiesRequest,
+    TextFormat, UpdateCellsRequest, UpdateDeveloperMetadataRequest,
 };
 use google_sheets4::FieldMask;
 use std::collections::hash_map::DefaultHasher;
@@ -113,7 +113,6 @@ pub(crate) struct Sheet {
     pub(super) frozen_row_count: Option<i32>,
     pub(super) row_count: Option<i32>,
     pub(super) column_count: Option<i32>,
-    pub(super) headers: Vec<Header>,
     pub(super) metadata: Metadata,
     pub(super) tab_color: TabColorRGB,
 }
@@ -143,14 +142,6 @@ impl Sheet {
         self.metadata.get(key)
     }
 
-    pub(crate) fn pop_meta_value(&mut self, key: &str) -> Option<String> {
-        self.metadata.0.remove(key)
-    }
-
-    pub(crate) fn headers_titles(&self) -> Vec<&str> {
-        self.headers.iter().map(|h| h.title.as_str()).collect()
-    }
-
     pub(crate) fn sheet_id(&self) -> SheetId {
         self.sheet_id
     }
@@ -169,7 +160,6 @@ impl Eq for Sheet {}
 
 impl From<GoogleSheet> for Sheet {
     fn from(mut sh: GoogleSheet) -> Self {
-        let headers = sheet_headers(&mut sh);
         let metadata: HashMap<String, String> = sh
             .developer_metadata
             .take()
@@ -211,7 +201,6 @@ impl From<GoogleSheet> for Sheet {
                     )
                 })
                 .unwrap_or((0.0, 0.0, 0.0)),
-            headers,
         }
     }
 }
@@ -219,6 +208,7 @@ impl From<GoogleSheet> for Sheet {
 #[derive(Debug)]
 pub(crate) struct VirtualSheet {
     pub(super) sheet: Sheet,
+    pub(super) headers: Vec<Header>,
 }
 
 impl VirtualSheet {
@@ -269,8 +259,7 @@ impl VirtualSheet {
             end_column_index: self.sheet.column_count,
         };
         let metadata = self.take_developer_metadata();
-        let header_values: Vec<CellData> =
-            self.sheet.headers.into_iter().map(|h| h.into()).collect();
+        let header_values: Vec<CellData> = self.headers.into_iter().map(|h| h.into()).collect();
         let data = vec![RowData {
             values: Some(header_values),
         }];
@@ -363,11 +352,10 @@ impl VirtualSheet {
             frozen_row_count: Some(1),
             row_count: Some(2), // for headers and 1 row for data is required otherwise "You can't freeze all visible rows on the sheet.","status":"INVALID_ARGUMENT""
             column_count: Some(headers.len() as i32),
-            headers,
             tab_color,
             metadata,
         };
-        Self { sheet }
+        Self { sheet, headers }
     }
 
     pub(crate) fn sheet_id(&self) -> SheetId {
@@ -377,54 +365,6 @@ impl VirtualSheet {
     pub(crate) fn row_count(&self) -> Option<i32> {
         self.sheet.row_count()
     }
-
-    pub(crate) fn headers_titles(&self) -> Vec<&str> {
-        self.sheet.headers_titles()
-    }
-}
-
-pub(super) fn sheet_headers(sh: &mut GoogleSheet) -> Vec<Header> {
-    let cells = sh
-        .data
-        .as_mut()
-        .and_then(|v| v.pop())
-        .and_then(|grid_data| grid_data.row_data)
-        .and_then(|mut v| v.pop())
-        .and_then(|row_data| row_data.values)
-        .unwrap_or(vec![]);
-    cells
-        .into_iter()
-        .map(|c| Header {
-            title: stringify_cell_value(c.effective_value.unwrap()),
-            note: c.note,
-        })
-        .collect()
-}
-
-fn stringify_cell_value(value: ExtendedValue) -> String {
-    if let Some(s) = value.string_value {
-        return s;
-    }
-
-    if let Some(n) = value.number_value {
-        return n.to_string();
-    }
-
-    if let Some(b) = value.bool_value {
-        return b.to_string();
-    }
-
-    if let Some(f) = value.formula_value {
-        return f;
-    }
-
-    if let Some(e) = value.error_value {
-        return e.type_.unwrap();
-    }
-
-    // TODO notify via general messenger??
-    tracing::warn!("unhandled field of ExtendedValue");
-    "undefined".to_string()
 }
 
 pub(crate) fn str_to_id(s: &str) -> i32 {

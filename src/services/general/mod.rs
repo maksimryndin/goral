@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Receiver;
-use tracing::{instrument, Level};
+use tracing::{Level};
 
 pub const GENERAL_SERVICE_NAME: &str = "general";
 

@@ -4,9 +4,9 @@ use crate::spreadsheet::sheet::{
 use crate::spreadsheet::{Metadata, SpreadsheetAPI};
 use crate::{get_service_tab_color, Sender, APP_NAME, HOST_ID_CHARS_LIMIT};
 use anyhow::Result;
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData};
-use std::cmp::Ordering;
+
 use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;

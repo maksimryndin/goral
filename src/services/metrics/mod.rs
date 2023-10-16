@@ -6,9 +6,9 @@ use crate::services::{HttpClient, Service};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use futures::future::try_join_all;
-use hyper::{body::HttpBody as _, StatusCode, Uri};
+use hyper::Uri;
 use prometheus_parse::{Sample, Scrape, Value};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::{self, JoinHandle};
-use url::Url;
+
 
 pub const METRICS_SERVICE_NAME: &str = "metrics";
 const MAX_BYTES_METRICS_OUTPUT: usize = 2_usize.pow(14); // ~16 KiB
@@ -134,6 +134,7 @@ impl MetricsService {
             prometheus_parse::Scrape::parse_at(lines.into_iter(), scrape_time)
                 .map_err(|e| e.to_string())?;
         let mut map = HashMap::with_capacity(samples.len());
+
         // see https://prometheus.io/docs/practices/histograms/#count-and-sum-of-observations
         // and https://prometheus.io/docs/concepts/metric_types/#summary
         // group all samples by their base metrics,
@@ -352,7 +353,7 @@ impl Service for MetricsService {
                             // drain remaining messages
                             while let Some(output) = data_receiver.recv().await {
                                 match output {
-                                    (index, Ok(mut datarows)) => {accumulated_data.append(&mut datarows);},
+                                    (_index, Ok(mut datarows)) => {accumulated_data.append(&mut datarows);},
                                     (index, Err(msg)) => {
                                         if errors_previous_state[index] != msg || is_first_iteration {
                                             self.send_error(&self.endpoints[index], &msg).await;
@@ -375,7 +376,7 @@ impl Service for MetricsService {
                 }
                 Some(output) = data_receiver.recv() => {
                     match output {
-                        (index, Ok(mut datarows)) => {accumulated_data.append(&mut datarows);},
+                        (_index, Ok(mut datarows)) => {accumulated_data.append(&mut datarows);},
                         (index, Err(msg)) => {
                             if errors_previous_state[index] != msg || is_first_iteration {
                                 self.send_error(&self.endpoints[index], &msg).await;
