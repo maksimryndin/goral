@@ -1,20 +1,13 @@
+use crate::spreadsheet::sheet::{Rows, Sheet, SheetId, SheetType, UpdateSheet, VirtualSheet};
+use crate::spreadsheet::Metadata;
+use crate::HyperConnector;
+use crate::Sender;
 use anyhow::Result;
+use chrono::Utc;
 use google_sheets4::api::{
     BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
 };
-
-use crate::spreadsheet::sheet::{
-    Rows, Sheet, SheetId, SheetType, UpdateSheet, VirtualSheet,
-};
-use crate::HyperConnector;
 use google_sheets4::{hyper, hyper_rustls, oauth2, Error, Sheets};
-
-use crate::spreadsheet::Metadata;
-use crate::Sender;
-use chrono::Utc;
-
-
-use tracing::instrument;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en
 const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
@@ -91,7 +84,6 @@ impl SpreadsheetAPI {
         )
     }
 
-    #[instrument(skip(self))]
     async fn spreadsheet_meta(&self, spreadsheet_id: &str) -> Result<Spreadsheet> {
         // first get all spreadsheet sheets properties without data
         // second for sheets in interest (by tab color) fetch headers
@@ -117,7 +109,6 @@ impl SpreadsheetAPI {
             .fold(0, |acc, s| acc + s.number_of_cells().unwrap_or(0))
     }
 
-    #[instrument(skip_all)]
     pub(crate) async fn sheets_filtered_by_metadata(
         &self,
         spreadsheet_id: &str,
@@ -153,7 +144,6 @@ impl SpreadsheetAPI {
         ))
     }
 
-    #[instrument(skip(self, sheets))]
     async fn _crud_sheets(
         &self,
         spreadsheet_id: &str,
@@ -202,7 +192,6 @@ impl SpreadsheetAPI {
         Ok(handle_error!(self, send_notification, result)?)
     }
 
-    #[instrument(skip(self, sheets))]
     pub(crate) async fn crud_sheets(
         &self,
         spreadsheet_id: &str,

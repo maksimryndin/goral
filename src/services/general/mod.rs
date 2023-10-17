@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Receiver;
-use tracing::{Level};
+use tracing::Level;
 
 pub const GENERAL_SERVICE_NAME: &str = "general";
 
@@ -70,6 +70,7 @@ impl GeneralService {
             .clone()
             .expect("assert: messenger is always configured for general service");
         while let Some(notification) = self.channel.recv().await {
+            tracing::debug!("{:?}", notification);
             self.send_notification(notification, &messenger).await;
         }
     }
@@ -87,6 +88,8 @@ impl Service for GeneralService {
 
     async fn run(&mut self, _: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         tracing::info!("running with log level {}", self.log_level);
+        let collect = self.collect_notifications();
+        tokio::pin!(collect); // pin and pass by mutable ref to prevent cancelling this future by select!
         loop {
             tokio::select! {
                 result = shutdown.recv() => {
@@ -94,18 +97,18 @@ impl Service for GeneralService {
                         Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
                         Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
                     };
-                    tracing::info!("{} service has got shutdown signal", self.name());
+                    tracing::info!("{} service has got shutdown signal", GENERAL_SERVICE_NAME);
                     // we read out messages from other services and componens as much as we can (so we don't close the channel)
                     assert!(graceful_shutdown_timeout > 0, "graceful_shutdown_timeout is validated in configuration to be positive");
                     let graceful_shutdown_timeout = graceful_shutdown_timeout - 1;
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {},
-                        _ = self.collect_notifications() => {}
+                        _ = &mut collect => {}
                     }
-                    tracing::info!("{} service has successfully shutdowned", self.name());
+                    tracing::info!("{} service has successfully shutdowned", GENERAL_SERVICE_NAME);
                     return;
                 },
-                _ = self.collect_notifications() => {}
+                _ = &mut collect => {}
             }
         }
     }

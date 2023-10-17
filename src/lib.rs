@@ -12,7 +12,6 @@ use services::healthcheck::{HealthcheckService, HEALTHCHECK_SERVICE_NAME};
 use services::logs::{LogsService, LOGS_SERVICE_NAME};
 use services::metrics::{MetricsService, METRICS_SERVICE_NAME};
 use services::resources::{ResourcesService, RESOURCES_SERVICE_NAME};
-use services::Service;
 pub use services::*;
 use spreadsheet::sheet::TabColorRGB;
 pub use spreadsheet::*;
@@ -68,7 +67,13 @@ pub fn collect_messengers(
                 .as_ref()
                 .and_then(|logs| logs.messenger.as_ref().map(|m| m.host().to_string())),
         ),
-        (METRICS_SERVICE_NAME, None),
+        (
+            METRICS_SERVICE_NAME,
+            config
+                .metrics
+                .as_ref()
+                .and_then(|metrics| metrics.messenger.as_ref().map(|m| m.host().to_string())),
+        ),
         (
             RESOURCES_SERVICE_NAME,
             config

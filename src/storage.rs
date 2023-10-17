@@ -33,7 +33,7 @@ pub(crate) enum Datavalue {
 }
 
 #[derive(Debug)]
-pub(crate) struct Datarow {
+pub struct Datarow {
     log_name: String,
     timestamp: NaiveDateTime,
     data: Vec<(String, Datavalue)>,

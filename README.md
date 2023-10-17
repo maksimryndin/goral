@@ -130,7 +130,6 @@ cargo run --example testapp
 ```
 
 TODO
-- validation for the same host for endpoints in Metrics And Healthchecks
 - Slack and Discord support
 - Each service with screenshots and features
 - Minimal and maximal configurations

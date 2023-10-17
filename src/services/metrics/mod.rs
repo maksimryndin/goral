@@ -2,26 +2,24 @@ pub(crate) mod configuration;
 
 use crate::messenger::configuration::MessengerConfig;
 use crate::services::metrics::configuration::{scrape_push_rule, Metrics};
-use crate::services::{HttpClient, Service};
+use crate::services::{Data, HttpClient, Service, TaskResult};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use futures::future::try_join_all;
+
 use hyper::Uri;
 use prometheus_parse::{Sample, Scrape, Value};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::result::Result as StdResult;
 use std::time::Duration;
-use tokio::sync::broadcast;
+
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::{self, JoinHandle};
 
-
 pub const METRICS_SERVICE_NAME: &str = "metrics";
 const MAX_BYTES_METRICS_OUTPUT: usize = 2_usize.pow(14); // ~16 KiB
-type ScrapeOutput = (usize, StdResult<Vec<Datarow>, String>);
 
 #[derive(Debug)]
 struct ScrapeTarget {
@@ -39,6 +37,7 @@ pub(crate) struct MetricsService {
     scrape_timeout: Duration,
     endpoints: Vec<Uri>,
     channel_capacity: usize,
+    errors_previous_state: Vec<Option<String>>,
 }
 
 impl MetricsService {
@@ -50,6 +49,7 @@ impl MetricsService {
             &config.scrape_timeout_ms,
         )
         .expect("assert: push/scrate ratio is validated at configuration");
+        let errors_previous_state = vec![None; config.endpoints.len()];
         Self {
             shared,
             messenger_config: config.messenger,
@@ -67,6 +67,7 @@ impl MetricsService {
                 })
                 .collect(),
             channel_capacity,
+            errors_previous_state,
         }
     }
 
@@ -77,8 +78,8 @@ impl MetricsService {
             if a.metric.ends_with("_count") && b.metric.ends_with("_sum") {
                 return Ordering::Less;
             }
-            if (a.metric.ends_with("_sum") || a.metric.ends_with("_count"))
-                && matches!(b.value, Value::Histogram(_) | Value::Summary(_))
+            if matches!(a.value, Value::Histogram(_) | Value::Summary(_))
+                && (b.metric.ends_with("_sum") || b.metric.ends_with("_count"))
             {
                 return Ordering::Less;
             }
@@ -206,7 +207,7 @@ impl MetricsService {
         client: HttpClient,
         index: usize,
         scrape_target: ScrapeTarget,
-        sender: mpsc::Sender<ScrapeOutput>,
+        sender: mpsc::Sender<TaskResult>,
         send_notification: Sender,
     ) {
         let mut interval = tokio::time::interval(scrape_target.interval);
@@ -221,7 +222,7 @@ impl MetricsService {
                     tracing::trace!("metrics scrape for {:?}", scrape_target.url);
                     let scrape_time = Utc::now();
                     let scrape_result = Self::make_timed_scrape(&client, &scrape_target).await;
-                    let parse_result = match scrape_result {
+                    let result = match scrape_result {
                         Ok(output) => {
                             tracing::info!("starting metrics parsing for {:?}", scrape_target.url);
                             let join_result = task::spawn_blocking(move || {
@@ -235,13 +236,16 @@ impl MetricsService {
                                     send_notification.fatal(msg).await;
                                     panic!("assert: should be able to spawn blocking tasks");
                                 },
-                                Ok(res) => res,
+                                Ok(res) => res.map(|d| Data::Many(d)).map_err(|t| Data::Message(t)),
                             }
                         },
-                        err => err.map(|_| vec![]),
+                        err => {
+                            tracing::debug!("metrics scrape result for {:?} is an error: {:?}", scrape_target.url, err);
+                            err.map(|_| Data::Many(vec![])).map_err(|t| Data::Message(t))
+                        },
                     };
 
-                    match sender.try_send((index, parse_result)) {
+                    match sender.try_send(TaskResult{id: index, result}) {
                         Err(TrySendError::Full(res)) => {
                             let msg = "scrape messages queue is full so increase scrape interval and decrease push interval".to_string();
                             tracing::error!("{}. Cannot send scrape target `{:?}` result `{:?}`", msg, scrape_target, res);
@@ -251,6 +255,7 @@ impl MetricsService {
                             let msg = "scrape messages queue has been unexpectedly closed".to_string();
                             tracing::error!("{}: cannot send scrape target {:?} result {:?}", msg, scrape_target, res);
                             send_notification.fatal(msg).await;
+                            panic!("assert: scrape messages queue shouldn't be closed before shutdown signal");
                         },
                         _ => {},
                     }
@@ -259,7 +264,74 @@ impl MetricsService {
         }
     }
 
-    fn run_scraping(&self, sender: mpsc::Sender<ScrapeOutput>) -> Vec<JoinHandle<()>> {
+    async fn send_error(&self, endpoint: &Uri, message: &str) {
+        let message = format!(
+            "`{}` while scraping metrics for endpoint `{}`",
+            message, endpoint
+        );
+        if let Some(messenger) = self.shared.messenger.as_ref() {
+            let messenger_config = self
+                .messenger_config
+                .as_ref()
+                .expect("assert: if messenger is set, then config is also nonempty");
+            if let Err(_) = messenger.send_error(messenger_config, &message).await {
+                tracing::error!("failed to send liveness probe output via configured messenger: {:?} for service {}",  messenger_config, self.name());
+                self.shared.send_notification.try_error(format!(
+                    "{}. Sending via configured messenger failed.",
+                    message
+                ));
+            }
+        } else {
+            tracing::error!(
+                "Messenger is not configured for {}. Error: {}",
+                self.name(),
+                message,
+            );
+            self.shared.send_notification.try_error(format!(
+                "{}\nMessenger is not configured for {}",
+                message,
+                self.name(),
+            ));
+        }
+    }
+}
+
+#[async_trait]
+impl Service for MetricsService {
+    fn name(&self) -> &str {
+        METRICS_SERVICE_NAME
+    }
+
+    fn spreadsheet_id(&self) -> &str {
+        self.spreadsheet_id.as_str()
+    }
+
+    fn channel_capacity(&self) -> usize {
+        self.channel_capacity
+    }
+
+    fn push_interval(&self) -> Duration {
+        self.push_interval
+    }
+
+    async fn process_task_result(&mut self, result: TaskResult, _: &AppendableLog) -> Data {
+        let TaskResult { id, result } = result;
+        match result {
+            Ok(data) => data,
+            Err(Data::Message(msg)) => {
+                if self.errors_previous_state[id].is_none()
+                    || self.errors_previous_state[id].as_ref() != Some(&msg)
+                {
+                    self.send_error(&self.endpoints[id], &msg).await;
+                    self.errors_previous_state[id] = Some(msg);
+                }
+                Data::Empty
+            }
+            _ => panic!("assert: metrics result contains either multiple datarows or error text"),
+        }
+    }
+
+    async fn spawn_tasks(&mut self, sender: mpsc::Sender<TaskResult>) -> Vec<JoinHandle<()>> {
         self.endpoints
             .iter()
             .enumerate()
@@ -280,116 +352,5 @@ impl MetricsService {
                 })
             })
             .collect()
-    }
-
-    async fn send_error(&self, endpoint: &Uri, message: &str) {
-        let message = format!(
-            "error `{}` while scraping metrics for endpoint {}",
-            message, endpoint
-        );
-        if let Some(messenger) = self.shared.messenger.as_ref() {
-            let messenger_config = self
-                .messenger_config
-                .as_ref()
-                .expect("assert: if messenger is set, then config is also nonempty");
-            if let Err(_) = messenger.send_error(messenger_config, &message).await {
-                tracing::error!("failed to send liveness probe output via configured messenger: {:?} for service {}",  messenger_config, self.name());
-                self.shared.send_notification.try_error(format!(
-                    "{}. Sending via configured messenger failed.",
-                    message
-                ));
-            }
-        } else {
-            tracing::warn!(
-                "{}. Messenger is not configured for {}.",
-                message,
-                self.name()
-            );
-        }
-    }
-}
-
-#[async_trait]
-impl Service for MetricsService {
-    fn name(&self) -> &str {
-        METRICS_SERVICE_NAME
-    }
-
-    fn spreadsheet_id(&self) -> &str {
-        self.spreadsheet_id.as_str()
-    }
-
-    async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
-        log.healthcheck()
-            .await
-            .expect("failed to connect to Google API");
-        tracing::info!(
-            "running with spreadsheet {}, channel_capacity {}",
-            self.spreadsheet_id(),
-            self.channel_capacity
-        );
-        //  channel to collect results
-        let (tx, mut data_receiver) = mpsc::channel(2 * self.channel_capacity);
-        let tasks = try_join_all(self.run_scraping(tx));
-        tokio::pin!(tasks);
-        let mut push_interval = tokio::time::interval(self.push_interval);
-        let mut accumulated_data = vec![];
-        let mut errors_previous_state = vec![String::new(); self.endpoints.len()];
-        let mut is_first_iteration = true;
-        loop {
-            tokio::select! {
-                result = shutdown.recv() => {
-                    data_receiver.close(); // stop tasks
-                    let graceful_shutdown_timeout = match result {
-                        Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
-                        Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
-                    };
-                    tracing::info!("{} service has got shutdown signal", self.name());
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {
-                            tracing::error!("{} service has badly shutdowned. Some data is lost.", self.name());
-                        },
-                        _ = async {
-                            // drain remaining messages
-                            while let Some(output) = data_receiver.recv().await {
-                                match output {
-                                    (_index, Ok(mut datarows)) => {accumulated_data.append(&mut datarows);},
-                                    (index, Err(msg)) => {
-                                        if errors_previous_state[index] != msg || is_first_iteration {
-                                            self.send_error(&self.endpoints[index], &msg).await;
-                                            errors_previous_state[index] = msg;
-                                            is_first_iteration = false;
-                                        }
-                                    },
-                                }
-                            }
-                            let _ = log.append(accumulated_data).await;
-                        } => {
-                            tracing::info!("{} service has successfully shutdowned", self.name());
-                        }
-                    }
-                    return;
-                },
-                _ = push_interval.tick() => {
-                    let _ = log.append(accumulated_data).await;
-                    accumulated_data = vec![];
-                }
-                Some(output) = data_receiver.recv() => {
-                    match output {
-                        (_index, Ok(mut datarows)) => {accumulated_data.append(&mut datarows);},
-                        (index, Err(msg)) => {
-                            if errors_previous_state[index] != msg || is_first_iteration {
-                                self.send_error(&self.endpoints[index], &msg).await;
-                                errors_previous_state[index] = msg;
-                                is_first_iteration = false;
-                            }
-                        },
-                    }
-                }
-                res = &mut tasks => {
-                    res.unwrap(); // propagate panics from spawned tasks
-                }
-            }
-        }
     }
 }

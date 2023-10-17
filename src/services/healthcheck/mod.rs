@@ -5,24 +5,23 @@ use crate::messenger::configuration::MessengerConfig;
 use crate::services::healthcheck::configuration::{
     scrape_push_rule, Healthcheck, Liveness as LivenessConfig, LivenessType,
 };
-use crate::services::{HttpClient, Service};
+use crate::services::{Data, HttpClient, Service, TaskResult};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
-use crate::Shared;
+use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use futures::future::try_join_all;
-use hyper::{Uri};
+
+use hyper::Uri;
 use std::fmt::{self, Debug, Display};
 use std::result::Result as StdResult;
 use std::time::Duration;
-use tokio::sync::broadcast;
+
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinHandle;
-use tracing::{Level};
+use tracing::Level;
 
 pub const HEALTHCHECK_SERVICE_NAME: &str = "health";
 const MAX_BYTES_LIVENESS_OUTPUT: usize = 1024;
-type LivenessOutput = (usize, DateTime<Utc>, StdResult<String, String>);
 
 #[derive(Clone)]
 pub(crate) struct Liveness {
@@ -79,12 +78,14 @@ pub(crate) struct HealthcheckService {
     messenger_config: Option<MessengerConfig>,
     push_interval: Duration,
     channel_capacity: usize,
+    liveness_previous_state: Vec<Option<bool>>,
 }
 
 impl HealthcheckService {
     pub(crate) fn new(shared: Shared, config: Healthcheck) -> HealthcheckService {
         let channel_capacity = scrape_push_rule(&config.liveness, &config.push_interval_secs)
             .expect("assert: push/scrate ratio is validated at configuration");
+        let liveness_previous_state = vec![None; config.liveness.len()];
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
@@ -92,6 +93,7 @@ impl HealthcheckService {
             messenger_config: config.messenger,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
             channel_capacity,
+            liveness_previous_state,
         }
     }
 
@@ -130,7 +132,29 @@ impl HealthcheckService {
         }
     }
 
-    async fn run_check(index: usize, liveness: Liveness, sender: mpsc::Sender<LivenessOutput>) {
+    fn create_datarow(
+        is_alive: bool,
+        text: String,
+        liveness: &Liveness,
+        probe_time: DateTime<Utc>,
+    ) -> Datarow {
+        Datarow::new(
+            liveness.to_string(),
+            probe_time.naive_utc(),
+            vec![
+                ("is_alive".to_string(), Datavalue::Bool(is_alive)),
+                ("output".to_string(), Datavalue::Text(text)),
+            ],
+            None,
+        )
+    }
+
+    async fn run_check(
+        index: usize,
+        liveness: Liveness,
+        sender: mpsc::Sender<TaskResult>,
+        send_notification: Sender,
+    ) {
         tokio::time::sleep(liveness.initial_delay).await;
         let mut interval = tokio::time::interval(liveness.period);
         tracing::info!("starting check for {:?}", liveness);
@@ -142,29 +166,29 @@ impl HealthcheckService {
                 },
                 _ = interval.tick() => {
                     let probe_time = Utc::now();
-                    let res = Self::is_alive(&liveness).await;
-                    match sender.try_send((index, probe_time, res)) {
-                        Err(TrySendError::Full(res)) => tracing::error!("channel is full: cannot send liveness {:?} result {:?}", liveness, res),
-                        Err(TrySendError::Closed(res)) => tracing::error!("channel is closed: cannot send liveness {:?} result {:?}", liveness, res),
+                    let result = Self::is_alive(&liveness).await
+                        .map(|t| Data::Single(Self::create_datarow(true, t, &liveness, probe_time)))
+                        .map_err(|t| {
+                            tracing::debug!("liveness check for {:?} failed with output `{}`", liveness, t);
+                            Data::Single(Self::create_datarow(false, t, &liveness, probe_time))
+                        });
+                    match sender.try_send(TaskResult{id: index, result}) {
+                        Err(TrySendError::Full(res)) => {
+                            let msg = "health messages queue is full so increase scrape interval and decrease push interval".to_string();
+                            tracing::error!("{}. Cannot send liveness `{:?}` result `{:?}`", msg, liveness, res);
+                            send_notification.try_error(msg);
+                        },
+                        Err(TrySendError::Closed(res)) => {
+                            let msg = "health messages queue has been unexpectedly closed".to_string();
+                            tracing::error!("{}: cannot send liveness {:?} result {:?}", msg, liveness, res);
+                            send_notification.fatal(msg).await;
+                            panic!("assert: health messages queue shouldn't be closed before shutdown signal");
+                        },
                         _ => {},
                     }
                 }
             }
         }
-    }
-
-    fn run_checks(&self, sender: mpsc::Sender<LivenessOutput>) -> Vec<JoinHandle<()>> {
-        self.liveness
-            .iter()
-            .enumerate()
-            .map(|(i, l)| {
-                let liveness = l.clone();
-                let sender = sender.clone();
-                tokio::spawn(async move {
-                    Self::run_check(i, liveness, sender).await;
-                })
-            })
-            .collect()
     }
 
     async fn send_message(
@@ -201,34 +225,25 @@ impl HealthcheckService {
                 ));
             }
         } else {
-            tracing::warn!(
-                "{}. Messenger is not configured for {}.",
-                message,
-                self.name()
-            );
+            if is_alive {
+                tracing::warn!(
+                    "{}. Messenger is not configured for {}.",
+                    message,
+                    self.name()
+                );
+            } else {
+                tracing::error!(
+                    "{}. Messenger is not configured for {}.",
+                    message,
+                    self.name()
+                );
+                self.shared.send_notification.try_error(format!(
+                    "{}\nMessenger is not configured for {}",
+                    message,
+                    self.name(),
+                ));
+            }
         }
-    }
-
-    fn liveness_output_to_datarow(&self, output: LivenessOutput) -> (usize, bool, Datarow) {
-        let (index, probe_time, result) = output;
-        let liveness = &self.liveness[index]; // safe as the index is collected from the same vector, but the vector shouldn't be changed
-        let (is_alive, text) = match result {
-            Ok(output) => (true, output),
-            Err(output) => (false, output),
-        };
-        (
-            index,
-            is_alive,
-            Datarow::new(
-                liveness.to_string(),
-                probe_time.naive_utc(),
-                vec![
-                    ("is_alive".to_string(), Datavalue::Bool(is_alive)),
-                    ("output".to_string(), Datavalue::Text(text)),
-                ],
-                None,
-            ),
-        )
     }
 }
 
@@ -242,67 +257,57 @@ impl Service for HealthcheckService {
         self.spreadsheet_id.as_str()
     }
 
-    async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
-        log.healthcheck()
-            .await
-            .expect("failed to connect to Google API");
-        tracing::info!(
-            "running with spreadsheet {}, channel_capacity {}",
-            self.spreadsheet_id(),
-            self.channel_capacity
-        );
-        //  channel to collect liveness checks results
-        let (tx, mut data_receiver) = mpsc::channel(2 * self.channel_capacity);
-        let tasks = try_join_all(self.run_checks(tx));
-        tokio::pin!(tasks);
-        let mut liveness_previous_state = vec![false; self.liveness.len()];
-        let mut push_interval = tokio::time::interval(self.push_interval);
-        let mut accumulated_data = vec![];
-        let mut is_first_iteration = true;
-        loop {
-            tokio::select! {
-                result = shutdown.recv() => {
-                    data_receiver.close(); // stop running probes
-                    let graceful_shutdown_timeout = match result {
-                        Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
-                        Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
-                    };
-                    tracing::info!("{} service has got shutdown signal", self.name());
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {
-                            tracing::error!("{} service has badly shutdowned. Some data is lost.", self.name());
-                        },
-                        _ = async {
-                            // drain remaining messages
-                            while let Some(output) = data_receiver.recv().await {
-                                let (_, _, datarow) = self.liveness_output_to_datarow(output);
-                                accumulated_data.push(datarow);
-                            }
-                            let _ = log.append(accumulated_data).await;
-                        } => {
-                            tracing::info!("{} service has successfully shutdowned", self.name());
-                        }
-                    }
+    fn channel_capacity(&self) -> usize {
+        self.channel_capacity
+    }
 
-                    return;
-                },
-                _ = push_interval.tick() => {
-                    let _ = log.append(accumulated_data).await;
-                    accumulated_data = vec![];
-                }
-                Some(output) = data_receiver.recv() => {
-                    let (liveness_index, is_alive, mut datarow) = self.liveness_output_to_datarow(output);
-                    if liveness_previous_state[liveness_index] != is_alive || is_first_iteration {
-                        self.send_message(&self.liveness[liveness_index], is_alive, &mut datarow, &log).await;
-                        liveness_previous_state[liveness_index] = is_alive;
-                        is_first_iteration = false;
-                    }
-                    accumulated_data.push(datarow);
-                }
-                res = &mut tasks => {
-                    res.unwrap(); // propagate panics from spawned tasks
-                }
-            }
+    fn push_interval(&self) -> Duration {
+        self.push_interval
+    }
+
+    async fn process_task_result_on_shutdown(
+        &mut self,
+        result: TaskResult,
+        _: &AppendableLog,
+    ) -> Data {
+        let TaskResult { id: _, result } = result;
+        match result {
+            Ok(data) => data,
+            Err(data) => data,
         }
+    }
+
+    async fn process_task_result(&mut self, result: TaskResult, log: &AppendableLog) -> Data {
+        let TaskResult { id, result } = result;
+        let (is_alive, mut datarow) = match result {
+            Ok(Data::Single(datarow)) => (true, datarow),
+            Err(Data::Single(datarow)) => (false, datarow),
+            _ => panic!(
+                "assert: healthcheck result contains single datarow both for error and for ok"
+            ),
+        };
+        if self.liveness_previous_state[id].is_none()
+            || self.liveness_previous_state[id] != Some(is_alive)
+        {
+            self.send_message(&self.liveness[id], is_alive, &mut datarow, log)
+                .await;
+            self.liveness_previous_state[id] = Some(is_alive);
+        }
+        Data::Single(datarow)
+    }
+
+    async fn spawn_tasks(&mut self, sender: mpsc::Sender<TaskResult>) -> Vec<JoinHandle<()>> {
+        self.liveness
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let liveness = l.clone();
+                let sender = sender.clone();
+                let send_notification = self.shared.send_notification.clone();
+                tokio::spawn(async move {
+                    Self::run_check(i, liveness, sender, send_notification).await;
+                })
+            })
+            .collect()
     }
 }

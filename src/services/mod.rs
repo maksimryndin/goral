@@ -4,12 +4,29 @@ pub(crate) mod logs;
 pub(crate) mod metrics;
 pub(crate) mod resources;
 
-use crate::storage::AppendableLog;
+use crate::storage::{AppendableLog, Datarow};
 use crate::HttpsClient;
 use async_trait::async_trait;
+use futures::future::try_join_all;
 use hyper::{body::HttpBody as _, Client, StatusCode, Uri};
 use std::time::Duration;
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+#[derive(Debug)]
+pub enum Data {
+    Empty,
+    Single(Datarow),
+    Many(Vec<Datarow>),
+    Message(String),
+}
+
+#[derive(Debug)]
+pub struct TaskResult {
+    id: usize,
+    result: Result<Data, Data>,
+}
 
 #[async_trait]
 pub trait Service {
@@ -17,16 +34,98 @@ pub trait Service {
 
     fn spreadsheet_id(&self) -> &str;
 
-    async fn run(&mut self, _appendable_log: AppendableLog, mut shutdown: Receiver<u16>) {
+    fn channel_capacity(&self) -> usize {
+        // TODO remove after all implementations
+        1
+    }
+
+    fn push_interval(&self) -> Duration {
+        // TODO remove after all implementations ??
+        Duration::from_secs(u64::MAX)
+    }
+
+    async fn process_task_result_on_shutdown(
+        &mut self,
+        result: TaskResult,
+        log: &AppendableLog,
+    ) -> Data {
+        self.process_task_result(result, log).await
+    }
+
+    async fn process_task_result(&mut self, _result: TaskResult, _log: &AppendableLog) -> Data {
+        Data::Empty
+    }
+
+    async fn spawn_tasks(&mut self, _sender: mpsc::Sender<TaskResult>) -> Vec<JoinHandle<()>> {
+        // TODO remove after all implementations
+        std::future::pending::<()>().await;
+        vec![]
+    }
+
+    async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
+        log.healthcheck()
+            .await
+            .expect("failed to connect to Google API");
+        tracing::info!(
+            "service {} is running with spreadsheet {}",
+            self.name(),
+            self.spreadsheet_id(),
+        );
+        tracing::debug!(
+            "channel capacity {} for service {}",
+            self.channel_capacity(),
+            self.name()
+        );
+        //  channel to collect results
+        let (tx, mut data_receiver) = mpsc::channel(2 * self.channel_capacity());
+        let tasks = try_join_all(self.spawn_tasks(tx).await);
+        tokio::pin!(tasks);
+        let mut push_interval = tokio::time::interval(self.push_interval());
+        let mut accumulated_data = vec![];
         loop {
             tokio::select! {
                 result = shutdown.recv() => {
-                    let _graceful_shutdown_timeout = match result {
+                    data_receiver.close(); // stop tasks
+                    let graceful_shutdown_timeout = match result {
                         Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
                         Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
                     };
                     tracing::info!("{} service has got shutdown signal", self.name());
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {
+                            tracing::error!("{} service has badly shutdowned. Some data is lost.", self.name());
+                        },
+                        _ = async {
+                            // drain remaining messages
+                            while let Some(task_result) = data_receiver.recv().await {
+                                let data = self.process_task_result_on_shutdown(task_result, &log).await;
+                                match data {
+                                    Data::Empty | Data::Message(_) => {},
+                                    Data::Single(datarow) => {accumulated_data.push(datarow);}
+                                    Data::Many(mut datarows) => {accumulated_data.append(&mut datarows);}
+                                }
+                            }
+                            let _ = log.append(accumulated_data).await;
+                        } => {
+                            tracing::info!("{} service has successfully shutdowned", self.name());
+                        }
+                    }
                     return;
+                },
+                _ = push_interval.tick() => {
+                    let _ = log.append(accumulated_data).await;
+                    accumulated_data = vec![];
+                }
+                Some(task_result) = data_receiver.recv() => {
+                    let data = self.process_task_result(task_result, &log).await;
+                    match data {
+                        Data::Empty | Data::Message(_) => {},
+                        Data::Single(datarow) => {accumulated_data.push(datarow);}
+                        Data::Many(mut datarows) => {accumulated_data.append(&mut datarows);}
+                    }
+                }
+                res = &mut tasks => {
+                    res.unwrap(); // propagate panics from spawned tasks
                 }
             }
         }

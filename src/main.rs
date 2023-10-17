@@ -26,7 +26,7 @@ pub async fn sigterm() -> tokio::io::Result<()> {
 
 #[cfg(not(target_os = "linux"))]
 pub async fn sigterm() -> tokio::io::Result<()> {
-    future::pending().await;
+    std::future::pending::<()>().await;
     Ok(())
 }
 
@@ -90,14 +90,7 @@ async fn main() {
             None,
         )
     } else {
-        (
-            None,
-            Some(
-                tracing_subscriber::fmt::layer()
-                    .with_thread_names(true)
-                    .with_target(true),
-            ),
-        )
+        (None, Some(tracing_subscriber::fmt::layer()))
     };
 
     tracing_subscriber::registry()
@@ -165,7 +158,7 @@ async fn main() {
 
     tokio::select! {
         _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {
-            tracing::warn!("{} couldn't gracefully shutdown", APP_NAME);
+            tracing::error!("{} couldn't gracefully shutdown", APP_NAME);
         },
         _ = &mut goral => {
             tracing::info!("{} has gracefully shutdowned", APP_NAME);
