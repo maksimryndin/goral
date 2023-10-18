@@ -5,7 +5,7 @@ use crate::spreadsheet::{Metadata, SpreadsheetAPI};
 use crate::{get_service_tab_color, Sender, APP_NAME, HOST_ID_CHARS_LIMIT};
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData};
+use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData, TextFormat};
 
 use std::collections::HashMap;
 use std::mem;
@@ -28,6 +28,8 @@ const KEYS_DELIMITER: &str = "~^~";
 pub(crate) enum Datavalue {
     Text(String),
     Number(f64),
+    Integer(u64),
+    Percent(f64),
     Datetime(NaiveDateTime),
     Bool(bool),
 }
@@ -131,6 +133,36 @@ impl Into<RowData> for Datarow {
                             ..Default::default()
                         },
                         CellFormat {
+                            text_format: Some(TextFormat {
+                                font_family: Some("Courier New".to_string()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::Percent(f) => (
+                        ExtendedValue {
+                            number_value: Some(f / 100.0),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            number_format: Some(NumberFormat {
+                                pattern: Some(r"#%".to_string()),
+                                type_: Some("NUMBER".to_string()),
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::Integer(f) => (
+                        ExtendedValue {
+                            number_value: Some(f as f64),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            number_format: Some(NumberFormat {
+                                pattern: Some(r"#,###".to_string()),
+                                type_: Some("NUMBER".to_string()),
+                            }),
                             ..Default::default()
                         },
                     ),
@@ -141,7 +173,7 @@ impl Into<RowData> for Datarow {
                         },
                         CellFormat {
                             number_format: Some(NumberFormat {
-                                pattern: None,
+                                pattern: Some(r"####.##".to_string()),
                                 type_: Some("NUMBER".to_string()),
                             }),
                             ..Default::default()

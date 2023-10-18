@@ -11,7 +11,7 @@ use services::general::{GeneralService, GENERAL_SERVICE_NAME};
 use services::healthcheck::{HealthcheckService, HEALTHCHECK_SERVICE_NAME};
 use services::logs::{LogsService, LOGS_SERVICE_NAME};
 use services::metrics::{MetricsService, METRICS_SERVICE_NAME};
-use services::resources::{ResourcesService, RESOURCES_SERVICE_NAME};
+use services::system::{SystemService, SYSTEM_SERVICE_NAME};
 pub use services::*;
 use spreadsheet::sheet::TabColorRGB;
 pub use spreadsheet::*;
@@ -35,7 +35,7 @@ fn get_service_tab_color(service_name: &str) -> TabColorRGB {
         HEALTHCHECK_SERVICE_NAME => (255, 0, 0), // red
         LOGS_SERVICE_NAME => (0, 0, 255),  // blue
         METRICS_SERVICE_NAME => (153, 0, 255), // purple
-        RESOURCES_SERVICE_NAME => (0, 255, 0), // green,
+        SYSTEM_SERVICE_NAME => (0, 255, 0), // green,
         _ => panic!("assert: every service has its tab color defined"),
     };
     (
@@ -75,11 +75,11 @@ pub fn collect_messengers(
                 .and_then(|metrics| metrics.messenger.as_ref().map(|m| m.host().to_string())),
         ),
         (
-            RESOURCES_SERVICE_NAME,
+            SYSTEM_SERVICE_NAME,
             config
-                .resources
+                .system
                 .as_ref()
-                .and_then(|resources| resources.messenger.as_ref().map(|m| m.host().to_string())),
+                .and_then(|system| system.messenger.as_ref().map(|m| m.host().to_string())),
         ),
     ];
 
@@ -144,14 +144,13 @@ pub fn collect_services(
         services.push(logs_service);
     }
 
-    if let Some(resources) = config.resources {
-        let resources_service = ResourcesService::new(
-            shared
-                .clone_with_messenger(messengers.remove(RESOURCES_SERVICE_NAME).expect(assertion)),
-            resources,
+    if let Some(system) = config.system {
+        let system_service = SystemService::new(
+            shared.clone_with_messenger(messengers.remove(SYSTEM_SERVICE_NAME).expect(assertion)),
+            system,
         );
-        let resources_service = Box::new(resources_service) as Box<dyn Service + Sync + Send>;
-        services.push(resources_service);
+        let system_service = Box::new(system_service) as Box<dyn Service + Sync + Send>;
+        services.push(system_service);
     }
 
     let general_service = GeneralService::new(

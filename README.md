@@ -75,7 +75,7 @@ For command healthchecks it is recommended to wrap you command in some script or
 
 Metrics scrape endpoints with Prometheus metrics. Maximum response body is set to 16384 bytes.
 ### Logs
-### Resources
+### System
 
 ### KV
 

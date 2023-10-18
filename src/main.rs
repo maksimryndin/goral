@@ -16,7 +16,7 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "macos",))]
 pub async fn sigterm() -> tokio::io::Result<()> {
     signal::unix::signal(signal::unix::SignalKind::terminate())?
         .recv()
@@ -24,7 +24,7 @@ pub async fn sigterm() -> tokio::io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "macos",)))]
 pub async fn sigterm() -> tokio::io::Result<()> {
     std::future::pending::<()>().await;
     Ok(())

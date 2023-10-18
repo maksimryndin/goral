@@ -2,7 +2,7 @@ use crate::services::general::configuration::General;
 use crate::services::healthcheck::configuration::Healthcheck;
 use crate::services::logs::configuration::Logs;
 use crate::services::metrics::configuration::Metrics;
-use crate::services::resources::configuration::Resources;
+use crate::services::system::configuration::System;
 use config::{Config, ConfigError, Environment, File};
 use serde::de::{self, Deserialize, Deserializer};
 use serde_derive::Deserialize;
@@ -82,7 +82,7 @@ pub struct Configuration {
     #[validate]
     pub(crate) metrics: Option<Metrics>,
     #[validate]
-    pub(crate) resources: Option<Resources>,
+    pub(crate) system: Option<System>,
 }
 
 impl Configuration {

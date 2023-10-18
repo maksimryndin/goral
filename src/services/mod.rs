@@ -2,7 +2,7 @@ pub(crate) mod general;
 pub(crate) mod healthcheck;
 pub(crate) mod logs;
 pub(crate) mod metrics;
-pub(crate) mod resources;
+pub(crate) mod system;
 
 use crate::storage::{AppendableLog, Datarow};
 use crate::HttpsClient;
