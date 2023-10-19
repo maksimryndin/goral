@@ -13,7 +13,6 @@ use google_sheets4::{hyper, hyper_rustls, oauth2, Error, Sheets};
 const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
 
 macro_rules! handle_error {
-    // `()` indicates that the macro takes no argument.
     ($self:ident, $send_notification:ident, $expression:expr) => {
         match $expression {
             Err(e) => match e {

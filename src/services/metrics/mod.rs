@@ -37,7 +37,6 @@ pub(crate) struct MetricsService {
     scrape_timeout: Duration,
     endpoints: Vec<Uri>,
     channel_capacity: usize,
-    errors_previous_state: Vec<Option<String>>,
 }
 
 impl MetricsService {
@@ -49,7 +48,6 @@ impl MetricsService {
             &config.scrape_timeout_ms,
         )
         .expect("assert: push/scrate ratio is validated at configuration");
-        let errors_previous_state = vec![None; config.endpoints.len()];
         Self {
             shared,
             messenger_config: config.messenger,
@@ -67,7 +65,6 @@ impl MetricsService {
                 })
                 .collect(),
             channel_capacity,
-            errors_previous_state,
         }
     }
 
@@ -319,12 +316,7 @@ impl Service for MetricsService {
         match result {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
-                if self.errors_previous_state[id].is_none()
-                    || self.errors_previous_state[id].as_ref() != Some(&msg)
-                {
-                    self.send_error(&self.endpoints[id], &msg).await;
-                    self.errors_previous_state[id] = Some(msg);
-                }
+                self.send_error(&self.endpoints[id], &msg).await;
                 Data::Empty
             }
             _ => panic!("assert: metrics result contains either multiple datarows or error text"),

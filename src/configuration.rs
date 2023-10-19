@@ -50,16 +50,6 @@ pub(crate) fn port_validation(url: &Url) -> Result<(), serde_valid::validation::
         )))
 }
 
-pub(crate) fn host_port_validation(
-    endpoints: &Vec<Url>,
-) -> Result<(), serde_valid::validation::Error> {
-    for e in endpoints {
-        host_validation(e)?;
-        port_validation(e)?;
-    }
-    Ok(())
-}
-
 pub(crate) fn case_insensitive_enum<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,

@@ -1,15 +1,14 @@
 pub(crate) mod collector;
 pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
-
 use crate::services::system::configuration::{scrape_push_rule, System};
 use crate::services::{Data, Service, TaskResult};
-use crate::storage::{AppendableLog, Datarow, Datavalue};
+use crate::storage::AppendableLog;
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
-use tokio::sync::mpsc::{self, error::TrySendError};
+use tokio::sync::mpsc::{self};
 use tokio::task::{self, JoinHandle};
 
 pub const SYSTEM_SERVICE_NAME: &str = "system";
@@ -62,25 +61,29 @@ impl SystemService {
         mounts: Vec<String>,
         names: Vec<String>,
     ) {
-        let (mut sys, mut cpus) = collector::initialize();
+        let mut sys = collector::initialize();
         tracing::info!("started system info scraping thread");
 
         while let Some(scrape_time) = request_rx.blocking_recv() {
-            let result = collector::collect(&mut sys, &mut cpus, &mounts, &names)
-                .map(|values| {
-                    Data::Single(Datarow::new(
-                        SYSTEM_SERVICE_NAME.to_string(),
-                        scrape_time.naive_utc(),
-                        values,
-                        None,
-                    ))
-                })
+            let result = collector::collect(&mut sys, &mounts, &names, scrape_time.naive_utc())
+                .map(|datarows| Data::Many(datarows))
                 .map_err(|t| Data::Message(t));
             if let Err(_) = sender.blocking_send(TaskResult { id: 0, result }) {
                 break;
             }
         }
         tracing::info!("exiting system info scraping thread");
+    }
+
+    async fn make_timed_scrape(
+        request_tx: &mut mpsc::Sender<DateTime<Utc>>,
+        scrape_timeout: Duration,
+        scrape_time: DateTime<Utc>,
+    ) -> Result<(), String> {
+        tokio::select! {
+            _ = tokio::time::sleep(scrape_timeout) => Err(format!("sysinfo scrape timeout {:?}", scrape_timeout)),
+            res = request_tx.send(scrape_time) => res.map_err(|e| e.to_string())
+        }
     }
 
     async fn sys_observer(
@@ -92,7 +95,7 @@ impl SystemService {
         names: Vec<String>,
     ) {
         let mut interval = tokio::time::interval(scrape_interval);
-        let (tx, rx) = mpsc::channel::<DateTime<Utc>>(1);
+        let (mut tx, rx) = mpsc::channel::<DateTime<Utc>>(1);
         tracing::info!("starting system info scraping");
         let cloned_sender = sender.clone();
         let join_result =
@@ -113,16 +116,17 @@ impl SystemService {
                             send_notification.fatal(msg).await;
                             panic!("assert: should be able to spawn blocking tasks");
                         },
-                        Ok(res) => {
+                        Ok(_) => {
                             tracing::info!("finished collecting sysinfo");
                         },
                     };
                 }
                 _ = interval.tick() => {
                     let scrape_time = Utc::now();
-                    if let Err(e) = tx.send(scrape_time).await {
-                        tracing::error!("error sending request for sysinfo: `{}`", e);
-                        // TODO messenger
+                    if let Err(e) = Self::make_timed_scrape(&mut tx, scrape_timeout, scrape_time).await {
+                        let msg = format!("error sending request for sysinfo `{}`", e);
+                        tracing::error!("{}", msg);
+                        send_notification.try_error(msg);
                     }
                 }
             }
@@ -197,7 +201,7 @@ impl Service for SystemService {
                 }
                 Data::Empty
             }
-            _ => panic!("assert: system result contains either single datarow or error text"),
+            _ => panic!("assert: system result contains either many datarows or error text"),
         }
     }
 

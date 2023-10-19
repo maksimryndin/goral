@@ -74,7 +74,14 @@ For command healthchecks it is recommended to wrap you command in some script or
 ### Metrics
 
 Metrics scrape endpoints with Prometheus metrics. Maximum response body is set to 16384 bytes.
+
+```
+```
+
+If there is an error while scraping, it is sent via a configured messenger or via a default messenger of General service.
+
 ### Logs
+
 ### System
 
 ### KV

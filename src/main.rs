@@ -8,6 +8,7 @@ use goral::storage::{create_log, Storage};
 use goral::{collect_messengers, collect_services, Sender, Shared};
 use std::fmt::Debug;
 use std::panic;
+use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
@@ -134,6 +135,7 @@ async fn main() {
     let goral = try_join_all(tasks);
     tokio::pin!(goral);
     storage.welcome().await;
+    tracing::info!("{APP_NAME} started with pid {}", process::id());
 
     tokio::select! {
         biased;

@@ -22,16 +22,39 @@ const METADATA_UPDATED_AT: &str = "updated_at";
 const METADATA_KEYS: &str = "keys";
 const DATETIME_COLUMN_NAME: &str = "datetime";
 const MILLIS_PER_DAY: f64 = (24 * 60 * 60 * 1000) as f64;
+const DEFAULT_FONT: &str = "Verdana";
 const KEYS_DELIMITER: &str = "~^~";
+const THOUSAND: u64 = 10_u64.pow(3);
+const MILLION: u64 = 10_u64.pow(6);
+const BILLION: u64 = 10_u64.pow(9);
+const TRILLION: u64 = 10_u64.pow(12);
+
+const fn size_pattern(size: u64) -> &'static str {
+    if size >= TRILLION {
+        "#,,,,\"T\""
+    } else if size >= BILLION {
+        "#,,,\"G\""
+    } else if size >= MILLION {
+        "#,,\"M\""
+    } else if size >= THOUSAND {
+        "#,\"K\""
+    } else {
+        "#"
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum Datavalue {
     Text(String),
     Number(f64),
     Integer(u64),
+    IntegerID(u64),
     Percent(f64),
+    HeatmapPercent(f64),
     Datetime(NaiveDateTime),
     Bool(bool),
+    Size(u64),
+    NotAvailable,
 }
 
 #[derive(Debug)]
@@ -120,6 +143,7 @@ impl Datarow {
     }
 }
 
+// https://developers.google.com/sheets/api/guides/formats
 impl Into<RowData> for Datarow {
     fn into(self) -> RowData {
         let row = self
@@ -140,9 +164,9 @@ impl Into<RowData> for Datarow {
                             ..Default::default()
                         },
                     ),
-                    Datavalue::Percent(f) => (
+                    Datavalue::Percent(p) => (
                         ExtendedValue {
-                            number_value: Some(f / 100.0),
+                            number_value: Some(p / 100.0),
                             ..Default::default()
                         },
                         CellFormat {
@@ -150,18 +174,62 @@ impl Into<RowData> for Datarow {
                                 pattern: Some(r"#%".to_string()),
                                 type_: Some("NUMBER".to_string()),
                             }),
+                            text_format: Some(TextFormat {
+                                font_family: Some(DEFAULT_FONT.to_string()),
+                                ..Default::default()
+                            }),
                             ..Default::default()
                         },
                     ),
-                    Datavalue::Integer(f) => (
+                    Datavalue::HeatmapPercent(p) => (
                         ExtendedValue {
-                            number_value: Some(f as f64),
+                            number_value: Some(p / 100.0),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            number_format: Some(NumberFormat {
+                                pattern: Some(
+                                    r"[Red][>0.8]#%;[Color22][>0.5]#%;[Color10]#%".to_string(),
+                                ),
+                                type_: Some("NUMBER".to_string()),
+                            }),
+                            text_format: Some(TextFormat {
+                                font_family: Some(DEFAULT_FONT.to_string()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::Integer(i) => (
+                        ExtendedValue {
+                            number_value: Some(i as f64),
                             ..Default::default()
                         },
                         CellFormat {
                             number_format: Some(NumberFormat {
                                 pattern: Some(r"#,###".to_string()),
                                 type_: Some("NUMBER".to_string()),
+                            }),
+                            text_format: Some(TextFormat {
+                                font_family: Some(DEFAULT_FONT.to_string()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::IntegerID(i) => (
+                        ExtendedValue {
+                            number_value: Some(i as f64),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            number_format: Some(NumberFormat {
+                                pattern: Some(r"#".to_string()),
+                                type_: Some("NUMBER".to_string()),
+                            }),
+                            text_format: Some(TextFormat {
+                                font_family: Some(DEFAULT_FONT.to_string()),
+                                ..Default::default()
                             }),
                             ..Default::default()
                         },
@@ -176,6 +244,10 @@ impl Into<RowData> for Datarow {
                                 pattern: Some(r"####.##".to_string()),
                                 type_: Some("NUMBER".to_string()),
                             }),
+                            text_format: Some(TextFormat {
+                                font_family: Some(DEFAULT_FONT.to_string()),
+                                ..Default::default()
+                            }),
                             ..Default::default()
                         },
                     ),
@@ -185,6 +257,10 @@ impl Into<RowData> for Datarow {
                             ..Default::default()
                         },
                         CellFormat {
+                            text_format: Some(TextFormat {
+                                font_family: Some(DEFAULT_FONT.to_string()),
+                                ..Default::default()
+                            }),
                             ..Default::default()
                         },
                     ),
@@ -198,6 +274,41 @@ impl Into<RowData> for Datarow {
                                 pattern: Some(r"yyy mmm d \[ddd\] h:mm:ss".to_string()),
                                 type_: Some("DATE_TIME".to_string()),
                             }),
+                            text_format: Some(TextFormat {
+                                font_family: Some(DEFAULT_FONT.to_string()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::Size(s) => (
+                        ExtendedValue {
+                            number_value: Some(s as f64),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            number_format: Some(NumberFormat {
+                                pattern: Some(size_pattern(s).to_string()),
+                                type_: Some("NUMBER".to_string()),
+                            }),
+                            text_format: Some(TextFormat {
+                                font_family: Some(DEFAULT_FONT.to_string()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::NotAvailable => (
+                        ExtendedValue {
+                            string_value: Some("N/A".to_string()),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            text_format: Some(TextFormat {
+                                font_family: Some("Courier New".to_string()),
+                                ..Default::default()
+                            }),
+                            horizontal_alignment: Some("CENTER".to_string()),
                             ..Default::default()
                         },
                     ),
@@ -367,20 +478,23 @@ impl AppendableLog {
 
         // Check for sheet type to be grid
         let mut sheets_to_create: HashMap<SheetId, (VirtualSheet, Vec<String>)> = HashMap::new();
-        let _metadata_to_update: HashMap<SheetId, Vec<RowData>> = HashMap::new();
         let mut data_to_append: HashMap<SheetId, Rows> = HashMap::new();
-        let mut sheets_to_update: Vec<UpdateSheet> = vec![];
+        let mut sheets_to_update: HashMap<SheetId, UpdateSheet> = HashMap::new();
 
         let timestamp = Utc::now();
 
         datarows.into_iter().for_each(|mut datarow| {
             let sheet_id = datarow.sheet_id(&self.storage.host_id, &self.service);
             if let Some((sheet, keys)) = existing_sheets.get(&sheet_id) {
+                // for existing sheets we only change updated_at
+                // so it is enough to have one update per sheet
                 let new_metadata = vec![(METADATA_UPDATED_AT, timestamp.to_rfc3339())];
-                sheets_to_update.push(UpdateSheet::new(
-                    sheet.sheet_id(),
-                    Metadata::new(new_metadata),
-                ));
+                sheets_to_update
+                    .entry(sheet.sheet_id())
+                    .or_insert(UpdateSheet::new(
+                        sheet.sheet_id(),
+                        Metadata::new(new_metadata),
+                    ));
                 datarow.sort_by_keys(keys);
                 data_to_append
                     .entry(sheet.sheet_id())
@@ -440,6 +554,7 @@ impl AppendableLog {
         });
 
         let sheets_to_add = sheets_to_create.into_iter().map(|(_, (s, _))| s).collect();
+        let sheets_to_update = sheets_to_update.into_iter().map(|(_, u)| u).collect();
         let data: Vec<Rows> = data_to_append.into_iter().map(|(_, rows)| rows).collect();
 
         tracing::debug!("sheets_to_update:\n{:?}", sheets_to_update);
@@ -467,6 +582,12 @@ impl AppendableLog {
     }
 }
 
+macro_rules! sheet_name_jitter {
+    ($sheet_id:expr) => {
+        (*$sheet_id as u8) >> 3
+    };
+}
+
 fn prepare_sheet_title(
     host_id: &str,
     service: &str,
@@ -475,7 +596,7 @@ fn prepare_sheet_title(
     sheet_id: &SheetId,
 ) -> String {
     // to prevent sheet titles conflicts we "randomize" a little bit sheet creation datetime
-    let jitter = *sheet_id as u8;
+    let jitter = sheet_name_jitter!(sheet_id);
     let timestamp = *timestamp + Duration::from_secs(jitter.into());
     //TODO limit to 50 chars
     // use @ as a delimeter
@@ -505,4 +626,30 @@ fn convert_datetime_to_spreadsheet_double(d: NaiveDateTime) -> f64 {
         .num_milliseconds();
     let fraction_of_day = millis as f64 / MILLIS_PER_DAY;
     days + fraction_of_day
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jitter() {
+        let jitter = sheet_name_jitter!(&137328873_i32);
+        assert!(
+            jitter < 2_u8.pow(5),
+            "sheet_name_jitter should produce values less than 2^5"
+        )
+    }
+
+    #[test]
+    fn size_pattern_cases() {
+        assert_eq!("#".to_string(), size_pattern(670_u64));
+        assert_eq!("#,\"K\"".to_string(), size_pattern(6_701_u64));
+        assert_eq!("#,,\"M\"".to_string(), size_pattern(1_020_111_u64));
+        assert_eq!("#,,,\"G\"".to_string(), size_pattern(1_020_111_324_u64));
+        assert_eq!(
+            "#,,,,\"T\"".to_string(),
+            size_pattern(1_020_111_324_428_u64)
+        );
+    }
 }

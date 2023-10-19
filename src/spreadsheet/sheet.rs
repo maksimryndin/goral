@@ -83,6 +83,7 @@ impl Into<CellData> for Header {
                 horizontal_alignment: Some("CENTER".to_string()),
                 text_format: Some(TextFormat {
                     bold: Some(true),
+                    font_family: Some("Verdana".to_string()),
                     foreground_color_style: Some(ColorStyle {
                         rgb_color: Some(Color {
                             alpha: Some(0.0),
@@ -464,5 +465,16 @@ impl Rows {
                 ..Default::default()
             },
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id_generation() {
+        let id = str_to_id("some text to generate id from");
+        assert!(id > 0, "generated id should be positive");
     }
 }
