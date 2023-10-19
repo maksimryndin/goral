@@ -153,7 +153,11 @@ impl SpreadsheetAPI {
         let ranges: Vec<String> = sheets
             .iter()
             .filter(|s| s.sheet.sheet_type == SheetType::Grid)
-            .map(|s| s.sheet.header_range_r1c1().unwrap())
+            .map(|s| {
+                s.sheet
+                    .header_range_r1c1()
+                    .expect("assert: grid sheet has header range")
+            })
             .collect();
 
         // TODO calculate capacity properly

@@ -120,7 +120,7 @@ For every append operation Goral uses 2 method calls, so under quota limit of 30
 
 ## Recommended deployment
 
-Goral follows a fail-fast approach - if something violates assumptions (marked with `assert:`), the safest thing is to panic and restart. It doesn't behave like that for recoverable errors, of course. For example, if Goral cannot send a message to messenger, it will try to message via General service notifications, its logs. And will continue working and collecting data. If it cannot connect to Google API, it will retry. 
+Goral follows a fail-fast approach - if something violates assumptions (marked with `assert:`), the safest thing is to panic and restart. It doesn't behave like that for recoverable errors, of course. For example, if Goral cannot send a message to messenger, it will try to message via General service notifications, its logs. And will continue working and collecting data. If it cannot connect to Google API, it will retry first. 
 
 There is also a case of fatal errors (e.g. `MissingToken error` for Google API which usually means that system time has skewed). In that case only someone outside can help. And in case of such panics Goral first tries to notify you via a messenger configured for General service to let you know immediately.
 

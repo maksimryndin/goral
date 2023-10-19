@@ -124,7 +124,8 @@ impl Sheet {
             Some(format!(
                 "{}!R1C1:R1C{}",
                 self.title,
-                self.column_count.unwrap()
+                self.column_count
+                    .expect("assert: grid sheet contains column count")
             ))
         } else {
             None
@@ -133,7 +134,13 @@ impl Sheet {
 
     pub(crate) fn number_of_cells(&self) -> Option<i32> {
         if self.sheet_type == SheetType::Grid {
-            Some(self.row_count.unwrap() * self.column_count.unwrap())
+            Some(
+                self.row_count
+                    .expect("assert: grid sheet contains row count")
+                    * self
+                        .column_count
+                        .expect("assert: grid sheet contains column count"),
+            )
         } else {
             None
         }
@@ -166,7 +173,14 @@ impl From<GoogleSheet> for Sheet {
             .take()
             .unwrap_or(vec![])
             .into_iter()
-            .map(|meta| (meta.metadata_key.unwrap(), meta.metadata_value.unwrap()))
+            .map(|meta| {
+                (
+                    meta.metadata_key
+                        .expect("assert: if sheet has metadata entry, it has key"),
+                    meta.metadata_value
+                        .expect("assert: if sheet has metadata entry, it has value"),
+                )
+            })
             .collect();
         let properties = sh.properties.expect("sheet properties cannot be null");
         Self {
@@ -234,7 +248,12 @@ impl VirtualSheet {
     pub(super) fn into_api_requests(mut self) -> Vec<Request> {
         let mut requests = vec![];
         let grid_properties = if self.sheet.sheet_type == SheetType::Grid {
-            assert!(self.sheet.column_count.unwrap() > 0);
+            assert!(
+                self.sheet
+                    .column_count
+                    .expect("assert: grid sheet has column count")
+                    > 0
+            );
             Some(GridProperties {
                 column_count: self.sheet.column_count,
                 row_count: self.sheet.row_count,
@@ -290,7 +309,8 @@ impl VirtualSheet {
         requests.push(Request {
             update_cells: Some(UpdateCellsRequest {
                 fields: Some(
-                    FieldMask::from_str("userEnteredValue,userEnteredFormat,note").unwrap(),
+                    FieldMask::from_str("userEnteredValue,userEnteredFormat,note")
+                        .expect("assert: field mask can be constructed from static str"),
                 ),
                 range: Some(range),
                 rows: Some(data),
@@ -406,7 +426,10 @@ impl UpdateSheet {
                         metadata_value: Some(v),
                         ..Default::default()
                     }),
-                    fields: Some(FieldMask::from_str("metadataId,metadataValue").unwrap()),
+                    fields: Some(
+                        FieldMask::from_str("metadataId,metadataValue")
+                            .expect("assert: field mask can be constructed from static str"),
+                    ),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -448,7 +471,8 @@ impl Rows {
             Request {
                 append_cells: Some(AppendCellsRequest {
                     fields: Some(
-                        FieldMask::from_str("userEnteredValue,userEnteredFormat").unwrap(),
+                        FieldMask::from_str("userEnteredValue,userEnteredFormat")
+                            .expect("assert: field mask can be constructed from static str"),
                     ),
                     sheet_id: Some(self.sheet_id),
                     rows: Some(self.rows),

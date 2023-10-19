@@ -28,7 +28,9 @@ impl Debug for MessengerConfig {
         write!(
             f,
             "MessengerConfig({}:{})",
-            self.url.host().unwrap(),
+            self.url
+                .host()
+                .expect("assert: host for messenger is validated at configuration"),
             self.chat_id
         )
     }

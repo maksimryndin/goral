@@ -129,7 +129,10 @@ impl Datarow {
                 .collect();
         // we skip first header which is DATETIME_COLUMN_NAME
         for h in keys.into_iter().skip(1) {
-            self.data.push(data.remove_entry(h).unwrap());
+            self.data.push(
+                data.remove_entry(h)
+                    .expect("assert: datarow should be sorted by keys which it contains"),
+            );
         }
     }
 
@@ -510,7 +513,12 @@ impl AppendableLog {
                 datarow.sort_by_keys(keys);
                 data_to_append
                     .entry(sheet.sheet_id())
-                    .or_insert(Rows::new(sheet.sheet_id(), sheet.row_count().unwrap()))
+                    .or_insert(Rows::new(
+                        sheet.sheet_id(),
+                        sheet.row_count().expect(
+                            "assert: sheets created by services are grids which have row count",
+                        ),
+                    ))
                     .push(datarow.into());
             } else {
                 let sheet_id = datarow.sheet_id(&self.storage.host_id, &self.service);
@@ -613,16 +621,18 @@ fn prepare_sheet_title(
 // https://developers.google.com/sheets/api/reference/rest/v4/DateTimeRenderOption
 fn convert_datetime_to_spreadsheet_double(d: NaiveDateTime) -> f64 {
     let base = NaiveDate::from_ymd_opt(1899, 12, 30)
-        .unwrap()
+        .expect("assert: static datetime")
         .and_hms_opt(0, 0, 0)
-        .unwrap();
+        .expect("assert: static datetime");
     if d < base {
         return 0.0;
     }
     let days = (d - base).num_days() as f64;
     let millis = d
         .time()
-        .signed_duration_since(NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap())
+        .signed_duration_since(
+            NaiveTime::from_hms_milli_opt(0, 0, 0, 0).expect("assert: static time"),
+        )
         .num_milliseconds();
     let fraction_of_day = millis as f64 / MILLIS_PER_DAY;
     days + fraction_of_day
