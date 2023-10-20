@@ -18,6 +18,13 @@ So Goral provides the following features being deployed next to your app(s):
 * You can configure different messengers and/or channels for every service (healthchecks/metrics/logs/resources) to get notifications on errors in logs of your service, liveness updates, resources overlimit etc
 * All the data collected is stored in Google Sheet with an automatic quota and limits checks and automatic data rotation - old data is deleted with a preliminary notification via configured messenger (see below). That way you don't have to buy a separate storage or overload your app VPS with Prometheus etc. Just lean process next to your brilliant one which just sends app data in batches to Google Sheets for your ease of use. Google Sheets allow you to build your own diagrams over the metrics and analyse them, analyse liveness statistics and calculate uptime etc. By default Goral builds some charts for you.
 
+### System requirements
+
+30-40M of RAM
+Linux MacOS
+
+Other platform will probably work also
+
 ## Setup
 
 To use Goral you need to have a Google account and obtain a service account:
@@ -51,7 +58,7 @@ General service is responsible for reserved communication channel and important 
 
 ```toml
 [general]
-#log_level = "info"
+# log_level = "info"
 service_account_credentials_path = "/path/to/service_account.json"
 messenger.bot_token = "<bot token>"
 messenger.chat_id = "<chat id>"
@@ -60,6 +67,23 @@ messenger.url = "https://api.telegram.org/bot<bot token>/sendMessage"
 Commented lines (starting with #) are optional and an example values are their defaults. 
 
 ### Healthcheck
+
+```toml
+[healthcheck]
+# messenger.bot_token = "<bot token>"
+# messenger.chat_id = "<chat id>"
+# messenger.url = "<messenger api url for sending messages>"
+spreadsheet_id = "<spreadsheet_id>"
+# push_interval_secs = 30
+[[healthcheck.liveness]]
+# initial_delay_secs = 0
+# period_secs = 3
+typ = "Http"
+endpoint = "http://127.0.0.1:9898"
+# timeout_ms = 3000 # should be less than or equal period_secs
+```
+
+Healthcheck creates sheet for every liveness probe.
 
 Liveness probes follow the same rules as for [k8s](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/). Namely:
 * you should choose among HTTP GET (any status `>=200` and `<400`), gRPC, TCP (Goral can open socket) and command (successful exit)
@@ -75,12 +99,38 @@ For command healthchecks it is recommended to wrap you command in some script or
 
 Metrics scrape endpoints with Prometheus metrics. Maximum response body is set to 16384 bytes.
 
-```
+```toml
+[metrics]
+spreadsheet_id = "<spreadsheet_id>"
+# messenger.bot_token = "<bot token>"
+# messenger.chat_id = "<chat id>"
+# messenger.url = "<messenger api url for sending messages>"
+# push_interval_secs = 30
+# scrape_interval_secs = 10
+#scrape_timeout_ms = 3000
+endpoints = ["<prometheus metrics endpoint1>", "<prometheus metrics endpoint2>" ...]
+#[[metrics.rules]]
 ```
 
+For every endpoint and every metric Metrics service creates a separate sheet.
 If there is an error while scraping, it is sent via a configured messenger or via a default messenger of General service.
 
 ### Logs
+
+Logs service with the following configuration:
+
+```toml
+[logs]
+spreadsheet_id = "<spreadsheet_id>"
+# drop_if_contains = []
+# messenger.bot_token = "<bot token>"
+# messenger.chat_id = "<chat id>"
+# messenger.url = "<messenger api url for sending messages>"
+# push_interval_secs = 30
+#[[logs.rules]]
+```
+
+will create a single sheet with logs.
 
 For logs collecting Goral reads its stdin. Basically it is a portable way to collect stdout of another process without a privileged access (ptrace is a little bit hacky for our purposes and has too much power and is limited to nix systems). All the following is for nix systems. For Windows there should also be a way as it also supports named pipes.
 There is a caveat - if we make a simple pipe like `instrumented_app | goral` then in case of a termination of the `instrumented_app` Goral will not see any input and will stop reading.
@@ -94,14 +144,41 @@ With this named pipes approach the `instrumented_app` restarts doesn't stop Gora
 Just be sure to autorecreate a named pipe and a fake writer in case of a host system restarts.
 See also Deployment section for an example (TODO).
 
+As there may be a huge amount of logs, it is recommended to drop a part of the volume by specifiying an array of substrings in `drop_if_contains`.
+
 ### System
 
-doesn't require sudo
-open files for Linux (only for processes running under the same user)
-cpu for process is a sum so may be more than 100%
+System service configuration
 
-Process stat by name - first match is used so plan accordingly your binary unique name.
+```toml
+[system]
+spreadsheet_id = "<spreadsheet_id>"
+# push_interval_secs = 30
+# scrape_interval_secs = 10
+# scrape_timeout_ms = 3000
+# messenger.bot_token = "<bot token>"
+# messenger.chat_id = "<chat id>"
+# messenger.url = "<messenger api url for sending messages>"
+# mounts = ["/"]
+# names = ["goral"]
+#[[system.rules]]
+```
 
+With this configuration System service will create following sheets:
+* basic: with general information about the system (boot time, memory, cpus, swap, number of processes)
+* network: for every network interface number of bytes read/written since the previous measurement, total read/written
+* top_disk_read - process which has read the most from disk since the previous measurement
+* top_disk_write - process which has written the most to disk since the previous measurement
+* top_cpu - process with the most cpu time during the last second
+* top_memory - process with the most memory usage during the last second
+* top_open_files (for Linux only) - among the processes with the same user as goral (!) - process with the most opened files
+* for every process with name containing one of the substrings in `names` - a sheet with process info. Note: the first match is used so plan accordingly a unique name for your binary.
+* for every mount in `mounts` - disk usage and free space.
+
+System service doesn't require root privileges to collect the above telemetry.
+Cpu usage percent may be more than 100% if it is a multi-core machine as that cpu usage is a combined estimate.
+
+If there is an error while collecting system info, it is sent via a configured messenger or via a default messenger of General service.
 
 ### KV
 
@@ -148,23 +225,3 @@ So following Erlang's idea of [supervision trees](https://adoptingerlang.org/doc
 ```
 If you plan to use Resources service then you should not containerize Goral to get the actual system data.
 Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ctrl+C) and SIGTERM signals to safely send all the data in process to the permanent spreadsheet storage.
-
-## Development
-Run an example server
-```
-cargo run --example testapp
-```
-
-TODO
-- Slack and Discord support
-- Each service with screenshots and features
-- Minimal and maximal configurations
-- Systemd service in help
-- Create with Sheets some logs explorer (i.e. how to get specific logs and correlate them?)
-- For logs - send error message and link to the spreadsheet where the error is and what row??
-- LICENCE
-- CONRIBUTING AND ARCHITECTURE
-- TCP/Command/gRPC probes
-- Metrics alerting rules/policies
-- All messages and sheets must be identified by host id
-- Windows and MacOs support?
