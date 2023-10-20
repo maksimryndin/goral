@@ -488,6 +488,7 @@ impl AppendableLog {
 
         datarows.into_iter().for_each(|mut datarow| {
             let sheet_id = datarow.sheet_id(&self.storage.host_id, &self.service);
+
             if let Some((sheet, keys)) = existing_sheets.get(&sheet_id) {
                 // for existing sheets we only change updated_at
                 // so it is enough to have one update per sheet
@@ -661,5 +662,23 @@ mod tests {
             "#,,,,\"T\"".to_string(),
             size_pattern(1_020_111_324_428_u64)
         );
+    }
+
+    #[test]
+    fn datarow_id() {
+        let scrape_time = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .expect("assert: static datetime")
+            .and_hms_opt(0, 0, 0)
+            .expect("assert: static datetime");
+        let mut datarow = Datarow::new(
+            "/dev/shm".to_string(),
+            scrape_time,
+            vec![
+                (format!("disk_use"), Datavalue::HeatmapPercent(3_f64)),
+                (format!("disk_free"), Datavalue::Size(400_u64)),
+            ],
+            None,
+        );
+        assert_eq!(895475598, datarow.sheet_id("host1", "system"));
     }
 }

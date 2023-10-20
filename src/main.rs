@@ -32,8 +32,9 @@ pub async fn sigterm() -> tokio::io::Result<()> {
 }
 
 /// Goral is a modular observability toolkit for small projects.
+///
 /// Goral is a lightweight daemon process which
-/// stores collected data in Google Spreadsheet so no
+/// stores collected data in a Google Spreadsheet so no
 /// additional storage required.
 /// Any Goral service is easily replaced with enterprise-grade
 /// solution like Prometheus, Loki or Zabbix because it scrapes
@@ -62,7 +63,7 @@ struct Args {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() {
+async fn main() -> Result<(), String> {
     panic::set_hook(Box::new(|panic_info| {
         let base_message = format!("\nCould you please open an issue https://github.com/maksimryndin/goral/issues with Bug label? Thank you for using {APP_NAME}!");
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
@@ -74,15 +75,16 @@ async fn main() {
                 println!("Unexpected error happened: {}{base_message}", panic_info);
             }
         } else {
-            println!("Unexpected error happened.{base_message}");
+            println!("Unexpected error happened: {}.{base_message}", panic_info);
         }
     }));
 
     // Retrieve configuration
     let args = Args::parse();
 
-    let config = Configuration::new(&args.config)
-        .expect("Incorrect configuration (can be potentially overriden by environment variables starting with `GORAL__`)");
+    let config = Configuration::new(&args.config).map_err(|e| format!(
+        "Incorrect configuration (can be potentially overriden by environment variables starting with `GORAL__`): {e}"
+    ))?;
 
     let level = LevelFilter::from_level(config.general.log_level);
     let (json, plain) = if args.json {
@@ -163,7 +165,8 @@ async fn main() {
             tracing::error!("{} couldn't gracefully shutdown", APP_NAME);
         },
         _ = &mut goral => {
-            tracing::info!("{} has gracefully shutdowned", APP_NAME);
+            tracing::info!("{} has gracefully shutdowned. If you like using it, consider giving a star to https://github.com/maksimryndin/goral. Thank you!", APP_NAME);
         }
     }
+    Ok(())
 }

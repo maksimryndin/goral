@@ -1,13 +1,15 @@
 use crate::storage::{Datarow, Datavalue};
 use chrono::NaiveDateTime;
-use std::collections::HashMap;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use sysinfo::{
-    CpuExt, DiskExt, Pid, PidExt, Process as SysinfoProcess, ProcessExt, System, SystemExt, Uid,
+    CpuExt, NetworkExt, Pid, PidExt, Process as SysinfoProcess, ProcessExt, System, SystemExt, Uid,
     UserExt,
 };
+
+#[cfg(not(target_os = "linux"))]
+use sysinfo::DiskExt;
 
 #[cfg(target_os = "linux")]
 fn open_files(pid: Pid) -> Option<usize> {
@@ -222,8 +224,8 @@ pub(super) fn collect(
 
     let basic_values: Vec<(String, Datavalue)> = basic.into_iter().chain(cpus).collect();
 
-    // 1 for basic, 5 for top_ stats
-    let mut datarows = Vec::with_capacity(1 + mounts.len() + 5 + names.len());
+    // 1 for basic, 5 for top_ stats, 1 for network
+    let mut datarows = Vec::with_capacity(1 + mounts.len() + 5 + names.len() + 1);
     datarows.push(Datarow::new(
         "basic".to_string(),
         scrape_time,
@@ -231,38 +233,8 @@ pub(super) fn collect(
         None,
     ));
 
-    sys.refresh_disks_list();
-    let mut mounts_stat: HashMap<String, (u64, u64)> = sys
-        .disks()
-        .into_iter()
-        .map(|d| {
-            (
-                d.mount_point().to_string_lossy().into_owned(),
-                (d.available_space(), d.total_space()),
-            )
-        })
-        .collect();
-    for mount in mounts {
-        let (available, total) = match mounts_stat.remove(mount) {
-            Some(stat) => stat,
-            None => {
-                tracing::warn!("mount `{mount}` is not found to collect disk statistics");
-                continue;
-            }
-        };
-        datarows.push(Datarow::new(
-            mount.clone(),
-            scrape_time,
-            vec![
-                (
-                    format!("disk_use"),
-                    Datavalue::HeatmapPercent(100.0 * (total - available) as f64 / total as f64),
-                ),
-                (format!("disk_free"), Datavalue::Size(available)),
-            ],
-            None,
-        ));
-    }
+    let mut disk_stat = disk_stat(sys, mounts, scrape_time);
+    datarows.append(&mut disk_stat);
 
     let top_cpu = top_cpu_process(&mut processes_infos);
     datarows.push(Datarow::new(
@@ -313,5 +285,103 @@ pub(super) fn collect(
             tracing::warn!("process containing `{name}` in its name is not found to collect process statistics");
         }
     }
+
+    sys.refresh_networks_list();
+    let network_values: Vec<(String, Datavalue)> = sys
+        .networks()
+        .into_iter()
+        .map(|(interface_name, data)| {
+            [
+                (
+                    format!("{}_total_received", interface_name),
+                    Datavalue::Size(data.total_received()),
+                ),
+                (
+                    format!("{}_new_received", interface_name),
+                    Datavalue::Size(data.received()),
+                ),
+                (
+                    format!("{}_total_transmitted", interface_name),
+                    Datavalue::Size(data.total_transmitted()),
+                ),
+                (
+                    format!("{}_new_transmitted", interface_name),
+                    Datavalue::Size(data.transmitted()),
+                ),
+            ]
+        })
+        .flatten()
+        .collect();
+    datarows.push(Datarow::new(
+        "network".to_string(),
+        scrape_time,
+        network_values,
+        None,
+    ));
     Ok(datarows)
+}
+
+#[cfg(target_os = "linux")]
+fn disk_stat(_: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> Vec<Datarow> {
+    let mut datarows = Vec::with_capacity(mounts.len());
+    for mount in mounts {
+        let stat = match psutil::disk::disk_usage(mount) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("mount `{mount}` is not found to collect disk statistics");
+                continue;
+            }
+        };
+        datarows.push(Datarow::new(
+            mount.clone(),
+            scrape_time,
+            vec![
+                (
+                    format!("disk_use"),
+                    Datavalue::HeatmapPercent(stat.percent() as f64),
+                ),
+                (format!("disk_free"), Datavalue::Size(stat.free())),
+            ],
+            None,
+        ));
+    }
+    datarows
+}
+
+#[cfg(not(target_os = "linux"))]
+fn disk_stat(sys: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> Vec<Datarow> {
+    let mut datarows = Vec::with_capacity(mounts.len());
+    sys.refresh_disks_list();
+    let mut mounts_stat: std::collections::HashMap<String, (u64, u64)> = sys
+        .disks()
+        .into_iter()
+        .map(|d| {
+            (
+                d.mount_point().to_string_lossy().into_owned(),
+                (d.available_space(), d.total_space()),
+            )
+        })
+        .collect();
+    for mount in mounts {
+        let (available, total) = match mounts_stat.remove(mount) {
+            Some(stat) => stat,
+            None => {
+                tracing::warn!("mount `{mount}` is not found to collect disk statistics");
+                continue;
+            }
+        };
+        datarows.push(Datarow::new(
+            mount.clone(),
+            scrape_time,
+            vec![
+                (
+                    format!("disk_use"),
+                    Datavalue::HeatmapPercent(100.0 * (total - available) as f64 / total as f64),
+                ),
+                (format!("disk_free"), Datavalue::Size(available)),
+            ],
+            None,
+        ));
+    }
+    datarows
 }

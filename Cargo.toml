@@ -33,6 +33,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "json"] }
 url = { version = "2", features = ["serde"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+psutil = { version = "3.2.2", default-features = false, features = ["disk"]}
+
 [dev-dependencies]
 lazy_static = "1.4.0"
 prometheus = "0.13"

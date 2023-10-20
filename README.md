@@ -84,6 +84,11 @@ If there is an error while scraping, it is sent via a configured messenger or vi
 
 ### System
 
+doesn't require sudo
+open files for Linux (only for processes running under the same user)
+cpu for process is a sum so may be more than 100%
+
+
 ### KV
 
 Goral allows you to append key-value data to Google spreadsheet. Let's take an example. You provide SAAS for wholesalers and have several services, let's say "Orders" and "Marketing Campaigns". 

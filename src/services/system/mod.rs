@@ -24,9 +24,6 @@ pub(crate) struct SystemService {
     channel_capacity: usize,
     error_previous_state: Option<String>,
     messenger_config: Option<MessengerConfig>,
-    alert_if_cpu_usage_percent_more_than: Option<u8>,
-    alert_if_free_disk_space_percent_less_than: Option<u8>,
-    alert_if_free_memory_percent_less_than: Option<u8>,
 }
 
 impl SystemService {
@@ -48,10 +45,6 @@ impl SystemService {
             channel_capacity,
             error_previous_state: None,
             messenger_config: config.messenger,
-            alert_if_cpu_usage_percent_more_than: config.alert_if_cpu_usage_percent_more_than,
-            alert_if_free_disk_space_percent_less_than: config
-                .alert_if_free_disk_space_percent_less_than,
-            alert_if_free_memory_percent_less_than: config.alert_if_free_memory_percent_less_than,
         }
     }
 
