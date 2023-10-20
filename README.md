@@ -82,11 +82,25 @@ If there is an error while scraping, it is sent via a configured messenger or vi
 
 ### Logs
 
+For logs collecting Goral reads its stdin. Basically it is a portable way to collect stdout of another process without a privileged access (ptrace is a little bit hacky for our purposes and has too much power and is limited to nix systems). All the following is for nix systems. For Windows there should also be a way as it also supports named pipes.
+There is a caveat - if we make a simple pipe like `instrumented_app | goral` then in case of a termination of the `instrumented_app` Goral will not see any input and will stop reading.
+[There is a way with named pipes](https://www.baeldung.com/linux/stdout-to-multiple-commands#3-solve-the-problem-usingtee-and-named-pipes). 
+* You create a named pipe, say `instrumented_app_logs_pipe` with the command `mkfifo instrumented_app_logs_pipe` (it creates a pipe file in the current directory - you can choose an appropriate place)
+* Named pipe exists till there is at least one writer. So we create one `while true; do sleep 999999999; done >instrumented_app_logs_pipe &`
+* run Goral with its usual command args and pipe: `goral -c config.toml --id "host" <instrumented_app_logs_pipe`
+* run you app with `instrumented_app | tee instrumented_app_logs_pipe` - you will your logs in stdout as before and they also be cloned to the named pipe which is read by Goral.
+
+With this named pipes approach the `instrumented_app` restarts doesn't stop Goral from collecting logs.
+Just be sure to autorecreate a named pipe and a fake writer in case of a host system restarts.
+See also Deployment section for an example (TODO).
+
 ### System
 
 doesn't require sudo
 open files for Linux (only for processes running under the same user)
 cpu for process is a sum so may be more than 100%
+
+Process stat by name - first match is used so plan accordingly your binary unique name.
 
 
 ### KV

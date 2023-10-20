@@ -233,7 +233,7 @@ impl MetricsService {
                                     send_notification.fatal(msg).await;
                                     panic!("assert: should be able to spawn blocking tasks");
                                 },
-                                Ok(res) => res.map(|d| Data::Many(d)).map_err(|t| Data::Message(t)),
+                                Ok(res) => res.map(|d| Data::Many(d)).map_err(|e| Data::Message(format!("error scraping metrics `{e}`"))),
                             }
                         },
                         err => {
@@ -316,6 +316,7 @@ impl Service for MetricsService {
         match result {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
+                tracing::error!("{}", msg);
                 self.send_error(&self.endpoints[id], &msg).await;
                 Data::Empty
             }

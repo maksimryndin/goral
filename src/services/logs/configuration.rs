@@ -13,7 +13,5 @@ pub(crate) struct Logs {
     #[validate(minimum = 10)]
     #[serde(default = "push_interval_secs")]
     pub(crate) push_interval_secs: u16,
-    #[validate(minimum = 1)]
-    #[serde(default = "scrape_interval_secs")]
-    pub(crate) scrape_interval_secs: u16,
+    pub(crate) drop_if_contains: Option<Vec<String>>,
 }

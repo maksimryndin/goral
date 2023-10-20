@@ -22,7 +22,6 @@ pub(crate) struct SystemService {
     mounts: Vec<String>,
     process_names: Vec<String>,
     channel_capacity: usize,
-    error_previous_state: Option<String>,
     messenger_config: Option<MessengerConfig>,
 }
 
@@ -43,7 +42,6 @@ impl SystemService {
             mounts: config.mounts,
             process_names: config.process_names,
             channel_capacity,
-            error_previous_state: None,
             messenger_config: config.messenger,
         }
     }
@@ -60,7 +58,7 @@ impl SystemService {
         while let Some(scrape_time) = request_rx.blocking_recv() {
             let result = collector::collect(&mut sys, &mounts, &names, scrape_time.naive_utc())
                 .map(|datarows| Data::Many(datarows))
-                .map_err(|t| Data::Message(t));
+                .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
             if let Err(_) = sender.blocking_send(TaskResult { id: 0, result }) {
                 break;
             }
@@ -186,12 +184,8 @@ impl Service for SystemService {
         match result {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
-                if self.error_previous_state.is_none()
-                    || self.error_previous_state.as_ref() != Some(&msg)
-                {
-                    self.send_error(&msg).await;
-                    self.error_previous_state = Some(msg);
-                }
+                tracing::error!("{}", msg);
+                self.send_error(&msg).await;
                 Data::Empty
             }
             _ => panic!("assert: system result contains either many datarows or error text"),
