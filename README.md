@@ -112,7 +112,8 @@ endpoints = ["<prometheus metrics endpoint1>", "<prometheus metrics endpoint2>" 
 #[[metrics.rules]]
 ```
 
-For every endpoint and every metric Metrics service creates a separate sheet.
+For every endpoint and every metric Metrics service creates a separate sheet. Uniqueness of the sheet is determined by the metric name and its labels. So if you observe two instances of your app with the same goral daemon, you should either add an instance label to your metric to have separate sheets for every instance or be ready to have the same metric from all instances in the same sheet (but there will be a column `endpoint` which allows you to filter by an endpoint) which may lead to a confusion.
+
 If there is an error while scraping, it is sent via a configured messenger or via a default messenger of General service.
 
 ### Logs
