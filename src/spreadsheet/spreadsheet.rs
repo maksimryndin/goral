@@ -1,49 +1,62 @@
 use crate::spreadsheet::sheet::{Rows, Sheet, SheetId, SheetType, UpdateSheet, VirtualSheet};
-use crate::spreadsheet::Metadata;
+use crate::spreadsheet::{HttpResponse, Metadata};
 use crate::HyperConnector;
 use crate::Sender;
-use anyhow::Result;
 use chrono::Utc;
 use google_sheets4::api::{
     BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
 };
-use google_sheets4::{hyper, hyper_rustls, oauth2, Error, Sheets};
+use google_sheets4::{
+    hyper::{self, Body},
+    hyper_rustls, oauth2, Error, Result as SheetsResult, Sheets,
+};
+use http::response::Response;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en
 const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
 
-macro_rules! handle_error {
-    ($self:ident, $send_notification:ident, $expression:expr) => {
-        match $expression {
-            Err(e) => match e {
-                // fatal
-                Error::MissingAPIKey
-                | Error::BadRequest(_)
-                | Error::UploadSizeLimitExceeded(_, _)
-                | Error::FieldClash(_) => {
-                    tracing::error!("{}", e);
-                    $self.$send_notification.fatal(format!("Fatal error for Google API access\n```{}```", e)).await;
-                    panic!("Fatal error for Google API access: `{}`", e);
-                }
-                Error::MissingToken(_) => {
-                    let msg = format!("`MissingToken error` for Google API\nProbably server time skewed which is now `{}`\nSync server time with NTP", Utc::now());
-                    tracing::error!(
-                        "{}{}",
-                        e, msg
-                    );
-                    $self.$send_notification.fatal(msg).await;
-                    panic!("{}Probably server time skewed. Sync server time with NTP.", e);
-                }
-                // retry
-                Error::HttpError(_)
-                | Error::Io(_)
-                | Error::Cancelled
-                | Error::Failure(_)
-                | Error::JsonDecodeError(_, _) => Err(e),
-            },
-            Ok(res) => Ok(res.1),
-        }
-    };
+async fn handle_error<T>(
+    spreadsheet: &SpreadsheetAPI,
+    result: SheetsResult<(Response<Body>, T)>,
+) -> Result<T, HttpResponse> {
+    match result {
+        Err(e) => match e {
+            // fatal
+            Error::MissingAPIKey | Error::BadRequest(_) | Error::FieldClash(_) => {
+                tracing::error!("{}", e);
+                spreadsheet
+                    .send_notification
+                    .fatal(format!("Fatal error for Google API access\n```{}```", e))
+                    .await;
+                panic!("Fatal error for Google API access: `{}`", e);
+            }
+            Error::MissingToken(_) => {
+                let msg = format!("`MissingToken error` for Google API\nProbably server time skewed which is now `{}`\nSync server time with NTP", Utc::now());
+                tracing::error!("{}{}", e, msg);
+                spreadsheet.send_notification.fatal(msg).await;
+                panic!(
+                    "{}Probably server time skewed. Sync server time with NTP.",
+                    e
+                );
+            }
+            Error::UploadSizeLimitExceeded(actual, limit) => {
+                let msg = format!("uploading to much data {actual} vs limit of {limit} bytes");
+                tracing::error!("{}", msg);
+                spreadsheet
+                    .send_notification
+                    .fatal(format!("Fatal error for Google API access\n```{msg}```"))
+                    .await;
+                panic!("Fatal error for Google API access: `{}`", msg);
+            }
+            // retry
+            Error::Failure(v) => Err(v),
+            Error::HttpError(v) => Err(Response::new(Body::from(v.to_string()))),
+            Error::Io(v) => Err(Response::new(Body::from(v.to_string()))),
+            Error::JsonDecodeError(_, v) => Err(Response::new(Body::from(v.to_string()))),
+            Error::Cancelled => Err(Response::new(Body::from("cancelled"))),
+        },
+        Ok(res) => Ok(res.1),
+    }
 }
 
 pub struct SpreadsheetAPI {
@@ -72,10 +85,6 @@ impl SpreadsheetAPI {
         }
     }
 
-    pub(crate) fn spreadsheet_url(&self, spreadsheet_id: &str) -> String {
-        format!("https://docs.google.com/spreadsheets/d/{}", spreadsheet_id)
-    }
-
     pub(crate) fn sheet_url(&self, spreadsheet_id: &str, sheet_id: SheetId) -> String {
         format!(
             "https://docs.google.com/spreadsheets/d/{}#gid={}",
@@ -83,7 +92,7 @@ impl SpreadsheetAPI {
         )
     }
 
-    async fn spreadsheet_meta(&self, spreadsheet_id: &str) -> Result<Spreadsheet> {
+    async fn spreadsheet_meta(&self, spreadsheet_id: &str) -> Result<Spreadsheet, HttpResponse> {
         // first get all spreadsheet sheets properties without data
         // second for sheets in interest (by tab color) fetch headers
         // and last row timestamp??
@@ -95,26 +104,20 @@ impl SpreadsheetAPI {
             .doit()
             .await;
         tracing::debug!("{:?}", result);
-        Ok(handle_error!(self, send_notification, result)?)
+        handle_error(self, result).await
     }
 
     fn calculate_usage(num_of_cells: i32) -> u8 {
         (100.0 * (num_of_cells as f64 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f64)) as u8
     }
 
-    fn calculate_cells(sheets: &Vec<Sheet>) -> i32 {
-        sheets
-            .iter()
-            .fold(0, |acc, s| acc + s.number_of_cells().unwrap_or(0))
-    }
-
     pub(crate) async fn sheets_filtered_by_metadata(
         &self,
         spreadsheet_id: &str,
         metadata: &Metadata,
-    ) -> Result<(Vec<Sheet>, u8, u8)> {
+    ) -> Result<(Vec<Sheet>, u8, u8), HttpResponse> {
         let response = self.spreadsheet_meta(spreadsheet_id).await.map_err(|e| {
-            tracing::error!("{}", e);
+            tracing::error!("{:?}", e);
             e
         })?;
 
@@ -149,7 +152,7 @@ impl SpreadsheetAPI {
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
-    ) -> Result<BatchUpdateSpreadsheetResponse> {
+    ) -> Result<BatchUpdateSpreadsheetResponse, HttpResponse> {
         let ranges: Vec<String> = sheets
             .iter()
             .filter(|s| s.sheet.sheet_type == SheetType::Grid)
@@ -192,7 +195,7 @@ impl SpreadsheetAPI {
             .await;
 
         tracing::debug!("{:?}", result);
-        Ok(handle_error!(self, send_notification, result)?)
+        handle_error(self, result).await
     }
 
     pub(crate) async fn crud_sheets(
@@ -201,11 +204,11 @@ impl SpreadsheetAPI {
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
-    ) -> Result<()> {
+    ) -> Result<(), HttpResponse> {
         self._crud_sheets(spreadsheet_id, updates, sheets, data)
             .await
             .map_err(|e| {
-                tracing::error!("{}", e);
+                tracing::error!("{:?}", e);
                 e
             })?;
         Ok(())

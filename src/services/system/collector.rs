@@ -334,7 +334,10 @@ fn disk_stat(_: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> V
         let stat = match psutil::disk::disk_usage(mount) {
             Ok(s) => s,
             Err(e) => {
-                tracing::warn!("mount `{mount}` is not found to collect disk statistics");
+                tracing::warn!(
+                    "mount `{mount}` is not found to collect disk statistics: {}",
+                    e
+                );
                 continue;
             }
         };

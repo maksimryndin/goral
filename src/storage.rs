@@ -1,9 +1,8 @@
 use crate::spreadsheet::sheet::{
     str_to_id, Header, Rows, Sheet, SheetId, TabColorRGB, UpdateSheet, VirtualSheet,
 };
-use crate::spreadsheet::{Metadata, SpreadsheetAPI};
+use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
 use crate::{get_service_tab_color, Sender, APP_NAME, HOST_ID_CHARS_LIMIT};
-use anyhow::Result;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData, TextFormat};
 
@@ -380,7 +379,7 @@ pub struct AppendableLog {
 }
 
 impl AppendableLog {
-    async fn fetch_sheets(&self) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>> {
+    async fn fetch_sheets(&self) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, HttpResponse> {
         let basic_metadata = Metadata::new(vec![
             (METADATA_HOST_ID_KEY, self.storage.host_id.to_string()),
             (METADATA_SERVICE_KEY, self.service.to_string()),
@@ -409,20 +408,35 @@ impl AppendableLog {
             .collect())
     }
 
-    pub(crate) async fn healthcheck(&mut self) -> Result<()> {
+    pub(crate) async fn healthcheck(&mut self) -> Result<(), HttpResponse> {
         self.fetch_sheets().await?;
         Ok(())
     }
 
-    pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<()> {
+    pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<(), HttpResponse> {
         self._append(datarows, 32).await
     }
 
-    pub(crate) async fn append_no_retry(&mut self, datarows: Vec<Datarow>) -> Result<()> {
-        self._append(datarows, 0).await
+    pub(crate) async fn append_no_retry(
+        &mut self,
+        mut datarows: Vec<Datarow>,
+    ) -> Result<Vec<String>, HttpResponse> {
+        let sheet_ids = datarows
+            .iter_mut()
+            .map(|d| {
+                let sheet_id = d.sheet_id(&self.storage.host_id, &self.service);
+                self.sheet_url(sheet_id)
+            })
+            .collect();
+        self._append(datarows, 0).await?;
+        Ok(sheet_ids)
     }
 
-    async fn _append(&mut self, datarows: Vec<Datarow>, retry_duration: u64) -> Result<()> {
+    async fn _append(
+        &mut self,
+        datarows: Vec<Datarow>,
+        retry_duration: u64,
+    ) -> Result<(), HttpResponse> {
         let rows_count = datarows.len();
         tracing::info!(
             "appending to log {} rows for service {}",
@@ -450,14 +464,19 @@ impl AppendableLog {
     }
 
     // for newly created log sheet its headers order is determined by its first datarow. Fields for other datarows for the same sheet are sorted accordingly.
-    async fn _core_append(&mut self, datarows: Vec<Datarow>, retry_duration: u64) -> Result<()> {
+    async fn _core_append(
+        &mut self,
+        datarows: Vec<Datarow>,
+        retry_duration: u64,
+    ) -> Result<(), HttpResponse> {
         if datarows.is_empty() {
             return Ok(());
         }
         // We do not retry sheet `crud` as it goes after
-        // `fetch_sheets` which is retriable and should either fix an error
-        // or fail.
-        // Retrying `crud` would require cloning all sheets at every retry attempt
+        // `fetch_sheets` which is retriable and should 
+        // either fix an error or fail.
+        // Retrying `crud` is not idempotent and 
+        // would require cloning all sheets at every retry attempt
         // https://developers.google.com/sheets/api/limits#example-algorithm
         let retry_strategy = ExponentialBackoff::from_millis(2)
             .max_delay(Duration::from_secs(retry_duration))
@@ -574,10 +593,6 @@ impl AppendableLog {
             .google
             .crud_sheets(&self.spreadsheet_id, sheets_to_update, sheets_to_add, data)
             .await
-    }
-
-    pub(crate) fn spreadsheet_url(&self) -> String {
-        self.storage.google.spreadsheet_url(&self.spreadsheet_id)
     }
 
     pub(crate) fn host_id(&self) -> &str {

@@ -6,12 +6,12 @@ use crate::services::{Data, Service, TaskResult};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{Utc};
 use std::time::Duration;
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{self};
-use tokio::task::{self, JoinHandle};
+use tokio::task::{JoinHandle};
 
 pub const LOGS_SERVICE_NAME: &str = "logs";
 
@@ -37,6 +37,7 @@ impl LogsService {
         }
     }
 
+    // TODO test for filter
     fn filter<'a>(text: &'a str, filter_if_contains: &Vec<String>) -> Option<&'a str> {
         if filter_if_contains.is_empty() {
             return Some(text);
@@ -81,7 +82,6 @@ impl LogsService {
         filter_if_contains: Vec<String>,
     ) {
         tracing::info!("starting stdin logs scraping");
-        let cloned_sender = sender.clone();
         let stdin = BufReader::new(io::stdin()).lines();
         tokio::pin!(stdin);
 

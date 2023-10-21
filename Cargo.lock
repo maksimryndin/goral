@@ -573,6 +573,7 @@ dependencies = [
  "config",
  "futures",
  "google-sheets4",
+ "http",
  "hyper",
  "hyper-rustls",
  "lazy_static",

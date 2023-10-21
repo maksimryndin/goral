@@ -9,6 +9,7 @@ use hyper::{client::connect::HttpConnector, Client};
 pub use messenger::*;
 use services::general::{GeneralService, GENERAL_SERVICE_NAME};
 use services::healthcheck::{HealthcheckService, HEALTHCHECK_SERVICE_NAME};
+use services::kv::{KvService, KV_SERVICE_NAME};
 use services::logs::{LogsService, LOGS_SERVICE_NAME};
 use services::metrics::{MetricsService, METRICS_SERVICE_NAME};
 use services::system::{SystemService, SYSTEM_SERVICE_NAME};
@@ -33,6 +34,7 @@ fn get_service_tab_color(service_name: &str) -> TabColorRGB {
     let rgb = match service_name {
         GENERAL_SERVICE_NAME => (0, 0, 0), // general service hasn't sheets
         HEALTHCHECK_SERVICE_NAME => (255, 0, 0), // red
+        KV_SERVICE_NAME => (255, 153, 0),  // orange
         LOGS_SERVICE_NAME => (0, 0, 255),  // blue
         METRICS_SERVICE_NAME => (153, 0, 255), // purple
         SYSTEM_SERVICE_NAME => (0, 255, 0), // green,
@@ -59,6 +61,13 @@ pub fn collect_messengers(
             config.healthcheck.as_ref().and_then(|healthcheck| {
                 healthcheck.messenger.as_ref().map(|m| m.host().to_string())
             }),
+        ),
+        (
+            KV_SERVICE_NAME,
+            config
+                .kv
+                .as_ref()
+                .and_then(|kv| kv.messenger.as_ref().map(|m| m.host().to_string())),
         ),
         (
             LOGS_SERVICE_NAME,
@@ -133,6 +142,15 @@ pub fn collect_services(
         );
         let metrics_service = Box::new(metrics_service) as Box<dyn Service + Sync + Send>;
         services.push(metrics_service);
+    }
+
+    if let Some(kv) = config.kv {
+        let kv_service = KvService::new(
+            shared.clone_with_messenger(messengers.remove(KV_SERVICE_NAME).expect(assertion)),
+            kv,
+        );
+        let kv_service = Box::new(kv_service) as Box<dyn Service + Sync + Send>;
+        services.push(kv_service);
     }
 
     if let Some(logs) = config.logs {

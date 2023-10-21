@@ -39,7 +39,7 @@ pub async fn sigterm() -> tokio::io::Result<()> {
 /// Any Goral service is easily replaced with enterprise-grade
 /// solution like Prometheus, Loki or Zabbix because it scrapes
 /// data in common industry formats.
-/// TODO include docs github page?
+/// https://github.com/maksimryndin/goral#goral
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -79,7 +79,6 @@ async fn main() -> Result<(), String> {
         }
     }));
     {
-        // Retrieve configuration
         let args = Args::parse();
 
         let config = Configuration::new(&args.config).map_err(|e| format!(

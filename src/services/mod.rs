@@ -1,5 +1,6 @@
 pub(crate) mod general;
 pub(crate) mod healthcheck;
+pub(crate) mod kv;
 pub(crate) mod logs;
 pub(crate) mod metrics;
 pub(crate) mod system;
@@ -35,12 +36,12 @@ pub trait Service {
     fn spreadsheet_id(&self) -> &str;
 
     fn channel_capacity(&self) -> usize {
-        // TODO remove after all implementations
+        // Default for General and KV services
         1
     }
 
     fn push_interval(&self) -> Duration {
-        // TODO remove after all implementations ??
+        // Default for General and KV services
         Duration::from_secs(u64::MAX)
     }
 
@@ -57,7 +58,7 @@ pub trait Service {
     }
 
     async fn spawn_tasks(&mut self, _sender: mpsc::Sender<TaskResult>) -> Vec<JoinHandle<()>> {
-        // TODO remove after all implementations
+        // Default for General service
         std::future::pending::<()>().await;
         vec![]
     }

@@ -1,4 +1,4 @@
-use crate::configuration::{push_interval_secs, scrape_interval_secs};
+
 use crate::messenger::configuration::MessengerConfig;
 
 use serde_derive::Deserialize;

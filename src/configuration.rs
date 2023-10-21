@@ -1,5 +1,6 @@
 use crate::services::general::configuration::General;
 use crate::services::healthcheck::configuration::Healthcheck;
+use crate::services::kv::configuration::Kv;
 use crate::services::logs::configuration::Logs;
 use crate::services::metrics::configuration::Metrics;
 use crate::services::system::configuration::System;
@@ -67,6 +68,8 @@ pub struct Configuration {
     pub general: General,
     #[validate]
     pub(crate) healthcheck: Option<Healthcheck>,
+    #[validate]
+    pub(crate) kv: Option<Kv>,
     #[validate]
     pub(crate) logs: Option<Logs>,
     #[validate]
