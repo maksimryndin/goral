@@ -106,7 +106,7 @@ impl Into<CellData> for Header {
 #[derive(Debug)]
 pub(crate) struct Sheet {
     pub(super) sheet_id: SheetId,
-    pub(super) title: String, // 50 characters
+    pub(super) title: String,
     pub(super) hidden: bool,
     pub(super) index: u8,
     pub(super) sheet_type: SheetType,

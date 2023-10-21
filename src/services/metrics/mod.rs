@@ -126,6 +126,7 @@ impl MetricsService {
     fn parse_scrape_output(
         output: String,
         scrape_time: DateTime<Utc>,
+        identifier: Option<String>,
     ) -> StdResult<Vec<Datarow>, String> {
         let lines: Vec<_> = output.lines().map(|s| Ok(s.to_string())).collect();
         let Scrape { docs, samples } =
@@ -180,8 +181,15 @@ impl MetricsService {
                 let note = docs
                     .get(&metric_name)
                     .expect("assert: all metrics are in docs by their basenames");
+                let log_name = if let Some(prefix) = identifier.as_ref() {
+                    // Prmotheus metric name cannot contain `:` so we use it as a delimiter
+                    // see https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
+                    format!("{prefix}:{metric_name}")
+                } else {
+                    metric_name
+                };
                 Datarow::new(
-                    metric_name,
+                    log_name,
                     timestamp.naive_utc(),
                     values,
                     Some(note.to_string()),
@@ -206,6 +214,7 @@ impl MetricsService {
         scrape_target: ScrapeTarget,
         sender: mpsc::Sender<TaskResult>,
         send_notification: Sender,
+        identifier: Option<String>,
     ) {
         let mut interval = tokio::time::interval(scrape_target.interval);
         tracing::info!("starting metrics scraping for {:?}", scrape_target.url);
@@ -222,8 +231,9 @@ impl MetricsService {
                     let result = match scrape_result {
                         Ok(output) => {
                             tracing::info!("starting metrics parsing for {:?}", scrape_target.url);
+                            let identifier = identifier.clone();
                             let join_result = task::spawn_blocking(move || {
-                                Self::parse_scrape_output(output, scrape_time)
+                                Self::parse_scrape_output(output, scrape_time, identifier)
                             }).await;
                             tracing::info!("finished metrics parsing for {:?}", scrape_target.url);
                             match join_result {
@@ -332,6 +342,15 @@ impl Service for MetricsService {
                 let url = u.clone();
                 let sender = sender.clone();
                 let interval = self.scrape_interval.clone();
+                let identifier = if self.endpoints.len() > 1 {
+                    Some(
+                        url.port()
+                            .expect("assert: metric endpoint port is validated at configuration")
+                            .to_string(),
+                    )
+                } else {
+                    None
+                };
                 let scrape_target = ScrapeTarget {
                     url: url.clone(),
                     interval,
@@ -341,7 +360,15 @@ impl Service for MetricsService {
                     HttpClient::new(MAX_BYTES_METRICS_OUTPUT, true, self.scrape_interval, url);
                 let send_notification = self.shared.send_notification.clone();
                 tokio::spawn(async move {
-                    Self::run_scrape(client, index, scrape_target, sender, send_notification).await;
+                    Self::run_scrape(
+                        client,
+                        index,
+                        scrape_target,
+                        sender,
+                        send_notification,
+                        identifier,
+                    )
+                    .await;
                 })
             })
             .collect()

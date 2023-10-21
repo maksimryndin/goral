@@ -31,6 +31,7 @@ struct ProcessInfo {
     effective_user_id: Option<Uid>,
     cpu_percent: f32,
     memory_used: u64,
+    virtual_memory: u64,
     memory_use: f32,
     disk_read: u64,
     disk_write: u64,
@@ -58,6 +59,7 @@ impl ProcessInfo {
             effective_user_id: sysinfo_process.effective_user_id().cloned(),
             cpu_percent: sysinfo_process.cpu_usage(),
             memory_used: sysinfo_process.memory(),
+            virtual_memory: sysinfo_process.virtual_memory(),
             memory_use: 100.0 * sysinfo_process.memory() as f32 / total_memory,
             disk_read: sysinfo_process.disk_usage().read_bytes,
             disk_write: sysinfo_process.disk_usage().written_bytes,
@@ -139,6 +141,10 @@ fn process_to_values(process: &ProcessInfo, sys: &mut System) -> Vec<(String, Da
         (
             format!("start_time"),
             Datavalue::Datetime(process.start_time),
+        ),
+        (
+            format!("virtual_memory"),
+            Datavalue::Size(process.virtual_memory),
         ),
         (format!("memory_used"), Datavalue::Size(process.memory_used)),
         (

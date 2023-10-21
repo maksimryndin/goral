@@ -33,7 +33,7 @@ pub(super) fn scrape_push_rule(
         ));
     }
     // appending to log is time-consuming
-    // during the append we accumulate metrics rows in the channel
+    // during the append we accumulate datarows in the channel
     // Estimate of append duration - 1 sec per row
     const ESTIMATED_ROWS_PER_METRICS_ENDPOINT: usize = 10;
     let append_duration =

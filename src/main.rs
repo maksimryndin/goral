@@ -173,5 +173,4 @@ async fn main() -> Result<(), String> {
     // so after the shutdown (which ensures proper termination) we exit the whole process
     // main body function is enclosed with braces to run destructors as the `exit` aborts immediately
     std::process::exit(0);
-    Ok(())
 }

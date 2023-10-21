@@ -607,7 +607,6 @@ fn prepare_sheet_title(
     // to prevent sheet titles conflicts we "randomize" a little bit sheet creation datetime
     let jitter = sheet_name_jitter!(sheet_id);
     let timestamp = *timestamp + Duration::from_secs(jitter.into());
-    //TODO limit to 50 chars
     // use @ as a delimeter
     // see https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
     format!(

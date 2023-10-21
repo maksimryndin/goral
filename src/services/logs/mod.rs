@@ -1,7 +1,7 @@
 pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
 
-use crate::services::logs::configuration::Logs;
+use crate::services::logs::configuration::{channel_capacity, Logs};
 use crate::services::{Data, Service, TaskResult};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
@@ -20,37 +20,51 @@ pub(crate) struct LogsService {
     spreadsheet_id: String,
     push_interval: Duration,
     channel_capacity: usize,
-    drop_if_contains: Vec<String>,
+    filter_if_contains: Vec<String>,
     messenger_config: Option<MessengerConfig>,
 }
 
 impl LogsService {
     pub(crate) fn new(shared: Shared, config: Logs) -> LogsService {
+        let channel_capacity = channel_capacity(&config.push_interval_secs);
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
-            drop_if_contains: config.drop_if_contains.unwrap_or(vec![]),
-            channel_capacity: 10,
+            filter_if_contains: config.filter_if_contains.unwrap_or(vec![]),
+            channel_capacity,
             messenger_config: config.messenger,
         }
     }
 
-    fn process_line(line: String, drop_if_contains: &Vec<String>) -> Data {
+    fn filter<'a>(text: &'a str, filter_if_contains: &Vec<String>) -> Option<&'a str> {
+        if filter_if_contains.is_empty() {
+            return Some(text);
+        }
+        for substring in filter_if_contains {
+            if text.contains(substring) {
+                return Some(text);
+            }
+        }
+        tracing::debug!(
+            "log line {} is dropped because it doesn't contain any of {:?}",
+            text,
+            filter_if_contains
+        );
+        None
+    }
+
+    fn process_line(line: String, filter_if_contains: &Vec<String>) -> Data {
         let text = line.trim();
         if text.is_empty() {
             return Data::Empty;
         }
-        for substring in drop_if_contains {
-            if text.contains(substring) {
-                tracing::debug!(
-                    "log line {} is dropped because it contains {}",
-                    text,
-                    substring
-                );
-                return Data::Empty;
-            }
-        }
+        let text = if let Some(text) = Self::filter(text, filter_if_contains) {
+            text
+        } else {
+            return Data::Empty;
+        };
+
         Data::Single({
             Datarow::new(
                 LOGS_SERVICE_NAME.to_string(),
@@ -64,11 +78,11 @@ impl LogsService {
     async fn logs_collector(
         sender: mpsc::Sender<TaskResult>,
         send_notification: Sender,
-        drop_if_contains: Vec<String>,
+        filter_if_contains: Vec<String>,
     ) {
         tracing::info!("starting stdin logs scraping");
         let cloned_sender = sender.clone();
-        let mut stdin = BufReader::new(io::stdin()).lines();
+        let stdin = BufReader::new(io::stdin()).lines();
         tokio::pin!(stdin);
 
         loop {
@@ -83,16 +97,16 @@ impl LogsService {
                             Err(Data::Message(format!("error reading next log line from stdin `{e}`")))
                         },
                         Ok(Some(line)) => {
-                            Ok(Self::process_line(line, &drop_if_contains))
+                            Ok(Self::process_line(line, &filter_if_contains))
                         },
                         Ok(None) => {
-                            tracing::info!("finished collecting logs from stdin - no more lines");
+                            tracing::warn!("finished collecting logs from stdin - no more lines");
                             break;
                         }
                     };
                     match sender.try_send(TaskResult{id: 0, result}) {
                         Err(TrySendError::Full(res)) => {
-                            let msg = "log messages queue is full so decrease push interval".to_string();
+                            let msg = "log messages queue is full so decrease push interval and filter logs by substrings in `filter_if_contains`".to_string();
                             tracing::error!("{}. Cannot send log result `{:?}`", msg, res);
                             send_notification.try_error(msg);
                         },
@@ -181,9 +195,9 @@ impl Service for LogsService {
     async fn spawn_tasks(&mut self, sender: mpsc::Sender<TaskResult>) -> Vec<JoinHandle<()>> {
         let sender = sender.clone();
         let send_notification = self.shared.send_notification.clone();
-        let drop_if_contains = self.drop_if_contains.clone();
+        let filter_if_contains = self.filter_if_contains.clone();
         vec![tokio::spawn(async move {
-            Self::logs_collector(sender, send_notification, drop_if_contains).await;
+            Self::logs_collector(sender, send_notification, filter_if_contains).await;
         })]
     }
 }
