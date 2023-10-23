@@ -1,4 +1,6 @@
-use crate::configuration::{ceiled_division, push_interval_secs, scrape_interval_secs, APP_NAME};
+use crate::configuration::{
+    ceiled_division, scrape_interval_secs, scrape_timeout_interval_rule, APP_NAME,
+};
 use crate::messenger::configuration::MessengerConfig;
 
 use serde_derive::Deserialize;
@@ -48,6 +50,10 @@ fn scrape_timeout_ms() -> u32 {
     3000
 }
 
+pub(crate) fn push_interval_secs() -> u16 {
+    20
+}
+
 fn mounts() -> Vec<String> {
     vec!["/".to_string()]
 }
@@ -58,6 +64,7 @@ fn process_names() -> Vec<String> {
 
 #[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
+#[rule(scrape_timeout_interval_rule(scrape_interval_secs, scrape_timeout_ms))]
 #[rule(scrape_push_rule(scrape_timeout_ms, scrape_interval_secs, push_interval_secs))]
 #[allow(unused)]
 pub(crate) struct System {
@@ -69,10 +76,112 @@ pub(crate) struct System {
     #[validate(minimum = 1)]
     #[serde(default = "scrape_interval_secs")]
     pub(crate) scrape_interval_secs: u16,
+    #[validate(minimum = 1)]
     #[serde(default = "scrape_timeout_ms")]
     pub(crate) scrape_timeout_ms: u32,
     #[serde(default = "mounts")]
     pub(crate) mounts: Vec<String>,
     #[serde(default = "process_names")]
     pub(crate) process_names: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::tests::build_config;
+
+    #[test]
+    fn minimal_confg() {
+        let config = r#"
+        spreadsheet_id = "123"
+        "#;
+
+        let config: System =
+            build_config(config).expect("should be able to build minimum configuration");
+        assert_eq!(config.spreadsheet_id, "123");
+        // Defaults
+        assert_eq!(config.push_interval_secs, 20);
+        assert_eq!(config.scrape_interval_secs, 10);
+        assert_eq!(config.scrape_timeout_ms, 3000);
+        assert_eq!(config.mounts, mounts());
+        assert_eq!(config.process_names, process_names());
+        assert!(
+            scrape_push_rule(
+                &config.scrape_timeout_ms,
+                &config.scrape_interval_secs,
+                &config.push_interval_secs
+            )
+            .expect("channel capacity should be calculated for defaults")
+                > 0
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "timeout_ms")]
+    fn scrape_timeout_cannot_be_zero() {
+        let config = r#"
+        spreadsheet_id = "123"
+        scrape_timeout_ms = 0
+        "#;
+
+        let _: System = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "scrape_timeout_ms")]
+    fn scrape_interval_cannot_be_less_than_timeout() {
+        let config = r#"
+        spreadsheet_id = "123"
+        scrape_interval_secs = 10
+        scrape_timeout_ms = 11000
+        "#;
+
+        let _: System = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "scrape_interval_secs")]
+    fn scrape_interval_secs_cannot_be_zero() {
+        let config = r#"
+        spreadsheet_id = "123"
+        scrape_interval_secs = 0
+        "#;
+
+        let _: System = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "shouldn't be greater than scrape")]
+    fn scrape_interval_cannot_be_greater_than_push_interval() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 5
+        scrape_interval_secs = 10
+        "#;
+
+        let _: System = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "would be accumulated before saving to a spreadsheet")]
+    fn scrape_push_violation() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 21
+        scrape_interval_secs = 10
+        "#;
+
+        let _: System = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "push_interval_secs")]
+    fn push_interval_cannot_be_less_than_minimum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 9
+        "#;
+
+        let _: System = build_config(config).unwrap();
+    }
 }

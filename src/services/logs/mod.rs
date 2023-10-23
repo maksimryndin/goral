@@ -6,12 +6,12 @@ use crate::services::{Data, Service, TaskResult};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
-use chrono::{Utc};
+use chrono::Utc;
 use std::time::Duration;
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{self};
-use tokio::task::{JoinHandle};
+use tokio::task::JoinHandle;
 
 pub const LOGS_SERVICE_NAME: &str = "logs";
 

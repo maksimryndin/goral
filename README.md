@@ -83,18 +83,19 @@ spreadsheet_id = "<spreadsheet_id>"
 # messenger.chat_id = "<chat id>"
 # messenger.url = "<messenger api url for sending messages>"
 # push_interval_secs = 30
+#[[healthcheck.rules]]
 [[healthcheck.liveness]]
 # initial_delay_secs = 0
 # period_secs = 3
 typ = "Http"
 endpoint = "http://127.0.0.1:9898"
-# timeout_ms = 3000 # should be less than or equal period_secs
+# timeout_ms = 1000 # should be less than or equal period_secs
 [[healthcheck.liveness]]
 # initial_delay_secs = 0
 # period_secs = 3
 typ = "Command"
 command = "ls -lha /"
-# timeout_ms = 3000 # should be less than or equal period_secs
+# timeout_ms = 1000 # should be less than or equal period_secs
 ```
 
 will create a sheet for every liveness probe (in this example - for "http://127.0.0.1:9898" and "ls -lha /").
@@ -168,7 +169,7 @@ System service configuration:
 ```toml
 [system]
 spreadsheet_id = "<spreadsheet_id>"
-# push_interval_secs = 30
+# push_interval_secs = 20
 # scrape_interval_secs = 10
 # scrape_timeout_ms = 3000
 # messenger.bot_token = "<bot token>"
@@ -203,7 +204,7 @@ Your client asks you for a billing data for each of the services in a spreadshee
 ```toml
 [kv]
 spreadsheet_id = "<spreadsheet_id>"
-port = <port from the range 49152-65535>
+port = <"port from the range 49152-65535">
 # messenger.bot_token = "<bot token>"
 # messenger.chat_id = "<chat id>"
 # messenger.url = "<messenger api url for sending messages>"

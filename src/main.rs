@@ -72,10 +72,10 @@ async fn main() -> Result<(), String> {
                     "key assumption about {APP_NAME} behaviour is violated: {s:?}{base_message}"
                 );
             } else {
-                println!("Unexpected error happened: {}{base_message}", panic_info);
+                println!("Unexpected error happened: {}", panic_info);
             }
         } else {
-            println!("Unexpected error happened: {}.{base_message}", panic_info);
+            println!("Unexpected error happened: {}", panic_info);
         }
     }));
     {

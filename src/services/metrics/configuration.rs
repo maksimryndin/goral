@@ -1,5 +1,6 @@
 use crate::configuration::{
     ceiled_division, host_validation, port_validation, push_interval_secs, scrape_interval_secs,
+    scrape_timeout_interval_rule,
 };
 use crate::messenger::configuration::MessengerConfig;
 use serde_derive::Deserialize;
@@ -72,6 +73,7 @@ fn scrape_timeout_ms() -> u32 {
 
 #[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
+#[rule(scrape_timeout_interval_rule(scrape_interval_secs, scrape_timeout_ms))]
 #[rule(scrape_push_rule(endpoints, push_interval_secs, scrape_interval_secs, scrape_timeout_ms))]
 #[allow(unused)]
 pub(crate) struct Metrics {
@@ -83,8 +85,145 @@ pub(crate) struct Metrics {
     #[validate(minimum = 1)]
     #[serde(default = "scrape_interval_secs")]
     pub(crate) scrape_interval_secs: u16,
+    #[validate(minimum = 1)]
     #[serde(default = "scrape_timeout_ms")]
     pub(crate) scrape_timeout_ms: u32,
+    #[validate(min_items = 1)]
     #[validate(custom(host_port_validation_for_http))]
     pub(crate) endpoints: Vec<Url>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::tests::build_config;
+    use std::str::FromStr;
+    use url::Url;
+
+    #[test]
+    fn minimal_confg() {
+        let config = r#"
+        spreadsheet_id = "123"
+        endpoints = ["http://127.0.0.1:9898/metrics"]
+        "#;
+
+        let config: Metrics =
+            build_config(config).expect("should be able to build minimum configuration");
+        assert_eq!(config.spreadsheet_id, "123");
+        assert_eq!(
+            config.endpoints[0],
+            Url::from_str("http://127.0.0.1:9898/metrics").unwrap()
+        );
+        // Defaults
+        assert_eq!(config.push_interval_secs, 30);
+        assert_eq!(config.scrape_interval_secs, 10);
+        assert_eq!(config.scrape_timeout_ms, 3000);
+        assert!(
+            scrape_push_rule(
+                &config.endpoints,
+                &config.push_interval_secs,
+                &config.scrape_interval_secs,
+                &config.scrape_timeout_ms
+            )
+            .expect("channel capacity should be calculated for defaults")
+                > 0
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "endpoints")]
+    fn endpoints_cannot_be_empty() {
+        let config = r#"
+        spreadsheet_id = "123"
+        endpoints = []
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "timeout_ms")]
+    fn scrape_timeout_cannot_be_zero() {
+        let config = r#"
+        spreadsheet_id = "123"
+        scrape_timeout_ms = 0
+        endpoints = ["http://127.0.0.1:9898/metrics"]
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "scrape_timeout_ms")]
+    fn scrape_interval_cannot_be_less_than_timeout() {
+        let config = r#"
+        spreadsheet_id = "123"
+        scrape_interval_secs = 10
+        scrape_timeout_ms = 11000
+        endpoints = ["http://127.0.0.1:9898/metrics"]
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "shouldn't be greater than scrape")]
+    fn scrape_interval_cannot_be_greater_than_push_interval() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 5
+        scrape_interval_secs = 10
+        endpoints = ["http://127.0.0.1:9898/metrics"]
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "would be accumulated before saving to a spreadsheet")]
+    fn scrape_push_violation() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 31
+        scrape_interval_secs = 10
+        endpoints = ["http://127.0.0.1:9898/metrics"]
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "scrape_interval_secs")]
+    fn scrape_interval_secs_cannot_be_zero() {
+        let config = r#"
+        spreadsheet_id = "123"
+        scrape_interval_secs = 0
+        endpoints = ["http://127.0.0.1:9898/metrics"]
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "port")]
+    fn port_is_required() {
+        let config = r#"
+        spreadsheet_id = "123"
+        endpoints = ["http://127.0.0.1/metrics"]
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "push_interval_secs")]
+    fn push_interval_cannot_be_less_than_minimum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 9
+        endpoints = ["http://127.0.0.1/metrics"]
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
 }

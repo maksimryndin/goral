@@ -51,6 +51,12 @@ pub(super) fn scrape_push_rule(
                 format!("push interval ({push_interval_secs}) should be greater or equal than liveness period {}", l.period_secs)
             ));
         }
+
+        if l.period_secs == 0 {
+            return Err(serde_valid::validation::Error::Custom(format!(
+                "liveness period cannot be zero"
+            )));
+        }
     }
 
     let number_of_rows_in_batch = liveness.iter().fold(0, |acc, l| {
@@ -84,10 +90,10 @@ fn liveness_period_secs() -> u16 {
 }
 
 fn liveness_timeout_ms() -> u32 {
-    3000
+    1000
 }
 
-#[derive(Debug, Deserialize, Clone, Validate)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Validate)]
 pub(crate) enum LivenessType {
     Http,
     Tcp,
@@ -147,8 +153,208 @@ pub(crate) struct Liveness {
 pub(crate) struct Healthcheck {
     pub(crate) messenger: Option<MessengerConfig>,
     pub(crate) spreadsheet_id: String,
+    #[validate]
+    #[validate(min_items = 1)]
     pub(crate) liveness: Vec<Liveness>,
     #[validate(minimum = 10)]
     #[serde(default = "push_interval_secs")]
     pub(crate) push_interval_secs: u16,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::tests::build_config;
+    use std::str::FromStr;
+    use url::Url;
+
+    #[test]
+    fn minimal_confg() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        typ = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        [[liveness]]
+        typ = "Command"
+        command = "ls -lha /"
+        "#;
+
+        let config: Healthcheck =
+            build_config(config).expect("should be able to build minimum configuration");
+        assert_eq!(config.spreadsheet_id, "123");
+        assert_eq!(config.liveness[0].typ, LivenessType::Http);
+        assert_eq!(
+            config.liveness[0].endpoint,
+            Some(Url::from_str("http://127.0.0.1:9898").unwrap())
+        );
+        assert_eq!(config.liveness[0].command, None);
+        assert_eq!(config.liveness[1].typ, LivenessType::Command);
+        assert_eq!(config.liveness[1].command, Some("ls -lha /".to_string()));
+        assert_eq!(config.liveness[1].endpoint, None);
+        // Defaults
+        assert_eq!(config.push_interval_secs, 30);
+        assert_eq!(config.liveness[0].timeout_ms, 1000);
+        assert_eq!(config.liveness[0].initial_delay_secs, 0);
+        assert_eq!(config.liveness[0].period_secs, 3);
+        assert_eq!(config.liveness[1].timeout_ms, 1000);
+        assert_eq!(config.liveness[1].initial_delay_secs, 0);
+        assert_eq!(config.liveness[1].period_secs, 3);
+
+        assert!(
+            scrape_push_rule(&config.liveness, &config.push_interval_secs)
+                .expect("channel capacity should be calculated for defaults")
+                > 0
+        );
+    }
+
+    #[test]
+    fn case_insentive_liveness_typ() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        typ = "hTtp"
+        endpoint = "http://127.0.0.1:9898"
+        "#;
+
+        let config: Healthcheck =
+            build_config(config).expect("should be able to build minimum configuration");
+        assert_eq!(config.liveness[0].typ, LivenessType::Http);
+    }
+
+    #[test]
+    #[should_panic(expected = "liveness")]
+    fn liveness_cannot_be_empty() {
+        let config = r#"
+        spreadsheet_id = "123"
+        liveness = []
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "timeout_ms")]
+    fn probe_timeout_cannot_be_zero() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        typ = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        timeout_ms = 0
+        [[liveness]]
+        typ = "Command"
+        command = "ls -lha /"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "period_secs")]
+    fn period_cannot_be_less_than_timeout() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        typ = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        period_secs = 2
+        timeout_ms = 3000
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "should be greater or equal than liveness period")]
+    fn period_cannot_be_greater_than_push_interval() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 5
+        [[liveness]]
+        typ = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        period_secs = 10
+        timeout_ms = 3000
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "would be accumulated before saving to a spreadsheet")]
+    fn scrape_push_violation() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 201
+        [[liveness]]
+        typ = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        period_secs = 10
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot be zero")]
+    fn period_cannot_be_zero() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        typ = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        period_secs = 0
+        [[liveness]]
+        typ = "Command"
+        command = "ls -lha /"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "liveness probe type should be either `command` with respective field or `http/tcp/grpc` with `endpoint`"
+    )]
+    fn http_should_have_endpoint() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        typ = "Http"
+        command = "ls -lha /"
+        [[liveness]]
+        typ = "Command"
+        command = "ls -lha /"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "port")]
+    fn port_is_required() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        typ = "Http"
+        endpoint = "http://localhost"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "push_interval_secs")]
+    fn push_interval_cannot_be_less_than_minimum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        push_interval_secs = 9
+        [[liveness]]
+        typ = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
 }

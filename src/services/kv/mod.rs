@@ -16,13 +16,15 @@ use hyper::{
 use serde::{Deserialize, Serialize};
 use serde_valid::Validate;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::broadcast;
 
 use tokio::sync::mpsc::{self};
 use tokio::sync::oneshot;
-use tokio::task::{JoinHandle};
+use tokio::task::JoinHandle;
 
 pub const KV_SERVICE_NAME: &str = "kv";
 
@@ -37,7 +39,7 @@ fn unique_keys(data: &Vec<(String, Value)>) -> Result<(), serde_valid::validatio
     }
 }
 
-// TODO test for proper serialization
+// TODO test for proper serialization (with different datetime formats, check for timestamp)
 // for untagged enum an order is important
 // https://serde.rs/enum-representations.html#untagged
 #[derive(Debug, Deserialize)]
@@ -100,6 +102,14 @@ struct AppendRequest {
     reply_to: oneshot::Sender<Result<Vec<String>, HttpResponse>>,
 }
 
+struct ReadyHandle(Arc<AtomicBool>);
+
+impl Drop for ReadyHandle {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 pub(crate) struct KvService {
     shared: Shared,
     spreadsheet_id: String,
@@ -121,7 +131,17 @@ impl KvService {
         req: HyperRequest<Body>,
         data_bus: mpsc::Sender<AppendRequest>,
         send_notification: Sender,
+        is_ready: Arc<AtomicBool>,
     ) -> Result<HyperResponse<Body>, hyper::Error> {
+        if let Err(_) = is_ready.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst) {
+            return Ok(HyperResponse::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body("no concurrent requests are allowed".to_string().into())
+                .expect("assert: should be able to construct response for static body"));
+        }
+        let _handle = ReadyHandle(is_ready);
+
         match (req.method(), req.uri().path()) {
             (&Method::POST, "/api/kv") => {
                 let body = hyper::body::aggregate(req).await?;
@@ -194,15 +214,17 @@ impl KvService {
         let addr = ([127, 0, 0, 1], self.port).into();
 
         let send_notification = self.shared.send_notification.clone();
-        let data_bus = data_bus.clone();
+        let is_ready = Arc::new(AtomicBool::new(true));
         let server = Server::bind(&addr).serve(make_service_fn(move |_| {
             let send_notification = send_notification.clone();
             let data_bus = data_bus.clone();
+            let is_ready = is_ready.clone();
             async move {
                 Ok::<_, hyper::Error>(service_fn(move |req| {
                     let send_notification = send_notification.clone();
                     let data_bus = data_bus.clone();
-                    Self::router(req, data_bus, send_notification)
+                    let is_ready = is_ready.clone();
+                    Self::router(req, data_bus, send_notification, is_ready)
                 }))
             }
         }));
@@ -212,9 +234,15 @@ impl KvService {
             shutdown.recv().await.ok();
         });
 
+        let send_notification = self.shared.send_notification.clone();
         tokio::spawn(async move {
             tracing::info!("KV server is listening on http://{}", addr);
-            server.await.expect("cannot run KV server");
+            if let Err(e) = server.await {
+                let msg = format!("cannot run KV server `{e}`");
+                tracing::error!("{}", msg);
+                send_notification.fatal(msg.to_string()).await;
+                panic!("cannot run KV server");
+            }
         })
     }
 }

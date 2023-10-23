@@ -473,9 +473,9 @@ impl AppendableLog {
             return Ok(());
         }
         // We do not retry sheet `crud` as it goes after
-        // `fetch_sheets` which is retriable and should 
+        // `fetch_sheets` which is retriable and should
         // either fix an error or fail.
-        // Retrying `crud` is not idempotent and 
+        // Retrying `crud` is not idempotent and
         // would require cloning all sheets at every retry attempt
         // https://developers.google.com/sheets/api/limits#example-algorithm
         let retry_strategy = ExponentialBackoff::from_millis(2)

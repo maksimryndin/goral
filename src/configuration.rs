@@ -25,6 +25,19 @@ pub(crate) fn ceiled_division(divisable: u16, divisor: u16) -> u16 {
     }
 }
 
+pub(crate) fn scrape_timeout_interval_rule(
+    scrape_interval_secs: &u16,
+    scrape_timeout_ms: &u32,
+) -> Result<(), serde_valid::validation::Error> {
+    let scrape_interval_ms = *scrape_interval_secs as u32 * 1000;
+    if scrape_timeout_ms > &scrape_interval_ms {
+        return Err(serde_valid::validation::Error::Custom(
+            "`scrape_timeout_ms` should be less than `scrape_interval_secs`".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn scrape_interval_secs() -> u16 {
     10
 }
@@ -89,5 +102,50 @@ impl Configuration {
             .validate()
             .map_err(|e| ConfigError::Message(e.to_string()))?;
         Ok(deserialized)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use config::FileFormat;
+    use std::str::FromStr;
+    use url::Url;
+
+    pub(crate) fn build_config<T: for<'a> Deserialize<'a> + Validate>(
+        contents: &str,
+    ) -> Result<T, ConfigError> {
+        let s = Config::builder()
+            .add_source(File::from_str(contents, FileFormat::Toml))
+            .build()?;
+        let deserialized = s.try_deserialize::<T>()?;
+        deserialized
+            .validate()
+            .map_err(|e| ConfigError::Message(e.to_string()))?;
+        Ok(deserialized)
+    }
+
+    #[test]
+    fn minimal_confg() {
+        let config = r#"
+        [general]
+        service_account_credentials_path = "/path/to/service_account.json"
+        messenger.bot_token = "123"
+        messenger.chat_id = "test_chat_id"
+        messenger.url = "https://api.telegram.org/bot123/sendMessage"
+        "#;
+
+        let config: Configuration =
+            build_config(config).expect("should be able to build minimum configuration");
+        assert_eq!(
+            config.general.service_account_credentials_path,
+            "/path/to/service_account.json"
+        );
+        assert_eq!(config.general.messenger.bot_token, "123");
+        assert_eq!(config.general.messenger.chat_id, "test_chat_id");
+        assert_eq!(
+            config.general.messenger.url,
+            Url::from_str("https://api.telegram.org/bot123/sendMessage").unwrap()
+        );
     }
 }

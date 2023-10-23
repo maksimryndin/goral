@@ -24,3 +24,44 @@ pub(crate) struct Kv {
     #[validate(maximum = 65535, message_fn(port_max_error_message))]
     pub(crate) port: u16,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::tests::build_config;
+
+    #[test]
+    fn minimal_confg() {
+        let config = r#"
+        spreadsheet_id = "123"
+        port = 49152
+        "#;
+
+        let config: Kv =
+            build_config(config).expect("should be able to build minimum configuration");
+        assert_eq!(config.spreadsheet_id, "123");
+        assert_eq!(config.port, 49152);
+    }
+
+    #[test]
+    #[should_panic(expected = "port")]
+    fn minimal_port() {
+        let config = r#"
+        spreadsheet_id = "123"
+        port = 49151
+        "#;
+
+        let _: Kv = build_config(config).expect("should be able to build minimum configuration");
+    }
+
+    #[test]
+    #[should_panic(expected = "port")]
+    fn maximal_port() {
+        let config = r#"
+        spreadsheet_id = "123"
+        port = 65536
+        "#;
+
+        let _: Kv = build_config(config).expect("should be able to build minimum configuration");
+    }
+}
