@@ -22,7 +22,9 @@ hyper = { version = "0.14", features = ["http1", "http2", "client", "server"]} #
 hyper-rustls = "0.24"
 futures = "0.3"
 google-sheets4 = "*"
+lazy_static = "1.4"
 prometheus-parse = "0.2.4"
+regex = { version = "1", features = ["std", "unicode"] } # use the same version as current crates
 serde = "^1.0"
 serde_derive = "^1.0"
 serde_json = "^1.0"

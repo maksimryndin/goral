@@ -24,9 +24,9 @@ So Goral provides the following features being deployed next to your app(s):
 * Logs collection (importing logs from stdout/stderr of the target process)
 * System telemetry (CPU, Memory, Free/Busy storage space etc)
 * A general key-value appendable log storage (see [the user case below](#kv))
-* Features are modular - all services (healthchecks/metrics/logs/system/kv) are switched on/off in the configuration.
+* Features are modular - all [services](#services) are switched on/off in the configuration.
 * You can observe several instances of the same app or different apps on the same host with a single Goral daemon (except logs as logs are collected via stdin of Goral - see [below](#logs))
-* You can configure different messengers and/or channels for every service (healthchecks/metrics/logs/resources) to get notifications on errors in logs of your service, liveness updates, resources overlimit etc
+* You can configure different messengers and/or channels for every [service](#services) to get notifications on errors, liveness updates, system resources overlimit etc
 * All the data collected is stored in Google Sheet with an automatic quota and limits checks and automatic data rotation - old data is deleted with a preliminary notification via configured messenger (see below). That way you don't have to buy a separate storage or overload your app VPS with Prometheus etc. Just a lean process next to your brilliant one which just sends app data in batches to Google Sheets for your ease of use. Google Sheets allow you to build your own diagrams over the metrics and analyse them, analyse liveness statistics and calculate uptime etc. By default Goral builds some charts for you.
 * You can configure different spreadsheets for every service
 
@@ -45,13 +45,16 @@ To use Goral you need to have a Google account and obtain a service account:
 5) Create a spreadsheet (where the scraped data will be stored) and add the service account email as an Editor to the spreadsheet
 6) Extract spreadsheet id from the spreadsheet url
 
-And notifications are sent to messengers (at the moment, only Telegram is supported).
+And notifications are sent to messengers:
 
 Telegram setup:
 1) Create a bot - see https://core.telegram.org/bots/features#creating-a-new-bot
 2) Create a private group for notifications to be sent to
 3) Add your bot to the group
 4) Obtain a `chat_id` following the accepted answer https://stackoverflow.com/questions/33858927/how-to-obtain-the-chat-id-of-a-private-telegram-channel
+
+Slack setup:
+* follow guides https://api.slack.com/start/quickstart and https://api.slack.com/tutorials/tracks/posting-messages-with-curl
 
 ## Services
 
@@ -71,6 +74,8 @@ messenger.bot_token = "<bot token>"
 messenger.chat_id = "<chat id>"
 messenger.url = "<messenger api url for sending messages>"
 ```
+
+Configuration of General service is a minimum configuration for Goral.
 
 ### Healthcheck
 
@@ -131,6 +136,8 @@ For every endpoint and every metric Metrics service creates a separate sheet. Wh
 
 If there is an error while scraping, it is sent via a configured messenger or via a default messenger of General service.
 
+*Note:* if the observed app restarts, then its metric counters are reset. Goral just scrapes metrics as-is without _trying to merge them_. For metrics data it is usually acceptable. If you need some more reliable way to collect data - consider using [KV Log](#kv-log) as it uses a synchronous push strategy and allows you to fetch the last row for each `log_name` and have a merge strategy on the app side.
+
 ### Logs
 
 Logs service with the following configuration:
@@ -157,7 +164,7 @@ There is a caveat - if we make a simple pipe like `instrumented_app | goral` the
 * start you app with `instrumented_app | tee instrumented_app_logs_pipe` - you will see your logs in stdout as before and they also be cloned to the named pipe which is read by Goral.
 
 With this named pipes approach the `instrumented_app` restarts doesn't stop Goral from reading its stdin for logs.
-Just be sure to autorecreate a named pipe and a fake writer in case of a host system restarts.
+Just be sure to autorecreate a fake writer in case of a host system restarts.
 See also [Deployment](#recommended-deployment) section for an example.
 
 As there may be a huge amount of logs, it is recommended to filter the volume by specifiying an array of substrings (_case sensitive_) in `filter_if_contains` (e.g. `["info", "warn", "error"]`) and/or have a separate spreadsheet for log collection as a huge amount of them may hurdle the use of Google sheets due to the constant updates.

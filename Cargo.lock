@@ -580,6 +580,7 @@ dependencies = [
  "prometheus",
  "prometheus-parse",
  "psutil",
+ "regex",
  "serde",
  "serde_derive",
  "serde_json",

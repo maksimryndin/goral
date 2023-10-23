@@ -16,7 +16,7 @@ impl Telegram {
         let client: HttpsClient = hyper::Client::builder().build(
             hyper_rustls::HttpsConnectorBuilder::new()
                 .with_native_roots()
-                .https_or_http()
+                .https_only()
                 .enable_http1()
                 .build(),
         );
@@ -38,7 +38,6 @@ impl Telegram {
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_string(&body)?))?;
         tracing::debug!("{:?}", req);
-        // TODO retries ??
         // TODO timeout
         // TODO check trxt message for illegal characters for markdown??
         let resp = self.client.request(req).await?;
