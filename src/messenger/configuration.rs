@@ -5,12 +5,58 @@ use serde_valid::Validate;
 use std::fmt::{self, Debug};
 use url::{Host, Url};
 
+fn messenger_implementation_host_rule(
+    implementation: &Option<MessengerImplementation>,
+    url: &Url,
+) -> Result<(), serde_valid::validation::Error> {
+    host_validation(url)?;
+    let host = url
+        .host()
+        .expect("assert: messenger url is validated to have a host")
+        .to_string();
+    match implementation {
+        Some(MessengerImplementation::Telegram { .. }) if host.contains("telegram") => {}
+        Some(MessengerImplementation::Slack { .. }) if host.contains("slack") => {}
+        None if host.contains("discord") => {}
+        _ => {
+            return Err(serde_valid::validation::Error::Custom(format!(
+                "Messenger host {host} doesn't match messenger implementation in configuration"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Deserialize, Validate, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum MessengerImplementation {
+    Telegram { chat_id: String },
+    Slack { token: String, channel: String },
+    Discord,
+}
+
+impl Debug for MessengerImplementation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Telegram { chat_id } => {
+                write!(f, "Telegram({})", chat_id)
+            }
+            Self::Slack { channel, .. } => {
+                write!(f, "Slack({})", channel)
+            }
+            Self::Discord => {
+                write!(f, "Discord")
+            }
+        }
+    }
+}
+
 #[derive(Deserialize, Validate)]
+#[rule(messenger_implementation_host_rule(implementation, url))]
 #[serde(deny_unknown_fields)]
 pub struct MessengerConfig {
-    pub(crate) bot_token: String,
-    pub(crate) chat_id: String,
-    #[validate(custom(host_validation))]
+    #[serde(rename(deserialize = "specific"))]
+    pub(crate) implementation: Option<MessengerImplementation>,
     pub(crate) url: Url,
 }
 
@@ -26,11 +72,10 @@ impl Debug for MessengerConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "MessengerConfig({}:{})",
+            "MessengerConfig({})",
             self.url
                 .host()
-                .expect("assert: host for messenger is validated at configuration"),
-            self.chat_id
+                .expect("assert: host for messenger is validated at configuration")
         )
     }
 }
@@ -45,15 +90,18 @@ mod tests {
     #[test]
     fn normal_confg() {
         let config = r#"
-        bot_token = "123"
-        chat_id = "test_chat_id"
+        specific.chat_id = "test_chat_id"
         url = "https://api.telegram.org/bot123/sendMessage"
         "#;
 
         let config: MessengerConfig =
             build_config(config).expect("should be able to build minimum configuration");
-        assert_eq!(config.bot_token, "123");
-        assert_eq!(config.chat_id, "test_chat_id");
+        assert_eq!(
+            config.implementation,
+            Some(MessengerImplementation::Telegram {
+                chat_id: "test_chat_id".to_string()
+            })
+        );
         assert_eq!(
             config.url,
             Url::from_str("https://api.telegram.org/bot123/sendMessage").unwrap()
@@ -69,8 +117,7 @@ mod tests {
     #[test]
     fn token_and_url_are_not_printed() {
         let config = r#"
-        bot_token = "123"
-        chat_id = "test_chat_id"
+        specific.chat_id = "test_chat_id"
         url = "https://api.telegram.org/bot123/sendMessage"
         "#;
 
@@ -92,8 +139,7 @@ mod tests {
     #[should_panic(expected = "host")]
     fn host_is_required() {
         let config = r#"
-        bot_token = "123"
-        chat_id = "test_chat_id"
+        specific.chat_id = "test_chat_id"
         url = "https://"
         "#;
         let _: MessengerConfig = build_config(config).unwrap();
@@ -103,18 +149,18 @@ mod tests {
     #[should_panic(expected = "missing field `url`")]
     fn url_is_required() {
         let config = r#"
-        bot_token = "123"
-        chat_id = "test_chat_id"
+        specific.chat_id = "test_chat_id"
         "#;
 
         let _: MessengerConfig = build_config(config).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "missing field `chat_id`")]
-    fn chat_id_is_required() {
+    #[should_panic(
+        expected = "Messenger host api.telegram.org doesn't match messenger implementation in configuration"
+    )]
+    fn specific_is_required_for_telegram() {
         let config = r#"
-        bot_token = "123"
         url = "https://api.telegram.org/bot123/sendMessage"
         "#;
 

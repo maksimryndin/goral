@@ -143,6 +143,7 @@ pub(crate) struct Liveness {
     pub(crate) timeout_ms: u32,
     pub(crate) endpoint: Option<Url>,
     pub(crate) command: Option<String>,
+    #[serde(rename(deserialize = "type"))]
     #[serde(deserialize_with = "case_insensitive_enum")]
     pub(crate) typ: LivenessType,
 }
@@ -151,6 +152,7 @@ pub(crate) struct Liveness {
 #[rule(scrape_push_rule(liveness, push_interval_secs))]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Healthcheck {
+    #[validate]
     pub(crate) messenger: Option<MessengerConfig>,
     pub(crate) spreadsheet_id: String,
     #[validate]
@@ -173,10 +175,10 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         [[liveness]]
-        typ = "Http"
+        type = "Http"
         endpoint = "http://127.0.0.1:9898"
         [[liveness]]
-        typ = "Command"
+        type = "Command"
         command = "ls -lha /"
         "#;
 
@@ -213,7 +215,7 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         [[liveness]]
-        typ = "hTtp"
+        type = "hTtp"
         endpoint = "http://127.0.0.1:9898"
         "#;
 
@@ -239,11 +241,11 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         [[liveness]]
-        typ = "Http"
+        type = "Http"
         endpoint = "http://127.0.0.1:9898"
         timeout_ms = 0
         [[liveness]]
-        typ = "Command"
+        type = "Command"
         command = "ls -lha /"
         "#;
 
@@ -256,7 +258,7 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         [[liveness]]
-        typ = "Http"
+        type = "Http"
         endpoint = "http://127.0.0.1:9898"
         period_secs = 2
         timeout_ms = 3000
@@ -272,7 +274,7 @@ mod tests {
         spreadsheet_id = "123"
         push_interval_secs = 5
         [[liveness]]
-        typ = "Http"
+        type = "Http"
         endpoint = "http://127.0.0.1:9898"
         period_secs = 10
         timeout_ms = 3000
@@ -288,7 +290,7 @@ mod tests {
         spreadsheet_id = "123"
         push_interval_secs = 201
         [[liveness]]
-        typ = "Http"
+        type = "Http"
         endpoint = "http://127.0.0.1:9898"
         period_secs = 10
         "#;
@@ -302,11 +304,11 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         [[liveness]]
-        typ = "Http"
+        type = "Http"
         endpoint = "http://127.0.0.1:9898"
         period_secs = 0
         [[liveness]]
-        typ = "Command"
+        type = "Command"
         command = "ls -lha /"
         "#;
 
@@ -321,10 +323,10 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         [[liveness]]
-        typ = "Http"
+        type = "Http"
         command = "ls -lha /"
         [[liveness]]
-        typ = "Command"
+        type = "Command"
         command = "ls -lha /"
         "#;
 
@@ -337,7 +339,7 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         [[liveness]]
-        typ = "Http"
+        type = "Http"
         endpoint = "http://localhost"
         "#;
 
@@ -351,7 +353,21 @@ mod tests {
         spreadsheet_id = "123"
         push_interval_secs = 9
         [[liveness]]
-        typ = "Http"
+        type = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "doesn't match messenger implementation")]
+    fn wrong_messenger_confg_wrong_host() {
+        let config = r#"
+        messenger.url = "https://api.telegram.org/bot123/sendMessage"
+        spreadsheet_id = "123"
+        [[liveness]]
+        type = "Http"
         endpoint = "http://127.0.0.1:9898"
         "#;
 

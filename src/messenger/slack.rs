@@ -1,4 +1,4 @@
-use crate::messenger::configuration::MessengerConfig;
+use crate::messenger::configuration::{MessengerConfig, MessengerImplementation};
 use crate::messenger::Messenger;
 use crate::HttpsClient;
 use anyhow::anyhow;
@@ -27,25 +27,24 @@ impl Slack {
     }
 
     async fn send_message(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
+        let (channel, token) = match &config.implementation {
+            Some(MessengerImplementation::Slack { channel, token }) => (channel, token),
+            _ => panic!("assert: messenger implementation should be validated at configuration"),
+        };
         let processed = process_links(markdown);
-        let body = SlackRequestBody::new(&config.chat_id, &processed);
+        let body = SlackRequestBody::new(channel, &processed);
         let req = Request::builder()
             .method(Method::POST)
             .uri(config.url.as_str())
             .header("content-type", "application/json")
-            .header("authorization", format!("Bearer {}", &config.bot_token))
+            .header("authorization", format!("Bearer {}", token))
             .body(Body::from(serde_json::to_string(&body)?))?;
         tracing::debug!("{:?}", req);
-        // TODO timeout
-        // TODO check trxt message for illegal characters for markdown??
         let resp = self.client.request(req).await?;
         tracing::debug!("{:?}", resp);
-        if resp.status() == 400 {
-            tracing::error!(
-                "incorrect slack configuration or markdown: response {:?}",
-                resp
-            );
-            return Err(anyhow!("incorrect slack configuration or markdown"));
+        if resp.status() != 200 {
+            tracing::error!("slack error response {:?}", resp);
+            return Err(anyhow!("slack error"));
         }
         Ok(())
     }

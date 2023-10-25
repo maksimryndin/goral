@@ -19,6 +19,7 @@ fn port_max_error_message(_params: &serde_valid::MaximumError) -> String {
 #[allow(unused)]
 pub(crate) struct Kv {
     pub(crate) spreadsheet_id: String,
+    #[validate]
     pub(crate) messenger: Option<MessengerConfig>,
     #[validate(minimum = 49152, message_fn(port_min_error_message))]
     #[validate(maximum = 65535, message_fn(port_max_error_message))]
@@ -63,5 +64,17 @@ mod tests {
         "#;
 
         let _: Kv = build_config(config).expect("should be able to build minimum configuration");
+    }
+
+    #[test]
+    #[should_panic(expected = "doesn't match messenger implementation")]
+    fn wrong_messenger_confg_wrong_host() {
+        let config = r#"
+        messenger.url = "https://api.telegram.org/bot123/sendMessage"
+        spreadsheet_id = "123"
+        port = 65500
+        "#;
+
+        let _: Kv = build_config(config).unwrap();
     }
 }

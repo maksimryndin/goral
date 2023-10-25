@@ -77,6 +77,7 @@ fn scrape_timeout_ms() -> u32 {
 #[rule(scrape_push_rule(endpoints, push_interval_secs, scrape_interval_secs, scrape_timeout_ms))]
 #[allow(unused)]
 pub(crate) struct Metrics {
+    #[validate]
     pub(crate) messenger: Option<MessengerConfig>,
     pub(crate) spreadsheet_id: String,
     #[validate(minimum = 10)]
@@ -221,6 +222,18 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         push_interval_secs = 9
+        endpoints = ["http://127.0.0.1/metrics"]
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "doesn't match messenger implementation")]
+    fn wrong_messenger_confg_wrong_host() {
+        let config = r#"
+        messenger.url = "https://api.telegram.org/bot123/sendMessage"
+        spreadsheet_id = "123"
         endpoints = ["http://127.0.0.1/metrics"]
         "#;
 

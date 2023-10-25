@@ -21,6 +21,7 @@ pub struct General {
     #[serde(deserialize_with = "case_insensitive_enum")]
     pub log_level: Level,
     pub service_account_credentials_path: String,
+    #[validate]
     pub(crate) messenger: MessengerConfig,
     #[validate(minimum = 1)]
     #[serde(default = "graceful_timeout_secs")]
@@ -38,8 +39,7 @@ mod tests {
     fn minimal_confg() {
         let config = r#"
         service_account_credentials_path = "/path/to/service_account.json"
-        messenger.bot_token = "123"
-        messenger.chat_id = "test_chat_id"
+        messenger.specific.chat_id = "test_chat_id"
         messenger.url = "https://api.telegram.org/bot123/sendMessage"
         "#;
 
@@ -49,8 +49,6 @@ mod tests {
             config.service_account_credentials_path,
             "/path/to/service_account.json"
         );
-        assert_eq!(config.messenger.bot_token, "123");
-        assert_eq!(config.messenger.chat_id, "test_chat_id");
         assert_eq!(
             config.messenger.url,
             Url::from_str("https://api.telegram.org/bot123/sendMessage").unwrap()
@@ -65,8 +63,7 @@ mod tests {
         let config = r#"
         log_level = "dEbug"
         service_account_credentials_path = "/path/to/service_account.json"
-        messenger.bot_token = "123"
-        messenger.chat_id = "test_chat_id"
+        messenger.specific.chat_id = "test_chat_id"
         messenger.url = "https://api.telegram.org/bot123/sendMessage"
         "#;
 
@@ -91,10 +88,20 @@ mod tests {
     fn graceful_timeout_cannot_be_zero() {
         let config = r#"
         service_account_credentials_path = "/path/to/service_account.json"
-        messenger.bot_token = "123"
-        messenger.chat_id = "test_chat_id"
+        messenger.specific.chat_id = "test_chat_id"
         messenger.url = "https://api.telegram.org/bot123/sendMessage"
         graceful_timeout_secs = 0
+        "#;
+
+        let _: General = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "doesn't match messenger implementation")]
+    fn wrong_messenger_confg_wrong_host() {
+        let config = r#"
+        service_account_credentials_path = "/path/to/service_account.json"
+        messenger.url = "https://api.telegram.org/bot123/sendMessage"
         "#;
 
         let _: General = build_config(config).unwrap();

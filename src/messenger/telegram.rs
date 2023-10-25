@@ -1,4 +1,4 @@
-use crate::messenger::configuration::MessengerConfig;
+use crate::messenger::configuration::{MessengerConfig, MessengerImplementation};
 use crate::messenger::Messenger;
 use crate::HttpsClient;
 use anyhow::anyhow;
@@ -29,17 +29,19 @@ impl Telegram {
         markdown: &str,
         disable_notification: bool,
     ) -> Result<()> {
+        let chat_id = match &config.implementation {
+            Some(MessengerImplementation::Telegram { chat_id }) => chat_id,
+            _ => panic!("assert: messenger implementation should be validated at configuration"),
+        };
         let mut url = config.url.clone();
         url.query_pairs_mut().clear();
-        let body = TelegramRequestBody::new(&config.chat_id, markdown, disable_notification);
+        let body = TelegramRequestBody::new(chat_id, markdown, disable_notification);
         let req = Request::builder()
             .method(Method::POST)
             .uri(url.as_str())
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_string(&body)?))?;
         tracing::debug!("{:?}", req);
-        // TODO timeout
-        // TODO check trxt message for illegal characters for markdown??
         let resp = self.client.request(req).await?;
         tracing::debug!("{:?}", resp);
         if resp.status() == 400 {
@@ -48,6 +50,10 @@ impl Telegram {
                 resp
             );
             return Err(anyhow!("incorrect telegram configuration or markdown"));
+        }
+        if resp.status() != 200 {
+            tracing::error!("telegram error response {:?}", resp);
+            return Err(anyhow!("telegram error"));
         }
         Ok(())
     }

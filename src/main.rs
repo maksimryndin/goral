@@ -81,9 +81,11 @@ async fn main() -> Result<(), String> {
     {
         let args = Args::parse();
 
-        let config = Configuration::new(&args.config).map_err(|e| format!(
-            "Incorrect configuration (can be potentially overriden by environment variables starting with `GORAL__`): {e}"
-        ))?;
+        let config = Configuration::new(&args.config).map_err(|e|
+            format!(
+                "Incorrect configuration (can be potentially overriden by environment variables starting with `GORAL__`): {e}"
+            )
+        )?;
 
         let level = LevelFilter::from_level(config.general.log_level);
         let (json, plain) = if args.json {

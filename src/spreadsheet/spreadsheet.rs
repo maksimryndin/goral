@@ -73,7 +73,7 @@ impl SpreadsheetAPI {
             hyper::Client::builder().build(
                 hyper_rustls::HttpsConnectorBuilder::new()
                     .with_native_roots()
-                    .https_or_http()
+                    .https_only()
                     .enable_http1()
                     .build(),
             ),
@@ -107,15 +107,15 @@ impl SpreadsheetAPI {
         handle_error(self, result).await
     }
 
-    fn calculate_usage(num_of_cells: i32) -> u8 {
-        (100.0 * (num_of_cells as f64 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f64)) as u8
+    fn calculate_usage(num_of_cells: i32) -> f32 {
+        100.0 * (num_of_cells as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32)
     }
 
     pub(crate) async fn sheets_filtered_by_metadata(
         &self,
         spreadsheet_id: &str,
         metadata: &Metadata,
-    ) -> Result<(Vec<Sheet>, u8, u8), HttpResponse> {
+    ) -> Result<(Vec<Sheet>, f32, f32), HttpResponse> {
         let response = self.spreadsheet_meta(spreadsheet_id).await.map_err(|e| {
             tracing::error!("{:?}", e);
             e
@@ -125,7 +125,7 @@ impl SpreadsheetAPI {
         let mut filtered_cells: i32 = 0;
         let sheets: Vec<Sheet> = response
             .sheets
-            .expect("spreadsheet should contain sheets property even if no sheets")
+            .expect("assert: spreadsheet should contain sheets property even if no sheets")
             .into_iter()
             .map(|s| s.into())
             .map(|s: Sheet| {
@@ -159,7 +159,7 @@ impl SpreadsheetAPI {
             .map(|s| {
                 s.sheet
                     .header_range_r1c1()
-                    .expect("assert: grid sheet has header range")
+                    .expect("assert: grid sheet has a header range")
             })
             .collect();
 

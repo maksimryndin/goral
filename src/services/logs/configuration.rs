@@ -23,6 +23,7 @@ fn logs_push_interval_secs() -> u16 {
 #[allow(unused)]
 pub(crate) struct Logs {
     pub(crate) spreadsheet_id: String,
+    #[validate]
     pub(crate) messenger: Option<MessengerConfig>,
     #[validate(maximum = 10)]
     #[validate(minimum = 3)]
@@ -30,6 +31,8 @@ pub(crate) struct Logs {
     pub(crate) push_interval_secs: u16,
     #[validate(min_items = 1)]
     pub(crate) filter_if_contains: Option<Vec<String>>,
+    #[validate(min_items = 1)]
+    pub(crate) drop_if_contains: Option<Vec<String>>, // TODO impelement, add to README
 }
 
 #[cfg(test)]
@@ -80,6 +83,17 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         push_interval_secs = 11
+        "#;
+
+        let _: Logs = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "doesn't match messenger implementation")]
+    fn wrong_messenger_confg_wrong_host() {
+        let config = r#"
+        messenger.url = "https://api.telegram.org/bot123/sendMessage"
+        spreadsheet_id = "123"
         "#;
 
         let _: Logs = build_config(config).unwrap();

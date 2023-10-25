@@ -5,6 +5,9 @@ Observability toolkit for small projects. Easy-to-use and compatible with indust
 - [Overview](#overview)
     - [System requirements](#system-requirements)
 - [Setup](#setup)
+    - [Telegram](#telegram)
+    - [Slack](#slack)
+    - [Discord](#discord)
 - [Services](#services)
     - [General](#general)
     - [Healthcheck](#healthcheck)
@@ -47,20 +50,56 @@ To use Goral you need to have a Google account and obtain a service account:
 
 And notifications are sent to messengers:
 
-Telegram setup:
+### Telegram
+
 1) Create a bot - see https://core.telegram.org/bots/features#creating-a-new-bot
 2) Create a private group for notifications to be sent to
 3) Add your bot to the group
 4) Obtain a `chat_id` following the accepted answer https://stackoverflow.com/questions/33858927/how-to-obtain-the-chat-id-of-a-private-telegram-channel
 
-Slack setup:
-* follow guides https://api.slack.com/start/quickstart and https://api.slack.com/tutorials/tracks/posting-messages-with-curl
+Example configuration:
+
+```toml
+messenger.specific.chat_id = "-100129008371"
+messenger.url = "https://api.telegram.org/bot<bot token>/sendMessage"
+```
+
+[Rate limit](https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this)
+
+### Slack
+
+Follow guides https://api.slack.com/start/quickstart and https://api.slack.com/tutorials/tracks/posting-messages-with-curl
+
+Example configuration:
+
+```toml
+messenger.specific.token = "xoxb-slack-token"
+messenger.specific.channel = "CHRISHWFH2"
+messenger.url = "https://slack.com/api/chat.postMessage"
+```
+
+[Rate limit](https://api.slack.com/methods/chat.postMessage#rate_limiting)
+
+### Discord
+
+1) Create a text channel
+2) In the settings of the channel (cogwheel) go to the Integrations -> Webhooks
+3) Either use the default one or create a new webhook
+
+Example configuration:
+
+```toml
+messenger.url = "https://discord.com/api/webhooks/<webhook_id>/<webhook_token>"
+```
+
+[Rate limits](https://discord.com/developers/docs/topics/rate-limits).
 
 ## Services
 
 Sheet managed by Goral has title `<parameter to collect data on>@<host_id>@<service> <creation datetime>`. You can change the title, column names and other elements of the sheet but be aware that Goral will continue to append data in the same order as when the sheet was created by Goral if the form of the data hasn't changed (either `<parameter to collect data on>` or its keys). Creation datetimes for sheets always differ by some amount of seconds (jittered) even those sheets were created at the same time - in order to prevent conflicts in sheet titles.
 
-For all configurations below commented lines (starting with #) are optional and example values are their defaults. 
+For all configurations below commented lines (starting with #) are optional and example values are their defaults.
+Every service has a messenger configuration (see [Setup](#setup)). It is recommended to have several messengers and different chats/channels for each messenger and take into account their rate limits when configuring a service.
 
 ### General
 
@@ -70,8 +109,6 @@ General service is responsible for reserved communication channel and important 
 [general]
 # log_level = "info"
 service_account_credentials_path = "/path/to/service_account.json"
-messenger.bot_token = "<bot token>"
-messenger.chat_id = "<chat id>"
 messenger.url = "<messenger api url for sending messages>"
 ```
 
@@ -84,21 +121,19 @@ Healthcheck service with a configuration
 ```toml
 [healthcheck]
 spreadsheet_id = "<spreadsheet_id>"
-# messenger.bot_token = "<bot token>"
-# messenger.chat_id = "<chat id>"
 # messenger.url = "<messenger api url for sending messages>"
 # push_interval_secs = 30
 #[[healthcheck.rules]]
 [[healthcheck.liveness]]
 # initial_delay_secs = 0
 # period_secs = 3
-typ = "Http"
+type = "Http"
 endpoint = "http://127.0.0.1:9898"
 # timeout_ms = 1000 # should be less than or equal period_secs
 [[healthcheck.liveness]]
 # initial_delay_secs = 0
 # period_secs = 3
-typ = "Command"
+type = "Command"
 command = "ls -lha /"
 # timeout_ms = 1000 # should be less than or equal period_secs
 ```
@@ -115,6 +150,8 @@ Goral saves probe time, status (true for alive) and text output (for HTTP GET - 
 In case an output is larger than 1024 bytes, it is truncated and you get permanent warnings in logs of Goral. So configure the output size of your healthcheck reasonably (healthcheck responses shouldn't be heavy).
 For command healthchecks it is recommended to wrap you command in some script or give it an alias so that in case of small changes in command arguments use the same sheet for data (otherwise Goral will create a new sheet).
 
+If a messenger is configured, then any healthcheck change (healthy -> unhealthy and vice versa) is sent via the messenger. In case of many endpoints with short liveness periods there is a risk to hit a messenger rate limit. 
+
 ### Metrics
 
 Metrics scrape endpoints with Prometheus metrics. Maximum response body is set to 16384 bytes.
@@ -122,8 +159,6 @@ Metrics scrape endpoints with Prometheus metrics. Maximum response body is set t
 ```toml
 [metrics]
 spreadsheet_id = "<spreadsheet_id>"
-# messenger.bot_token = "<bot token>"
-# messenger.chat_id = "<chat id>"
 # messenger.url = "<messenger api url for sending messages>"
 # push_interval_secs = 30
 # scrape_interval_secs = 10
@@ -136,7 +171,9 @@ For every endpoint and every metric Metrics service creates a separate sheet. Wh
 
 If there is an error while scraping, it is sent via a configured messenger or via a default messenger of General service.
 
-*Note:* if the observed app restarts, then its metric counters are reset. Goral just scrapes metrics as-is without _trying to merge them_. For metrics data it is usually acceptable. If you need some more reliable way to collect data - consider using [KV Log](#kv-log) as it uses a synchronous push strategy and allows you to fetch the last row for each `log_name` and have a merge strategy on the app side.
+*Note:* if the observed app restarts, then its metric counters are reset. Goral just scrapes metrics as-is without _trying to merge them_. For metrics data it is usually acceptable. If you need some more reliable way to collect data - consider using [KV Log](#kv-log) as it uses a synchronous push strategy and allows you to fetch the last row for each `log_name` - thus you can setup a merge strategy on the app side.
+
+If a messenger is configured, then any scraping error is sent via the messenger (even it is the same error, it is sent each time). In case of many scrape endpoints with short scrape intervals there is a risk to hit a messenger rate limit.
 
 ### Logs
 
@@ -145,8 +182,6 @@ Logs service with the following configuration:
 ```toml
 [logs]
 spreadsheet_id = "<spreadsheet_id>"
-# messenger.bot_token = "<bot token>"
-# messenger.chat_id = "<chat id>"
 # messenger.url = "<messenger api url for sending messages>"
 # push_interval_secs = 5
 # filter_if_contains = []
@@ -179,8 +214,6 @@ spreadsheet_id = "<spreadsheet_id>"
 # push_interval_secs = 20
 # scrape_interval_secs = 10
 # scrape_timeout_ms = 3000
-# messenger.bot_token = "<bot token>"
-# messenger.chat_id = "<chat id>"
 # messenger.url = "<messenger api url for sending messages>"
 # mounts = ["/"]
 # names = ["goral"]

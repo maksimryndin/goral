@@ -118,7 +118,15 @@ pub(crate) mod tests {
         let s = Config::builder()
             .add_source(File::from_str(contents, FileFormat::Toml))
             .build()?;
-        let deserialized = s.try_deserialize::<T>()?;
+        let deserialized = s.try_deserialize::<T>().map_err(|e| {
+            let e = e.to_string();
+            let e = if e.contains("untagged enum MessengerImplementation") {
+                "messenger specific configuration is incorrect".to_string()
+            } else {
+                e
+            };
+            ConfigError::Message(e)
+        })?;
         deserialized
             .validate()
             .map_err(|e| ConfigError::Message(e.to_string()))?;
@@ -130,8 +138,7 @@ pub(crate) mod tests {
         let config = r#"
         [general]
         service_account_credentials_path = "/path/to/service_account.json"
-        messenger.bot_token = "123"
-        messenger.chat_id = "test_chat_id"
+        messenger.specific.chat_id = "test_chat_id"
         messenger.url = "https://api.telegram.org/bot123/sendMessage"
         "#;
 
@@ -141,11 +148,22 @@ pub(crate) mod tests {
             config.general.service_account_credentials_path,
             "/path/to/service_account.json"
         );
-        assert_eq!(config.general.messenger.bot_token, "123");
-        assert_eq!(config.general.messenger.chat_id, "test_chat_id");
         assert_eq!(
             config.general.messenger.url,
             Url::from_str("https://api.telegram.org/bot123/sendMessage").unwrap()
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "messenger specific configuration is incorrect")]
+    fn wrong_messenger_confg_no_match() {
+        let config = r#"
+        [general]
+        service_account_credentials_path = "/path/to/service_account.json"
+        messenger.specific.channel = "RKSWKAHBF"
+        messenger.url = "https://api.telegram.org/bot123/sendMessage"
+        "#;
+
+        let _: Configuration = build_config(config).unwrap();
     }
 }

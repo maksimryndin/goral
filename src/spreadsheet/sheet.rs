@@ -182,15 +182,23 @@ impl From<GoogleSheet> for Sheet {
                 )
             })
             .collect();
-        let properties = sh.properties.expect("sheet properties cannot be null");
+        let properties = sh
+            .properties
+            .expect("assert: sheet properties cannot be null");
         Self {
-            sheet_id: properties.sheet_id.expect("sheet sheet_id cannot be null"),
-            title: properties.title.expect("sheet title cannot be null"),
+            sheet_id: properties
+                .sheet_id
+                .expect("assert: sheet sheet_id cannot be null"),
+            title: properties
+                .title
+                .expect("assert: sheet title cannot be null"),
             hidden: properties.hidden.unwrap_or(false),
-            index: properties.index.expect("sheet index cannot be null") as u8,
+            index: properties
+                .index
+                .expect("assert: sheet index cannot be null") as u8,
             sheet_type: properties
                 .sheet_type
-                .expect("sheet type cannot be null")
+                .expect("assert: sheet type cannot be null")
                 .into(),
             frozen_row_count: properties
                 .grid_properties

@@ -1,7 +1,9 @@
 pub(crate) mod configuration;
+mod discord;
 mod slack;
 mod telegram;
 use crate::messenger::configuration::MessengerConfig;
+use crate::messenger::discord::Discord;
 use crate::messenger::slack::Slack;
 use crate::messenger::telegram::Telegram;
 use anyhow::anyhow;
@@ -37,9 +39,11 @@ pub fn get_messenger(host: &str) -> Result<BoxedMessenger> {
         Ok(Box::new(Telegram::new()))
     } else if host.contains("slack") {
         Ok(Box::new(Slack::new()))
+    } else if host.contains("discord") {
+        Ok(Box::new(Discord::new()))
     } else {
         Err(anyhow!(
-            "Unsupported messenger. Currently available: Telegram"
+            "Unsupported messenger. Currently available: Telegram, Slack, Discord"
         ))
     }
 }
