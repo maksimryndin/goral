@@ -90,26 +90,24 @@ impl Service for GeneralService {
         tracing::info!("running with log level {}", self.log_level);
         let collect = self.collect_notifications();
         tokio::pin!(collect); // pin and pass by mutable ref to prevent cancelling this future by select!
-        loop {
-            tokio::select! {
-                result = shutdown.recv() => {
-                    let graceful_shutdown_timeout = match result {
-                        Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
-                        Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
-                    };
-                    tracing::info!("{} service has got shutdown signal", GENERAL_SERVICE_NAME);
-                    // we read out messages from other services and componens as much as we can (so we don't close the channel)
-                    assert!(graceful_shutdown_timeout > 0, "graceful_shutdown_timeout is validated in configuration to be positive");
-                    let graceful_shutdown_timeout = graceful_shutdown_timeout - 1;
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {},
-                        _ = &mut collect => {}
-                    }
-                    tracing::info!("{} service has successfully shutdowned", GENERAL_SERVICE_NAME);
-                    return;
-                },
-                _ = &mut collect => {}
-            }
+        tokio::select! {
+            result = shutdown.recv() => {
+                let graceful_shutdown_timeout = match result {
+                    Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
+                    Ok(graceful_shutdown_timeout) => graceful_shutdown_timeout,
+                };
+                tracing::info!("{} service has got shutdown signal", GENERAL_SERVICE_NAME);
+                // we read out messages from other services and componens as much as we can (so we don't close the channel)
+                assert!(graceful_shutdown_timeout > 0, "graceful_shutdown_timeout is validated in configuration to be positive");
+                let graceful_shutdown_timeout = graceful_shutdown_timeout - 1;
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(graceful_shutdown_timeout.into())) => {},
+                    _ = &mut collect => {}
+                }
+                tracing::info!("{} service has successfully shutdowned", GENERAL_SERVICE_NAME);
+                return;
+            },
+            _ = &mut collect => {}
         }
     }
 }

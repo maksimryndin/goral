@@ -1,4 +1,4 @@
-use crate::spreadsheet::Metadata;
+use crate::spreadsheet::{Metadata, DEFAULT_FONT};
 use google_sheets4::api::Sheet as GoogleSheet;
 use google_sheets4::api::{
     AddSheetRequest, AppendCellsRequest, BasicFilter, CellData, CellFormat, Color, ColorStyle,
@@ -83,7 +83,7 @@ impl Into<CellData> for Header {
                 horizontal_alignment: Some("CENTER".to_string()),
                 text_format: Some(TextFormat {
                     bold: Some(true),
-                    font_family: Some("Verdana".to_string()),
+                    font_family: Some(DEFAULT_FONT.to_string()),
                     foreground_color_style: Some(ColorStyle {
                         rgb_color: Some(Color {
                             alpha: Some(0.0),
@@ -156,6 +156,10 @@ impl Sheet {
 
     pub(crate) fn row_count(&self) -> Option<i32> {
         self.row_count
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        &self.title
     }
 }
 
@@ -279,13 +283,6 @@ impl VirtualSheet {
             start_column_index: Some(0),
             end_column_index: self.sheet.column_count,
         };
-        let filter_range = GridRange {
-            sheet_id: Some(self.sheet.sheet_id),
-            start_row_index: Some(0),
-            end_row_index: None,
-            start_column_index: Some(0),
-            end_column_index: self.sheet.column_count,
-        };
         let metadata = self.take_developer_metadata();
         let header_values: Vec<CellData> = self.headers.into_iter().map(|h| h.into()).collect();
         let data = vec![RowData {
@@ -323,15 +320,6 @@ impl VirtualSheet {
                 range: Some(range),
                 rows: Some(data),
                 ..Default::default()
-            }),
-            ..Default::default()
-        });
-        requests.push(Request {
-            set_basic_filter: Some(SetBasicFilterRequest {
-                filter: Some(BasicFilter {
-                    range: Some(filter_range),
-                    ..Default::default()
-                }),
             }),
             ..Default::default()
         });
@@ -379,7 +367,7 @@ impl VirtualSheet {
             sheet_type,
             // for Grid sheets - we use the same type (i32) as an upstream libs
             frozen_row_count: Some(1),
-            row_count: Some(2), // for headers and 1 row for data is required otherwise "You can't freeze all visible rows on the sheet.","status":"INVALID_ARGUMENT""
+            row_count: Some(2), // for headers and one row empty otherwise `You can't freeze all visible rows on the sheet`
             column_count: Some(headers.len() as i32),
             tab_color,
             metadata,
@@ -501,8 +489,73 @@ impl Rows {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::tests::TEST_HOST_ID;
+    use chrono::{DateTime, Utc};
+
+    pub(crate) fn mock_ordinary_google_sheet(title: &str) -> GoogleSheet {
+        GoogleSheet {
+            banded_ranges: None,
+            basic_filter: None,
+            charts: None,
+            column_groups: None,
+            conditional_formats: None,
+            data: None,
+            developer_metadata: None,
+            filter_views: None,
+            merges: None,
+            properties: Some(SheetProperties {
+                data_source_sheet_properties: None,
+                grid_properties: Some(GridProperties {
+                    column_count: Some(26),
+                    column_group_control_after: None,
+                    frozen_column_count: None,
+                    frozen_row_count: None,
+                    hide_gridlines: None,
+                    row_count: Some(1000),
+                    row_group_control_after: None,
+                }),
+                hidden: None,
+                index: Some(0),
+                right_to_left: None,
+                sheet_id: Some(0),
+                sheet_type: Some("GRID".to_string()),
+                tab_color: None,
+                tab_color_style: Some(ColorStyle {
+                    rgb_color: Some(Color {
+                        alpha: None,
+                        blue: None,
+                        green: None,
+                        red: Some(1.0),
+                    }),
+                    theme_color: None,
+                }),
+                title: Some(title.to_string()),
+            }),
+            protected_ranges: None,
+            row_groups: None,
+            slicers: None,
+        }
+    }
+
+    pub(crate) fn mock_sheet_with_properties(properties: SheetProperties) -> GoogleSheet {
+        GoogleSheet {
+            banded_ranges: None,
+            basic_filter: None,
+            charts: None,
+            column_groups: None,
+            conditional_formats: None,
+            data: None,
+            developer_metadata: None,
+            filter_views: None,
+            merges: None,
+            properties: Some(properties),
+            protected_ranges: None,
+            row_groups: None,
+            slicers: None,
+        }
+    }
 
     #[test]
     fn id_generation() {

@@ -293,3 +293,8 @@ impl Debug for Shared {
         write!(f, "Shared")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    pub(crate) const TEST_HOST_ID: &str = "testhost";
+}

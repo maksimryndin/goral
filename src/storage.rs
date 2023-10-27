@@ -1,7 +1,7 @@
 use crate::spreadsheet::sheet::{
     str_to_id, Header, Rows, Sheet, SheetId, TabColorRGB, UpdateSheet, VirtualSheet,
 };
-use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
+use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI, DEFAULT_FONT};
 use crate::{get_service_tab_color, Sender, APP_NAME, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData, TextFormat};
@@ -21,7 +21,6 @@ const METADATA_UPDATED_AT: &str = "updated_at";
 const METADATA_KEYS: &str = "keys";
 const DATETIME_COLUMN_NAME: &str = "datetime";
 const MILLIS_PER_DAY: f64 = (24 * 60 * 60 * 1000) as f64;
-const DEFAULT_FONT: &str = "Verdana";
 const KEYS_DELIMITER: &str = "~^~";
 const THOUSAND: u64 = 10_u64.pow(3);
 const MILLION: u64 = 10_u64.pow(6);
@@ -656,6 +655,14 @@ fn convert_datetime_to_spreadsheet_double(d: NaiveDateTime) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::general::GENERAL_SERVICE_NAME;
+    use crate::spreadsheet::sheet::tests::mock_ordinary_google_sheet;
+    use crate::spreadsheet::tests::TestState;
+    use crate::tests::TEST_HOST_ID;
+    use crate::Sender;
+    use google_sheets4::oauth2;
+    use google_sheets4::Result as SheetsResult;
+    use tokio::sync::mpsc;
 
     #[test]
     fn jitter() {
@@ -695,4 +702,216 @@ mod tests {
         );
         assert_eq!(895475598, datarow.sheet_id("host1", "system"));
     }
+
+    #[test]
+    fn datarow_has_timestamp_as_first_header() {
+        let scrape_time = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .expect("assert: static datetime")
+            .and_hms_opt(0, 0, 0)
+            .expect("assert: static datetime");
+        let datarow = Datarow::new(
+            "/dev/shm".to_string(),
+            scrape_time,
+            vec![
+                (format!("disk_use"), Datavalue::HeatmapPercent(3_f64)),
+                (format!("disk_free"), Datavalue::Size(400_u64)),
+            ],
+            None,
+        );
+        assert_eq!(
+            datarow.headers()[0],
+            Header::new(DATETIME_COLUMN_NAME.to_string(), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn basic_append_flow() {
+        let (tx, _) = mpsc::channel(1);
+        let tx = Sender::new(tx);
+        let sheets_api = SpreadsheetAPI::new(
+            tx.clone(),
+            TestState::new(vec![mock_ordinary_google_sheet("some sheet")]),
+        );
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            "test-project".to_string(),
+            sheets_api,
+            tx.clone(),
+        ));
+        let mut log = create_log(
+            storage,
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+        );
+
+        let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        // adding two new log_name-keys rows
+        let datarows = vec![
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![
+                    (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key12"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![
+                    (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key22"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+        ];
+
+        log.append(datarows).await.unwrap();
+
+        // for the sheet order we rely on the indexing
+        let (all_sheets, _, _) = log
+            .storage
+            .google
+            .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
+            .await
+            .unwrap();
+        assert_eq!(
+            all_sheets.len(),
+            3,
+            "`some sheet` already exists, `log_name1` and `log_name2` sheets have been created"
+        );
+        assert!(
+            all_sheets[1].title().contains("log_name1")
+                || all_sheets[2].title().contains("log_name1")
+        );
+        assert_eq!(
+            all_sheets[1].row_count(),
+            Some(2),
+            "`log_name..` contains header row and one row of data"
+        );
+        assert!(
+            all_sheets[1].title().contains("log_name2")
+                || all_sheets[2].title().contains("log_name2")
+        );
+        assert_eq!(
+            all_sheets[2].row_count(),
+            Some(2),
+            "`log_name..` contains header row and one row of data"
+        );
+
+        // adding two existing log_name-keys rows
+        // but for one the order of keys is different - shouldn't make any difference
+        // and new one combination
+        // and new combination with the same log_name, but updated keys
+        // two new sheets should be created
+        let datarows = vec![
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![
+                    (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key23"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![
+                    (format!("key12"), Datavalue::Size(400_u64)),
+                    (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![
+                    (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key22"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name3".to_string(),
+                timestamp,
+                vec![
+                    (format!("key31"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key32"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+        ];
+
+        log.append(datarows).await.unwrap();
+        let (all_sheets, _, _) = log
+            .storage
+            .google
+            .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
+            .await
+            .unwrap();
+        assert_eq!(all_sheets.len(), 5, "`some sheet`, `log_name1` and `log_name2` already exist, `log_name2` with different keys and `log_name3` sheets have been created");
+
+        assert!(
+            all_sheets[1].title().contains("log_name1")
+                || all_sheets[2].title().contains("log_name1")
+        );
+        assert_eq!(
+            all_sheets[1].row_count(),
+            Some(3),
+            "`log_name1` and `log_name2` contain header row and two rows of data"
+        );
+        assert!(
+            all_sheets[1].title().contains("log_name2")
+                || all_sheets[2].title().contains("log_name2")
+        );
+        assert_eq!(
+            all_sheets[2].row_count(),
+            Some(3),
+            "`log_name1` and `log_name2` contain header row and two rows of data"
+        );
+
+        assert!(
+            all_sheets[3].title().contains("log_name2")
+                || all_sheets[4].title().contains("log_name2")
+        );
+        assert_eq!(all_sheets[3].row_count(), Some(2), "`log_name2` with different keys and `log_name3` contain header row and one row of data");
+        assert!(
+            all_sheets[3].title().contains("log_name3")
+                || all_sheets[4].title().contains("log_name3")
+        );
+        assert_eq!(all_sheets[4].row_count(), Some(2), "`log_name2` with different keys and `log_name3` contain header row and one row of data");
+
+        assert_eq!(
+            all_sheets[3].meta_value(METADATA_SERVICE_KEY),
+            Some(&GENERAL_SERVICE_NAME.to_string())
+        );
+        assert_eq!(
+            all_sheets[3].meta_value(METADATA_HOST_ID_KEY),
+            Some(&TEST_HOST_ID.to_string())
+        );
+
+        assert!(all_sheets[3]
+            .meta_value(METADATA_LOG_NAME)
+            .unwrap()
+            .starts_with("log_name"));
+        assert_ne!(
+            all_sheets[1].meta_value(METADATA_CREATED_AT),
+            all_sheets[1].meta_value(METADATA_UPDATED_AT),
+            "first sheets should be updated"
+        );
+        assert_eq!(
+            all_sheets[3].meta_value(METADATA_CREATED_AT),
+            all_sheets[3].meta_value(METADATA_UPDATED_AT),
+            "new sheets have the same created and updated timestamps"
+        );
+    }
+
+    // TODO tests for error handling - check send notification
+    // append with retry and without
 }

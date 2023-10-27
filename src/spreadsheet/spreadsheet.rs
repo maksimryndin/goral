@@ -1,4 +1,4 @@
-use crate::spreadsheet::sheet::{Rows, Sheet, SheetId, SheetType, UpdateSheet, VirtualSheet};
+use crate::spreadsheet::sheet::{Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
 use crate::spreadsheet::{HttpResponse, Metadata};
 use crate::HyperConnector;
 use crate::Sender;
@@ -11,6 +11,9 @@ use google_sheets4::{
     hyper_rustls, oauth2, Error, Result as SheetsResult, Sheets,
 };
 use http::response::Response;
+
+#[cfg(test)]
+use crate::spreadsheet::spreadsheet::tests::TestState;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en
 const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
@@ -60,11 +63,15 @@ async fn handle_error<T>(
 }
 
 pub struct SpreadsheetAPI {
+    #[cfg(not(test))]
     hub: Sheets<HyperConnector>,
     send_notification: Sender,
+    #[cfg(test)]
+    state: tokio::sync::Mutex<TestState>,
 }
 
 impl SpreadsheetAPI {
+    #[cfg(not(test))]
     pub fn new(
         authenticator: oauth2::authenticator::Authenticator<HyperConnector>,
         send_notification: Sender,
@@ -85,6 +92,54 @@ impl SpreadsheetAPI {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new(send_notification: Sender, state: TestState) -> Self {
+        Self {
+            send_notification,
+            state: tokio::sync::Mutex::new(state),
+        }
+    }
+
+    #[cfg(not(test))]
+    async fn get(&self, spreadsheet_id: &str) -> SheetsResult<(Response<Body>, Spreadsheet)> {
+        self
+            .hub
+            .spreadsheets()
+            .get(spreadsheet_id)
+            .param("fields", "sheets.properties(sheetId,title,hidden,index,tabColorStyle,sheetType,gridProperties),sheets.developerMetadata")
+            .doit()
+            .await
+    }
+
+    #[cfg(test)]
+    async fn get(&self, spreadsheet_id: &str) -> SheetsResult<(Response<Body>, Spreadsheet)> {
+        let mut state = self.state.lock().await;
+        state.get(spreadsheet_id).await
+    }
+
+    #[cfg(not(test))]
+    async fn update(
+        &self,
+        req: BatchUpdateSpreadsheetRequest,
+        spreadsheet_id: &str,
+    ) -> SheetsResult<(Response<Body>, BatchUpdateSpreadsheetResponse)> {
+        self.hub
+            .spreadsheets()
+            .batch_update(req, spreadsheet_id)
+            .doit()
+            .await
+    }
+
+    #[cfg(test)]
+    async fn update(
+        &self,
+        req: BatchUpdateSpreadsheetRequest,
+        spreadsheet_id: &str,
+    ) -> SheetsResult<(Response<Body>, BatchUpdateSpreadsheetResponse)> {
+        let mut state = self.state.lock().await;
+        state.update(req, spreadsheet_id).await
+    }
+
     pub(crate) fn sheet_url(&self, spreadsheet_id: &str, sheet_id: SheetId) -> String {
         format!(
             "https://docs.google.com/spreadsheets/d/{}#gid={}",
@@ -96,13 +151,8 @@ impl SpreadsheetAPI {
         // first get all spreadsheet sheets properties without data
         // second for sheets in interest (by tab color) fetch headers
         // and last row timestamp??
-        let result = self
-            .hub
-            .spreadsheets()
-            .get(spreadsheet_id)
-            .param("fields", "sheets.properties(sheetId,title,hidden,index,tabColorStyle,sheetType,gridProperties),sheets.developerMetadata")
-            .doit()
-            .await;
+        let result = self.get(spreadsheet_id).await;
+
         tracing::debug!("{:?}", result);
         handle_error(self, result).await
     }
@@ -153,16 +203,6 @@ impl SpreadsheetAPI {
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
     ) -> Result<BatchUpdateSpreadsheetResponse, HttpResponse> {
-        let ranges: Vec<String> = sheets
-            .iter()
-            .filter(|s| s.sheet.sheet_type == SheetType::Grid)
-            .map(|s| {
-                s.sheet
-                    .header_range_r1c1()
-                    .expect("assert: grid sheet has a header range")
-            })
-            .collect();
-
         // TODO calculate capacity properly
         let mut requests = Vec::with_capacity(sheets.len() * 5 + data.len() + updates.len());
 
@@ -183,18 +223,13 @@ impl SpreadsheetAPI {
         let req = BatchUpdateSpreadsheetRequest {
             include_spreadsheet_in_response: Some(false),
             requests: Some(requests),
-            response_ranges: Some(ranges),
+            response_ranges: None,
             response_include_grid_data: Some(false),
         };
 
-        let result = self
-            .hub
-            .spreadsheets()
-            .batch_update(req, spreadsheet_id)
-            .doit()
-            .await;
+        let result = self.update(req, spreadsheet_id).await;
 
-        tracing::debug!("{:?}", result);
+        tracing::info!("{:?}", result);
         handle_error(self, result).await
     }
 
@@ -212,5 +247,299 @@ impl SpreadsheetAPI {
                 e
             })?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::spreadsheet::sheet::tests::mock_sheet_with_properties;
+    use google_sheets4::api::Sheet as GoogleSheet;
+    use google_sheets4::api::{
+        AddSheetRequest, AppendCellsRequest, BasicFilter, CreateDeveloperMetadataRequest,
+        DeveloperMetadata, GridRange, Request, SetBasicFilterRequest, SheetProperties,
+        UpdateCellsRequest, UpdateDeveloperMetadataRequest,
+    };
+    use google_sheets4::FieldMask;
+    use hyper::{header, Body, Response as HyperResponse, StatusCode};
+    use std::collections::{HashMap, HashSet};
+    use std::str::FromStr;
+
+    pub(crate) struct TestState {
+        sheets: HashMap<SheetId, GoogleSheet>,
+        sheet_titles: HashSet<String>,
+        metadata: HashMap<i32, (SheetId, usize)>,
+    }
+
+    impl TestState {
+        pub(crate) fn new(sheets: Vec<GoogleSheet>) -> Self {
+            let mut sheet_titles = HashSet::with_capacity(sheets.len());
+            let mut metadata = HashMap::with_capacity(sheets.len());
+            let sheets: HashMap<SheetId, GoogleSheet> = sheets
+                .into_iter()
+                .map(|s| {
+                    sheet_titles.insert(
+                        s.properties
+                            .as_ref()
+                            .unwrap()
+                            .title
+                            .as_ref()
+                            .unwrap()
+                            .to_string(),
+                    );
+                    let sheet_id = s.properties.as_ref().unwrap().sheet_id.unwrap();
+                    for (i, m) in s
+                        .developer_metadata
+                        .as_ref()
+                        .unwrap_or(&vec![])
+                        .iter()
+                        .enumerate()
+                    {
+                        metadata.insert(m.metadata_id.unwrap(), (sheet_id, i));
+                    }
+                    (sheet_id, s)
+                })
+                .collect();
+            Self {
+                sheets,
+                sheet_titles,
+                metadata: HashMap::new(),
+            }
+        }
+
+        pub(crate) async fn get(&mut self, _: &str) -> SheetsResult<(Response<Body>, Spreadsheet)> {
+            let mut sheets: Vec<GoogleSheet> = self.sheets.clone().into_values().collect();
+            sheets.sort_unstable_by_key(|s| s.properties.as_ref().unwrap().index);
+
+            Ok((
+                HyperResponse::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
+                    .body(Body::from("streaming"))
+                    .unwrap(),
+                Spreadsheet {
+                    data_source_schedules: None,
+                    data_sources: None,
+                    developer_metadata: None,
+                    named_ranges: None,
+                    properties: None,
+                    sheets: Some(sheets),
+                    spreadsheet_id: None,
+                    spreadsheet_url: None,
+                },
+            ))
+        }
+
+        pub(crate) async fn update(
+            &mut self,
+            req: BatchUpdateSpreadsheetRequest,
+            _: &str,
+        ) -> SheetsResult<(Response<Body>, BatchUpdateSpreadsheetResponse)> {
+            for r in req.requests.unwrap().into_iter() {
+                match r {
+                    Request {
+                        add_sheet:
+                            Some(AddSheetRequest {
+                                properties: Some(mut properties),
+                            }),
+                        ..
+                    } => {
+                        let sheet_id = properties.sheet_id.unwrap();
+                        let title = properties.title.as_ref().unwrap();
+                        if self.sheet_titles.contains(title) {
+                            return Err(Error::Failure(
+                                HyperResponse::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
+                                    .body(Body::from(format!(
+                                        "sheet with title {title} already exists!"
+                                    )))
+                                    .unwrap(),
+                            ));
+                        }
+                        self.sheet_titles.insert(title.to_string());
+                        properties.index = Some(self.sheets.len() as i32);
+                        // goral creates GRID sheets
+                        // we decrease row count here for correct counting
+                        // one row is empty for first row to be frozen
+                        let current_row_count = properties
+                            .grid_properties
+                            .as_ref()
+                            .unwrap()
+                            .row_count
+                            .unwrap();
+                        properties.grid_properties.as_mut().unwrap().row_count =
+                            Some(current_row_count - 1);
+                        self.sheets
+                            .insert(sheet_id, mock_sheet_with_properties(properties));
+                    }
+
+                    Request {
+                        append_cells:
+                            Some(AppendCellsRequest {
+                                sheet_id: Some(sheet_id),
+                                rows: Some(rows),
+                                ..
+                            }),
+                        ..
+                    } => {
+                        if let Some(sheet) = self.sheets.get_mut(&sheet_id) {
+                            let grid_properties = sheet
+                                .properties
+                                .as_mut()
+                                .unwrap()
+                                .grid_properties
+                                .as_mut()
+                                .unwrap();
+                            if let Some(row_count) = grid_properties.row_count {
+                                grid_properties.row_count = Some(row_count + (rows.len() as i32));
+                            } else {
+                                return Err(Error::Failure(
+                                    HyperResponse::builder()
+                                        .status(StatusCode::BAD_REQUEST)
+                                        .header(
+                                            header::CONTENT_TYPE,
+                                            "application/json; charset=UTF-8",
+                                        )
+                                        .body(Body::from(format!(
+                                            "cannot append cells to a non-grid sheet!"
+                                        )))
+                                        .unwrap(),
+                                ));
+                            }
+                        } else {
+                            return Err(Error::Failure(
+                                HyperResponse::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
+                                    .body(Body::from(format!(
+                                        "sheet with id {sheet_id} not found to append cells to!"
+                                    )))
+                                    .unwrap(),
+                            ));
+                        }
+                    }
+
+                    Request {
+                        update_cells:
+                            Some(UpdateCellsRequest {
+                                range:
+                                    Some(GridRange {
+                                        sheet_id: Some(sheet_id),
+                                        ..
+                                    }),
+                                ..
+                            }),
+                        ..
+                    } => {
+                        if !self.sheets.contains_key(&sheet_id) {
+                            return Err(Error::Failure(
+                                HyperResponse::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
+                                    .body(Body::from(format!(
+                                        "sheet with id {sheet_id} not found to update cells!"
+                                    )))
+                                    .unwrap(),
+                            ));
+                        }
+                    }
+
+                    Request {
+                        create_developer_metadata:
+                            Some(CreateDeveloperMetadataRequest {
+                                developer_metadata: Some(metadata),
+                                ..
+                            }),
+                        ..
+                    } => {
+                        let sheet_id = metadata.location.as_ref().unwrap().sheet_id.unwrap();
+                        let sheet = self.sheets.get_mut(&sheet_id).unwrap();
+
+                        if let Some(m) = sheet.developer_metadata.as_mut() {
+                            self.metadata
+                                .insert(metadata.metadata_id.unwrap(), (sheet_id, m.len()));
+                            m.push(metadata);
+                        } else {
+                            self.metadata
+                                .insert(metadata.metadata_id.unwrap(), (sheet_id, 0));
+                            sheet.developer_metadata = Some(vec![metadata]);
+                        }
+                    }
+
+                    Request {
+                        set_basic_filter:
+                            Some(SetBasicFilterRequest {
+                                filter:
+                                    Some(BasicFilter {
+                                        range:
+                                            Some(GridRange {
+                                                sheet_id: Some(sheet_id),
+                                                ..
+                                            }),
+                                        ..
+                                    }),
+                                ..
+                            }),
+                        ..
+                    } => {
+                        if !self.sheets.contains_key(&sheet_id) {
+                            return Err(Error::Failure(
+                                HyperResponse::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
+                                    .body(Body::from(format!(
+                                        "sheet with id {sheet_id} not found to add basic filter to!"
+                                    )))
+                                    .unwrap(),
+                            ));
+                        }
+                    }
+
+                    Request {
+                        update_developer_metadata:
+                            Some(UpdateDeveloperMetadataRequest {
+                                developer_metadata:
+                                    Some(DeveloperMetadata {
+                                        metadata_id: Some(metadata_id),
+                                        metadata_value,
+                                        ..
+                                    }),
+                                ..
+                            }),
+                        ..
+                    } => {
+                        if let Some((sheet_id, index)) = self.metadata.get(&metadata_id) {
+                            let sheet = self.sheets.get_mut(&sheet_id).unwrap();
+                            let metadatas = sheet.developer_metadata.as_mut().unwrap();
+                            metadatas[*index].metadata_value = metadata_value;
+                        } else {
+                            return Err(Error::Failure(
+                                HyperResponse::builder()
+                                    .status(StatusCode::BAD_REQUEST)
+                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
+                                    .body(Body::from(format!(
+                                        "metadata with id {metadata_id} not found!"
+                                    )))
+                                    .unwrap(),
+                            ));
+                        }
+                    }
+
+                    _ => panic!("unhandled request {r:?}"),
+                }
+            }
+
+            Ok((
+                HyperResponse::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
+                    .body(Body::from("streaming"))
+                    .unwrap(),
+                BatchUpdateSpreadsheetResponse {
+                    ..Default::default()
+                },
+            ))
+        }
     }
 }
