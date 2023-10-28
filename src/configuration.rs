@@ -166,4 +166,11 @@ pub(crate) mod tests {
 
         let _: Configuration = build_config(config).unwrap();
     }
+
+    #[test]
+    fn division() {
+        assert_eq!(ceiled_division(7, 5), 2);
+        assert_eq!(ceiled_division(10, 5), 2);
+        assert_eq!(ceiled_division(11, 5), 3);
+    }
 }

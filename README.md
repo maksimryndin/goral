@@ -190,7 +190,7 @@ spreadsheet_id = "<spreadsheet_id>"
 
 will create a single sheet with logs.
 
-For logs collecting Goral reads its stdin. Basically it is a portable way to collect stdout of another process without a privileged access (ptrace is a little bit hacky for our purposes, has too much power and is limited to nix systems).
+For logs collecting Goral reads its stdin. Basically it is a portable way to collect stdout of another process without a privileged access.
 There is a caveat - if we make a simple pipe like `instrumented_app | goral` then in case of a termination of the `instrumented_app` Goral will not see any input and will stop reading.
 [There is a way with named pipes](https://www.baeldung.com/linux/stdout-to-multiple-commands#3-solve-the-problem-usingtee-and-named-pipes) (for Windows there should also be a way as it also supports named pipes). 
 * You create a named pipe, say `instrumented_app_logs_pipe` with the command `mkfifo instrumented_app_logs_pipe` (it creates a pipe file in the current directory - you can choose an appropriate place)

@@ -119,19 +119,6 @@ pub(crate) struct Sheet {
 }
 
 impl Sheet {
-    pub(super) fn header_range_r1c1(&self) -> Option<String> {
-        if self.sheet_type == SheetType::Grid {
-            Some(format!(
-                "{}!R1C1:R1C{}",
-                self.title,
-                self.column_count
-                    .expect("assert: grid sheet contains column count")
-            ))
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn number_of_cells(&self) -> Option<i32> {
         if self.sheet_type == SheetType::Grid {
             Some(
@@ -158,6 +145,7 @@ impl Sheet {
         self.row_count
     }
 
+    #[cfg(test)]
     pub(crate) fn title(&self) -> &str {
         &self.title
     }
@@ -491,8 +479,6 @@ impl Rows {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::tests::TEST_HOST_ID;
-    use chrono::{DateTime, Utc};
 
     pub(crate) fn mock_ordinary_google_sheet(title: &str) -> GoogleSheet {
         GoogleSheet {

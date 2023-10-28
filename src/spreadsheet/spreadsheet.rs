@@ -1,14 +1,18 @@
 use crate::spreadsheet::sheet::{Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
 use crate::spreadsheet::{HttpResponse, Metadata};
+
+#[cfg(not(test))]
 use crate::HyperConnector;
 use crate::Sender;
 use chrono::Utc;
 use google_sheets4::api::{
     BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
 };
+#[cfg(not(test))]
+use google_sheets4::{api::Sheets, oauth2::authenticator::Authenticator};
 use google_sheets4::{
     hyper::{self, Body},
-    hyper_rustls, oauth2, Error, Result as SheetsResult, Sheets,
+    Error, Result as SheetsResult,
 };
 use http::response::Response;
 
@@ -63,19 +67,16 @@ async fn handle_error<T>(
 }
 
 pub struct SpreadsheetAPI {
+    send_notification: Sender,
     #[cfg(not(test))]
     hub: Sheets<HyperConnector>,
-    send_notification: Sender,
     #[cfg(test)]
     state: tokio::sync::Mutex<TestState>,
 }
 
 impl SpreadsheetAPI {
     #[cfg(not(test))]
-    pub fn new(
-        authenticator: oauth2::authenticator::Authenticator<HyperConnector>,
-        send_notification: Sender,
-    ) -> Self {
+    pub fn new(authenticator: Authenticator<HyperConnector>, send_notification: Sender) -> Self {
         let hub = Sheets::new(
             hyper::Client::builder().build(
                 hyper_rustls::HttpsConnectorBuilder::new()
@@ -257,22 +258,28 @@ pub(crate) mod tests {
     use google_sheets4::api::Sheet as GoogleSheet;
     use google_sheets4::api::{
         AddSheetRequest, AppendCellsRequest, BasicFilter, CreateDeveloperMetadataRequest,
-        DeveloperMetadata, GridRange, Request, SetBasicFilterRequest, SheetProperties,
-        UpdateCellsRequest, UpdateDeveloperMetadataRequest,
+        DeveloperMetadata, GridRange, Request, SetBasicFilterRequest, UpdateCellsRequest,
+        UpdateDeveloperMetadataRequest,
     };
-    use google_sheets4::FieldMask;
     use hyper::{header, Body, Response as HyperResponse, StatusCode};
     use std::collections::{HashMap, HashSet};
-    use std::str::FromStr;
+    use std::time::Duration;
+    use tokio::time::sleep;
 
     pub(crate) struct TestState {
         sheets: HashMap<SheetId, GoogleSheet>,
         sheet_titles: HashSet<String>,
         metadata: HashMap<i32, (SheetId, usize)>,
+        respond_with_error: Option<Error>,
+        basic_response_duration_millis: u64,
     }
 
     impl TestState {
-        pub(crate) fn new(sheets: Vec<GoogleSheet>) -> Self {
+        pub(crate) fn new(
+            sheets: Vec<GoogleSheet>,
+            respond_with_error: Option<Error>,
+            basic_response_duration_millis: Option<u64>,
+        ) -> Self {
             let mut sheet_titles = HashSet::with_capacity(sheets.len());
             let mut metadata = HashMap::with_capacity(sheets.len());
             let sheets: HashMap<SheetId, GoogleSheet> = sheets
@@ -304,10 +311,26 @@ pub(crate) mod tests {
                 sheets,
                 sheet_titles,
                 metadata: HashMap::new(),
+                respond_with_error,
+                basic_response_duration_millis: basic_response_duration_millis.unwrap_or(200),
             }
         }
 
+        pub(crate) fn bad_response(text: String) -> Error {
+            Error::Failure(
+                HyperResponse::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
+                    .body(Body::from(text))
+                    .expect("test assert: test state mock can create responses from strings"),
+            )
+        }
+
         pub(crate) async fn get(&mut self, _: &str) -> SheetsResult<(Response<Body>, Spreadsheet)> {
+            sleep(Duration::from_millis(self.basic_response_duration_millis)).await;
+            if let Some(err) = self.respond_with_error.take() {
+                return Err(err);
+            }
             let mut sheets: Vec<GoogleSheet> = self.sheets.clone().into_values().collect();
             sheets.sort_unstable_by_key(|s| s.properties.as_ref().unwrap().index);
 
@@ -335,7 +358,15 @@ pub(crate) mod tests {
             req: BatchUpdateSpreadsheetRequest,
             _: &str,
         ) -> SheetsResult<(Response<Body>, BatchUpdateSpreadsheetResponse)> {
-            for r in req.requests.unwrap().into_iter() {
+            let requests = req
+                .requests
+                .expect("test assert: batch update must have requests");
+            sleep(Duration::from_millis(self.basic_response_duration_millis)).await;
+            if let Some(err) = self.respond_with_error.take() {
+                return Err(err);
+            }
+
+            for r in requests.into_iter() {
                 match r {
                     Request {
                         add_sheet:
@@ -344,23 +375,23 @@ pub(crate) mod tests {
                             }),
                         ..
                     } => {
-                        let sheet_id = properties.sheet_id.unwrap();
-                        let title = properties.title.as_ref().unwrap();
+                        let sheet_id = properties
+                            .sheet_id
+                            .expect("assert: goral creates sheets with sheet_id");
+                        let title = properties
+                            .title
+                            .as_ref()
+                            .expect("assert: goral creates sheets with title");
                         if self.sheet_titles.contains(title) {
-                            return Err(Error::Failure(
-                                HyperResponse::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
-                                    .body(Body::from(format!(
-                                        "sheet with title {title} already exists!"
-                                    )))
-                                    .unwrap(),
-                            ));
+                            return Err(Self::bad_response(format!(
+                                "sheet with title {title} already exists!"
+                            )));
                         }
                         self.sheet_titles.insert(title.to_string());
                         properties.index = Some(self.sheets.len() as i32);
                         // goral creates GRID sheets
                         // we decrease row count here for correct counting
+                        // for append cells requests
                         // one row is empty for first row to be frozen
                         let current_row_count = properties
                             .grid_properties
@@ -368,8 +399,11 @@ pub(crate) mod tests {
                             .unwrap()
                             .row_count
                             .unwrap();
-                        properties.grid_properties.as_mut().unwrap().row_count =
-                            Some(current_row_count - 1);
+                        properties
+                            .grid_properties
+                            .as_mut()
+                            .expect("assert: goral creates grid sheets")
+                            .row_count = Some(current_row_count - 1);
                         self.sheets
                             .insert(sheet_id, mock_sheet_with_properties(properties));
                     }
@@ -387,36 +421,21 @@ pub(crate) mod tests {
                             let grid_properties = sheet
                                 .properties
                                 .as_mut()
-                                .unwrap()
+                                .expect("assert: goral creates sheets with properties")
                                 .grid_properties
                                 .as_mut()
-                                .unwrap();
+                                .expect("assert: goral creates grid sheets with grid_properties");
                             if let Some(row_count) = grid_properties.row_count {
                                 grid_properties.row_count = Some(row_count + (rows.len() as i32));
                             } else {
-                                return Err(Error::Failure(
-                                    HyperResponse::builder()
-                                        .status(StatusCode::BAD_REQUEST)
-                                        .header(
-                                            header::CONTENT_TYPE,
-                                            "application/json; charset=UTF-8",
-                                        )
-                                        .body(Body::from(format!(
-                                            "cannot append cells to a non-grid sheet!"
-                                        )))
-                                        .unwrap(),
-                                ));
+                                return Err(Self::bad_response(format!(
+                                    "cannot append cells to a non-grid sheet!"
+                                )));
                             }
                         } else {
-                            return Err(Error::Failure(
-                                HyperResponse::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
-                                    .body(Body::from(format!(
-                                        "sheet with id {sheet_id} not found to append cells to!"
-                                    )))
-                                    .unwrap(),
-                            ));
+                            return Err(Self::bad_response(format!(
+                                "sheet with id {sheet_id} not found to append cells to!"
+                            )));
                         }
                     }
 
@@ -433,15 +452,9 @@ pub(crate) mod tests {
                         ..
                     } => {
                         if !self.sheets.contains_key(&sheet_id) {
-                            return Err(Error::Failure(
-                                HyperResponse::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
-                                    .body(Body::from(format!(
-                                        "sheet with id {sheet_id} not found to update cells!"
-                                    )))
-                                    .unwrap(),
-                            ));
+                            return Err(Self::bad_response(format!(
+                                "sheet with id {sheet_id} not found to update cells!"
+                            )));
                         }
                     }
 
@@ -453,17 +466,34 @@ pub(crate) mod tests {
                             }),
                         ..
                     } => {
-                        let sheet_id = metadata.location.as_ref().unwrap().sheet_id.unwrap();
-                        let sheet = self.sheets.get_mut(&sheet_id).unwrap();
-
-                        if let Some(m) = sheet.developer_metadata.as_mut() {
-                            self.metadata
-                                .insert(metadata.metadata_id.unwrap(), (sheet_id, m.len()));
-                            m.push(metadata);
+                        let sheet_id = metadata
+                            .location
+                            .as_ref()
+                            .expect("assert: goral sets location for new metadata")
+                            .sheet_id
+                            .unwrap();
+                        if let Some(sheet) = self.sheets.get_mut(&sheet_id) {
+                            if let Some(m) = sheet.developer_metadata.as_mut() {
+                                self.metadata.insert(
+                                    metadata
+                                        .metadata_id
+                                        .expect("assert: goral sets metadata_id for new metadata"),
+                                    (sheet_id, m.len()),
+                                );
+                                m.push(metadata);
+                            } else {
+                                self.metadata.insert(
+                                    metadata
+                                        .metadata_id
+                                        .expect("assert: goral sets metadata_id for new metadata"),
+                                    (sheet_id, 0),
+                                );
+                                sheet.developer_metadata = Some(vec![metadata]);
+                            }
                         } else {
-                            self.metadata
-                                .insert(metadata.metadata_id.unwrap(), (sheet_id, 0));
-                            sheet.developer_metadata = Some(vec![metadata]);
+                            return Err(Self::bad_response(format!(
+                                "sheet with id {sheet_id} not found to create metadata for!"
+                            )));
                         }
                     }
 
@@ -484,15 +514,9 @@ pub(crate) mod tests {
                         ..
                     } => {
                         if !self.sheets.contains_key(&sheet_id) {
-                            return Err(Error::Failure(
-                                HyperResponse::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
-                                    .body(Body::from(format!(
-                                        "sheet with id {sheet_id} not found to add basic filter to!"
-                                    )))
-                                    .unwrap(),
-                            ));
+                            return Err(Self::bad_response(format!(
+                                "sheet with id {sheet_id} not found to add basic filter to!"
+                            )));
                         }
                     }
 
@@ -514,19 +538,13 @@ pub(crate) mod tests {
                             let metadatas = sheet.developer_metadata.as_mut().unwrap();
                             metadatas[*index].metadata_value = metadata_value;
                         } else {
-                            return Err(Error::Failure(
-                                HyperResponse::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .header(header::CONTENT_TYPE, "application/json; charset=UTF-8")
-                                    .body(Body::from(format!(
-                                        "metadata with id {metadata_id} not found!"
-                                    )))
-                                    .unwrap(),
-                            ));
+                            return Err(Self::bad_response(format!(
+                                "metadata with id {metadata_id} not found!"
+                            )));
                         }
                     }
 
-                    _ => panic!("unhandled request {r:?}"),
+                    _ => panic!("test assert: unhandled request {r:?}"),
                 }
             }
 

@@ -20,7 +20,6 @@ use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 use std::time::Duration;
-
 pub use storage::*;
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender as TokioSender};
 use tracing::Level;
@@ -297,4 +296,5 @@ impl Debug for Shared {
 #[cfg(test)]
 mod tests {
     pub(crate) const TEST_HOST_ID: &str = "testhost";
+    pub(crate) const TEST_PROJECT_ID: &str = "test-project";
 }

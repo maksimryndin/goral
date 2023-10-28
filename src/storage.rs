@@ -10,8 +10,6 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio_retry::strategy::{jitter, ExponentialBackoff};
-use tokio_retry::Retry;
 
 const METADATA_SERVICE_KEY: &str = "service";
 const METADATA_HOST_ID_KEY: &str = "host";
@@ -462,6 +460,53 @@ impl AppendableLog {
         result
     }
 
+    // https://developers.google.com/sheets/api/limits#example-algorithm
+    async fn timed_fetch_sheets(
+        &self,
+        maximum_backoff: Duration,
+        timeout: Duration,
+    ) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, HttpResponse> {
+        let mut total_time = Duration::from_millis(0);
+        let mut wait = Duration::from_millis(2);
+        let mut retry = 0;
+        let max_backoff = tokio::time::sleep(maximum_backoff);
+        tokio::pin!(max_backoff);
+        while total_time < maximum_backoff {
+            tokio::select! {
+                _ = &mut max_backoff => {break;}
+                _ = tokio::time::sleep(timeout) => {
+                    let msg = format!("No response from Google API for timeout {timeout:?} for retry {retry}");
+                    tracing::error!("{}", msg);
+                    self.storage.send_notification.fatal(msg).await;
+                    panic!("assert: Google API request timed-out");
+                },
+                res = self.fetch_sheets() => {
+                    match res {
+                        Ok(val) => {
+                            return Ok(val);},
+                        Err(e) => {
+                            tracing::error!("error {:?} for retry {}", e, retry);
+                        }
+                    }
+                }
+            }
+            // simple nonrandom jitter is enough
+            let jittered = if retry % 2 == 0 {
+                wait + Duration::from_millis(2 * retry)
+            } else {
+                wait + Duration::from_millis(3 * retry)
+            };
+            tokio::time::sleep(jittered).await;
+            total_time += jittered;
+            retry += 1;
+            wait *= 2;
+        }
+        let msg = format!("Google API request maximum retry duration {maximum_backoff:?} is reached with {retry} retries");
+        tracing::error!("{}", msg);
+        self.storage.send_notification.fatal(msg).await;
+        panic!("assert: Google API request maximum retry duration");
+    }
+
     // for newly created log sheet its headers order is determined by its first datarow. Fields for other datarows for the same sheet are sorted accordingly.
     async fn _core_append(
         &mut self,
@@ -471,29 +516,17 @@ impl AppendableLog {
         if datarows.is_empty() {
             return Ok(());
         }
-        // We do not retry sheet `crud` as it goes after
-        // `fetch_sheets` which is retriable and should
-        // either fix an error or fail.
-        // Retrying `crud` is not idempotent and
-        // would require cloning all sheets at every retry attempt
-        // https://developers.google.com/sheets/api/limits#example-algorithm
-        let retry_strategy = ExponentialBackoff::from_millis(2)
-            .max_delay(Duration::from_secs(retry_duration))
-            .map(jitter);
-
-        let mut retries = 0;
-        let existing_sheets = Retry::spawn(retry_strategy.clone(), || {
-            if retries > 0 {
-                tracing::warn!(
-                    "retrying #{} to fetch sheets for service {}",
-                    retries,
-                    self.service
-                );
-            }
-            retries += 1;
-            self.fetch_sheets()
-        })
-        .await?;
+        let existing_sheets = if retry_duration == 0 {
+            self.fetch_sheets().await?
+        } else {
+            // We do not retry sheet `crud` as it goes after
+            // `fetch_sheets` which is retriable and should
+            // either fix an error or fail.
+            // Retrying `crud` is not idempotent and
+            // would require cloning all sheets at every retry attempt
+            self.timed_fetch_sheets(Duration::from_secs(retry_duration), Duration::from_secs(5))
+                .await?
+        };
 
         tracing::debug!("existing sheets:\n{:?}", existing_sheets);
 
@@ -658,10 +691,9 @@ mod tests {
     use crate::services::general::GENERAL_SERVICE_NAME;
     use crate::spreadsheet::sheet::tests::mock_ordinary_google_sheet;
     use crate::spreadsheet::tests::TestState;
-    use crate::tests::TEST_HOST_ID;
+    use crate::tests::{TEST_HOST_ID, TEST_PROJECT_ID};
     use crate::Sender;
-    use google_sheets4::oauth2;
-    use google_sheets4::Result as SheetsResult;
+    use google_sheets4::Error;
     use tokio::sync::mpsc;
 
     #[test]
@@ -688,9 +720,9 @@ mod tests {
     #[test]
     fn datarow_id() {
         let scrape_time = NaiveDate::from_ymd_opt(2023, 10, 19)
-            .expect("assert: static datetime")
+            .expect("test assert: static datetime")
             .and_hms_opt(0, 0, 0)
-            .expect("assert: static datetime");
+            .expect("test assert: static datetime");
         let mut datarow = Datarow::new(
             "/dev/shm".to_string(),
             scrape_time,
@@ -706,9 +738,9 @@ mod tests {
     #[test]
     fn datarow_has_timestamp_as_first_header() {
         let scrape_time = NaiveDate::from_ymd_opt(2023, 10, 19)
-            .expect("assert: static datetime")
+            .expect("test assert: static datetime")
             .and_hms_opt(0, 0, 0)
-            .expect("assert: static datetime");
+            .expect("test assert: static datetime");
         let datarow = Datarow::new(
             "/dev/shm".to_string(),
             scrape_time,
@@ -724,17 +756,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn spreadsheet_datetime() {
+        let timestamp = NaiveDate::from_ymd_opt(1900, 01, 01)
+            .expect("test assert: static date")
+            .and_hms_opt(12, 0, 0)
+            .expect("test assert: static time");
+        assert_eq!(convert_datetime_to_spreadsheet_double(timestamp), 2.5);
+        let timestamp = NaiveDate::from_ymd_opt(1900, 02, 01)
+            .expect("test assert: static date")
+            .and_hms_opt(15, 0, 0)
+            .expect("test assert: static time");
+        assert_eq!(convert_datetime_to_spreadsheet_double(timestamp), 33.625);
+    }
+
     #[tokio::test]
     async fn basic_append_flow() {
         let (tx, _) = mpsc::channel(1);
         let tx = Sender::new(tx);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
-            TestState::new(vec![mock_ordinary_google_sheet("some sheet")]),
+            TestState::new(vec![mock_ordinary_google_sheet("some sheet")], None, None),
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            "test-project".to_string(),
+            TEST_PROJECT_ID.to_string(),
             sheets_api,
             tx.clone(),
         ));
@@ -745,9 +791,9 @@ mod tests {
         );
 
         let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
-            .unwrap()
+            .expect("test assert: static date")
             .and_hms_opt(0, 0, 0)
-            .unwrap();
+            .expect("test assert: static time");
 
         // adding two new log_name-keys rows
         let datarows = vec![
@@ -912,6 +958,307 @@ mod tests {
         );
     }
 
-    // TODO tests for error handling - check send notification
-    // append with retry and without
+    #[tokio::test]
+    async fn append_retry() {
+        let (tx, _) = mpsc::channel(1);
+        let tx = Sender::new(tx);
+        let sheets_api = SpreadsheetAPI::new(
+            tx.clone(),
+            TestState::new(
+                vec![mock_ordinary_google_sheet("some sheet")],
+                Some(TestState::bad_response("error to retry".to_string())),
+                None,
+            ),
+        );
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            TEST_PROJECT_ID.to_string(),
+            sheets_api,
+            tx.clone(),
+        ));
+        let mut log = create_log(
+            storage,
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+        );
+
+        let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .expect("test assert: static date")
+            .and_hms_opt(0, 0, 0)
+            .expect("test assert: static time");
+
+        // adding two new log_name-keys rows
+        let datarows = vec![
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![
+                    (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key12"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![
+                    (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key22"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+        ];
+
+        log.append(datarows).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "The application's API key was not found in the configuration")]
+    async fn append_fatal_error() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let tx = Sender::new(tx);
+        let sheets_api = SpreadsheetAPI::new(
+            tx.clone(),
+            TestState::new(
+                vec![mock_ordinary_google_sheet("some sheet")],
+                Some(Error::MissingAPIKey),
+                None,
+            ),
+        );
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            TEST_PROJECT_ID.to_string(),
+            sheets_api,
+            tx.clone(),
+        ));
+        let mut log = create_log(
+            storage,
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+        );
+
+        let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .expect("test assert: static date")
+            .and_hms_opt(0, 0, 0)
+            .expect("test assert: static time");
+
+        // adding two new log_name-keys rows
+        let datarows = vec![
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![
+                    (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key12"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![
+                    (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key22"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+        ];
+
+        let handle = tokio::task::spawn(async move {
+            assert!(
+                rx.recv().await.is_some(),
+                "notification is sent for nonrecoverable error"
+            );
+        });
+
+        log.append(datarows).await.unwrap();
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Google API request timed-out")]
+    async fn append_request_timeout() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let tx = Sender::new(tx);
+        let sheets_api = SpreadsheetAPI::new(
+            tx.clone(),
+            TestState::new(
+                vec![mock_ordinary_google_sheet("some sheet")],
+                None,
+                Some(5500), // 5.5 second as timeout is set to 5
+            ),
+        );
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            TEST_PROJECT_ID.to_string(),
+            sheets_api,
+            tx.clone(),
+        ));
+        let mut log = create_log(
+            storage,
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+        );
+
+        let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .expect("test assert: static date")
+            .and_hms_opt(0, 0, 0)
+            .expect("test assert: static time");
+
+        // adding two new log_name-keys rows
+        let datarows = vec![
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![
+                    (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key12"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![
+                    (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key22"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+        ];
+
+        let handle = tokio::task::spawn(async move {
+            assert!(
+                rx.recv().await.is_some(),
+                "notification is sent for nonrecoverable error"
+            );
+        });
+        log.append(datarows).await.unwrap();
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Google API request maximum retry duration")]
+    async fn append_retry_maximum_backoff() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let tx = Sender::new(tx);
+        let sheets_api = SpreadsheetAPI::new(
+            tx.clone(),
+            TestState::new(
+                vec![mock_ordinary_google_sheet("some sheet")],
+                Some(TestState::bad_response("error to retry".to_string())),
+                Some(2000), // 2 seconds
+            ),
+        );
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            TEST_PROJECT_ID.to_string(),
+            sheets_api,
+            tx.clone(),
+        ));
+        let mut log = create_log(
+            storage,
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+        );
+
+        let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .expect("test assert: static date")
+            .and_hms_opt(0, 0, 0)
+            .expect("test assert: static time");
+
+        // adding two new log_name-keys rows
+        let datarows = vec![
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![
+                    (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key12"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![
+                    (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key22"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+        ];
+
+        let handle = tokio::task::spawn(async move {
+            assert!(
+                rx.recv().await.is_some(),
+                "notification is sent for nonrecoverable error"
+            );
+        });
+        log._append(datarows, 1).await.unwrap();
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "error to retry")]
+    async fn append_without_retry() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let tx = Sender::new(tx);
+        let sheets_api = SpreadsheetAPI::new(
+            tx.clone(),
+            TestState::new(
+                vec![mock_ordinary_google_sheet("some sheet")],
+                Some(TestState::bad_response("error to retry".to_string())),
+                None,
+            ),
+        );
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            TEST_PROJECT_ID.to_string(),
+            sheets_api,
+            tx.clone(),
+        ));
+        let mut log = create_log(
+            storage,
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+        );
+
+        let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .expect("test assert: static date")
+            .and_hms_opt(0, 0, 0)
+            .expect("test assert: static time");
+
+        // adding two new log_name-keys rows
+        let datarows = vec![
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![
+                    (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key12"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![
+                    (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
+                    (format!("key22"), Datavalue::Size(400_u64)),
+                ],
+                None,
+            ),
+        ];
+
+        let handle = tokio::task::spawn(async move {
+            assert!(
+                rx.recv().await.is_some(),
+                "notification is sent for nonrecoverable error"
+            );
+        });
+
+        log.append_no_retry(datarows).await.unwrap();
+        handle.await.unwrap();
+    }
 }
