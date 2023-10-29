@@ -572,6 +572,7 @@ dependencies = [
  "clap",
  "config",
  "futures",
+ "getrandom",
  "google-sheets4",
  "http",
  "hyper",

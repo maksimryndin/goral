@@ -411,7 +411,12 @@ impl AppendableLog {
     }
 
     pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<(), HttpResponse> {
-        self._append(datarows, 32).await
+        self._append(
+            datarows,
+            Some(Duration::from_secs(32)),
+            Some(Duration::from_secs(5)),
+        )
+        .await
     }
 
     pub(crate) async fn append_no_retry(
@@ -425,14 +430,15 @@ impl AppendableLog {
                 self.sheet_url(sheet_id)
             })
             .collect();
-        self._append(datarows, 0).await?;
+        self._append(datarows, None, None).await?;
         Ok(sheet_ids)
     }
 
     async fn _append(
         &mut self,
         datarows: Vec<Datarow>,
-        retry_duration: u64,
+        retry_limit: Option<Duration>,
+        timeout: Option<Duration>,
     ) -> Result<(), HttpResponse> {
         let rows_count = datarows.len();
         tracing::info!(
@@ -441,7 +447,7 @@ impl AppendableLog {
             self.service
         );
         let result = self
-            ._core_append(datarows, retry_duration)
+            ._core_append(datarows, retry_limit, timeout)
             .await
             .map_err(|e| {
                 let message = format!(
@@ -490,12 +496,7 @@ impl AppendableLog {
                     }
                 }
             }
-            // simple nonrandom jitter is enough
-            let jittered = if retry % 2 == 0 {
-                wait + Duration::from_millis(2 * retry)
-            } else {
-                wait + Duration::from_millis(3 * retry)
-            };
+            let jittered = wait + jitter_duration();
             tokio::time::sleep(jittered).await;
             total_time += jittered;
             retry += 1;
@@ -511,21 +512,26 @@ impl AppendableLog {
     async fn _core_append(
         &mut self,
         datarows: Vec<Datarow>,
-        retry_duration: u64,
+        retry_limit: Option<Duration>,
+        timeout: Option<Duration>,
     ) -> Result<(), HttpResponse> {
         if datarows.is_empty() {
             return Ok(());
         }
-        let existing_sheets = if retry_duration == 0 {
-            self.fetch_sheets().await?
-        } else {
+
+        let existing_sheets = if let Some(retry_limit) = retry_limit {
             // We do not retry sheet `crud` as it goes after
             // `fetch_sheets` which is retriable and should
             // either fix an error or fail.
             // Retrying `crud` is not idempotent and
             // would require cloning all sheets at every retry attempt
-            self.timed_fetch_sheets(Duration::from_secs(retry_duration), Duration::from_secs(5))
-                .await?
+            self.timed_fetch_sheets(
+                retry_limit,
+                timeout.expect("assert: timeout is set if retry_limit is set"),
+            )
+            .await?
+        } else {
+            self.fetch_sheets().await?
         };
 
         tracing::debug!("existing sheets:\n{:?}", existing_sheets);
@@ -685,6 +691,14 @@ fn convert_datetime_to_spreadsheet_double(d: NaiveDateTime) -> f64 {
     days + fraction_of_day
 }
 
+fn jitter_duration() -> Duration {
+    let mut buf = [0u8; 2];
+    getrandom::getrandom(&mut buf).expect("assert: can get random from the OS");
+    let jitter = u16::from_be_bytes(buf);
+    let jitter = jitter >> 2; // to limit values to 2^14 = 16384
+    Duration::from_millis(jitter as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -703,6 +717,14 @@ mod tests {
             jitter < 2_u8.pow(5),
             "sheet_name_jitter should produce values less than 2^5"
         )
+    }
+
+    #[test]
+    fn jittered_duration() {
+        let upper_bound = Duration::from_millis(2u64.pow(14) + 1);
+        for _ in 0..100 {
+            assert!(jitter_duration() < upper_bound);
+        }
     }
 
     #[test]
@@ -1085,7 +1107,7 @@ mod tests {
             TestState::new(
                 vec![mock_ordinary_google_sheet("some sheet")],
                 None,
-                Some(5500), // 5.5 second as timeout is set to 5
+                Some(150),
             ),
         );
         let storage = Arc::new(Storage::new(
@@ -1133,7 +1155,13 @@ mod tests {
                 "notification is sent for nonrecoverable error"
             );
         });
-        log.append(datarows).await.unwrap();
+        log._append(
+            datarows,
+            Some(Duration::from_millis(200)),
+            Some(Duration::from_millis(100)),
+        )
+        .await
+        .unwrap();
         handle.await.unwrap();
     }
 
@@ -1147,7 +1175,7 @@ mod tests {
             TestState::new(
                 vec![mock_ordinary_google_sheet("some sheet")],
                 Some(TestState::bad_response("error to retry".to_string())),
-                Some(2000), // 2 seconds
+                Some(150),
             ),
         );
         let storage = Arc::new(Storage::new(
@@ -1195,7 +1223,13 @@ mod tests {
                 "notification is sent for nonrecoverable error"
             );
         });
-        log._append(datarows, 1).await.unwrap();
+        log._append(
+            datarows,
+            Some(Duration::from_millis(100)),
+            Some(Duration::from_millis(200)),
+        )
+        .await
+        .unwrap();
         handle.await.unwrap();
     }
 
