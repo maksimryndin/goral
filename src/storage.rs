@@ -691,7 +691,7 @@ fn convert_datetime_to_spreadsheet_double(d: NaiveDateTime) -> f64 {
     days + fraction_of_day
 }
 
-fn jitter_duration() -> Duration {
+pub(crate) fn jitter_duration() -> Duration {
     let mut buf = [0u8; 2];
     getrandom::getrandom(&mut buf).expect("assert: can get random from the OS");
     let jitter = u16::from_be_bytes(buf);
@@ -709,6 +709,12 @@ mod tests {
     use crate::Sender;
     use google_sheets4::Error;
     use tokio::sync::mpsc;
+
+    impl Storage {
+        pub(crate) fn google(&self) -> &SpreadsheetAPI {
+            &self.google
+        }
+    }
 
     #[test]
     fn jitter() {

@@ -144,11 +144,6 @@ impl Sheet {
     pub(crate) fn row_count(&self) -> Option<i32> {
         self.row_count
     }
-
-    #[cfg(test)]
-    pub(crate) fn title(&self) -> &str {
-        &self.title
-    }
 }
 
 impl PartialEq for Sheet {
@@ -479,6 +474,12 @@ impl Rows {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    impl Sheet {
+        pub(crate) fn title(&self) -> &str {
+            &self.title
+        }
+    }
 
     pub(crate) fn mock_ordinary_google_sheet(title: &str) -> GoogleSheet {
         GoogleSheet {
