@@ -47,3 +47,41 @@ pub fn get_messenger(host: &str) -> Result<BoxedMessenger> {
         ))
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    pub(crate) struct TestMessenger {
+        counter: Arc<AtomicUsize>,
+    }
+
+    impl TestMessenger {
+        pub(crate) fn new(counter: Arc<AtomicUsize>) -> Self {
+            Self { counter }
+        }
+        async fn send_message(&self, _: &MessengerConfig, _: &str) -> Result<()> {
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Messenger for TestMessenger {
+        async fn send_info(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
+            self.send_message(config, markdown).await
+        }
+
+        async fn send_warning(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
+            self.send_message(config, markdown).await
+        }
+
+        async fn send_error(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
+            self.send_message(config, markdown).await
+        }
+    }
+}

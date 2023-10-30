@@ -111,3 +111,84 @@ impl Service for GeneralService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::tests::build_config;
+    use crate::messenger::tests::TestMessenger;
+    use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
+    use crate::spreadsheet::tests::TestState;
+    use crate::storage::Storage;
+    use crate::tests::{TEST_HOST_ID, TEST_PROJECT_ID};
+    use crate::{create_log, Sender, Shared};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use tokio::sync::{broadcast, mpsc};
+
+    #[tokio::test]
+    async fn general_service_flow() {
+        const NUMBER_OF_MESSAGES: usize = 10;
+
+        let (send_notification, notifications_receiver) = mpsc::channel(NUMBER_OF_MESSAGES);
+        let send_notification = Sender::new(send_notification);
+        let sheets_api = SpreadsheetAPI::new(
+            send_notification.clone(),
+            TestState::new(vec![], None, None),
+        );
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            TEST_PROJECT_ID.to_string(),
+            sheets_api,
+            send_notification.clone(),
+        ));
+        let log = create_log(
+            storage.clone(),
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+        );
+
+        let (shutdown, rx) = broadcast::channel(1);
+
+        let config = r#"
+        service_account_credentials_path = "/path/to/service_account.json"
+        messenger.url = "https://discord.com/api/webhooks/123/456"
+        "#;
+
+        let config: General =
+            build_config(config).expect("should be able to build minimum configuration");
+
+        let shared = Shared::new(send_notification);
+        let notifications_counter = Arc::new(AtomicUsize::new(0));
+        let messenger =
+            Arc::new(Box::new(TestMessenger::new(notifications_counter.clone())) as BoxedMessenger);
+        let cloned_messenger = messenger.clone();
+        let shared_clone = shared.clone();
+        let service = tokio::spawn(async move {
+            let mut service = GeneralService::new(
+                shared_clone.clone_with_messenger(Some(cloned_messenger)),
+                config,
+                notifications_receiver,
+            );
+            service.run(log, rx).await;
+        });
+
+        for _ in 0..NUMBER_OF_MESSAGES {
+            shared
+                .send_notification
+                .try_info(format!("some notification"));
+        }
+
+        shutdown
+            .send(1)
+            .expect("test assert: test service should run when shutdown signal is sent");
+
+        service.await.unwrap();
+        assert_eq!(
+            notifications_counter.load(Ordering::SeqCst),
+            NUMBER_OF_MESSAGES
+        );
+    }
+}

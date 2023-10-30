@@ -90,7 +90,7 @@ async fn start() -> Result<(), String> {
     let graceful_shutdown_timeout = config.general.graceful_timeout_secs;
     let (project_id, auth) =
         get_google_auth(&config.general.service_account_credentials_path).await;
-    let (tx, rx) = mpsc::channel(5); // TODO estimate capacity via services quantity + some reserve
+    let (tx, rx) = mpsc::channel(5 * 10); // 5 services (except General) can generate 10 simultaneous messages
     let tx = Sender::new(tx);
     let sheets_api = SpreadsheetAPI::new(auth, tx.clone());
     let storage = Arc::new(Storage::new(
