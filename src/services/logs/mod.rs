@@ -7,6 +7,10 @@ use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::Utc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc::error::TrySendError;
@@ -192,7 +196,11 @@ impl Service for LogsService {
         }
     }
 
-    async fn spawn_tasks(&mut self, sender: mpsc::Sender<TaskResult>) -> Vec<JoinHandle<()>> {
+    async fn spawn_tasks(
+        &mut self,
+        shutdown: Arc<AtomicBool>,
+        sender: mpsc::Sender<TaskResult>,
+    ) -> Vec<JoinHandle<()>> {
         let sender = sender.clone();
         let send_notification = self.shared.send_notification.clone();
         let filter_if_contains = self.filter_if_contains.clone();

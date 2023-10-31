@@ -6,19 +6,24 @@ use crate::messenger::configuration::MessengerConfig;
 use serde_derive::Deserialize;
 use serde_valid::Validate;
 use std::fmt::{self, Display};
+use std::net::SocketAddr;
 use std::str::FromStr;
-
 use url::Url;
 
 fn liveness_rule(
-    endpoint: &Option<Url>,
-    command: &Option<String>,
+    endpoint: &Option<String>,
+    command: &Option<Vec<String>>,
     typ: &LivenessType,
 ) -> Result<(), serde_valid::validation::Error> {
     match (endpoint, command, typ) {
-        (Some(url), None, LivenessType::Http | LivenessType::Tcp | LivenessType::Grpc) => {
-            host_validation(url)?;
-            port_validation(url)?;
+        (Some(url), None, LivenessType::Http | LivenessType::Grpc) => {
+            let url = Url::from_str(url).map_err(|e| serde_valid::validation::Error::Custom(format!("cannot parse a url from {url}: {e}")))?;
+            host_validation(&url)?;
+            port_validation(&url)?;
+            Ok(())
+        },
+        (Some(addr), None, LivenessType::Tcp) => {
+            SocketAddr::from_str(addr.as_str()).map_err(|e| serde_valid::validation::Error::Custom(format!("cannot parse a socket address from {addr}: {e}")))?;
             Ok(())
         },
         (None, Some(_), LivenessType::Command) => Ok(()),
@@ -133,6 +138,8 @@ impl Display for LivenessType {
 #[rule(timeout_period_rule(period_secs, timeout_ms))]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Liveness {
+    #[validate(min_length = 1)]
+    pub(crate) name: Option<String>,
     #[serde(default)]
     pub(crate) initial_delay_secs: u16,
     #[validate(minimum = 1)]
@@ -141,8 +148,9 @@ pub(crate) struct Liveness {
     #[validate(minimum = 1)]
     #[serde(default = "liveness_timeout_ms")]
     pub(crate) timeout_ms: u32,
-    pub(crate) endpoint: Option<Url>,
-    pub(crate) command: Option<String>,
+    pub(crate) endpoint: Option<String>,
+    #[validate(min_items = 1)]
+    pub(crate) command: Option<Vec<String>>,
     #[serde(rename(deserialize = "type"))]
     #[serde(deserialize_with = "case_insensitive_enum")]
     pub(crate) typ: LivenessType,
@@ -167,8 +175,6 @@ pub(crate) struct Healthcheck {
 mod tests {
     use super::*;
     use crate::configuration::tests::build_config;
-    use std::str::FromStr;
-    use url::Url;
 
     #[test]
     fn minimal_confg() {
@@ -179,7 +185,7 @@ mod tests {
         endpoint = "http://127.0.0.1:9898"
         [[liveness]]
         type = "Command"
-        command = "ls -lha /"
+        command = ["ls", "-lha"]
         "#;
 
         let config: Healthcheck =
@@ -188,11 +194,14 @@ mod tests {
         assert_eq!(config.liveness[0].typ, LivenessType::Http);
         assert_eq!(
             config.liveness[0].endpoint,
-            Some(Url::from_str("http://127.0.0.1:9898").unwrap())
+            Some("http://127.0.0.1:9898".to_string())
         );
         assert_eq!(config.liveness[0].command, None);
         assert_eq!(config.liveness[1].typ, LivenessType::Command);
-        assert_eq!(config.liveness[1].command, Some("ls -lha /".to_string()));
+        assert_eq!(
+            config.liveness[1].command,
+            Some(vec!["ls".to_string(), "-lha".to_string()])
+        );
         assert_eq!(config.liveness[1].endpoint, None);
         // Defaults
         assert_eq!(config.push_interval_secs, 30);
@@ -246,7 +255,7 @@ mod tests {
         timeout_ms = 0
         [[liveness]]
         type = "Command"
-        command = "ls -lha /"
+        command = ["ls", "-lha"]
         "#;
 
         let _: Healthcheck = build_config(config).unwrap();
@@ -309,7 +318,7 @@ mod tests {
         period_secs = 0
         [[liveness]]
         type = "Command"
-        command = "ls -lha /"
+        command = ["ls", "-lha"]
         "#;
 
         let _: Healthcheck = build_config(config).unwrap();
@@ -324,10 +333,10 @@ mod tests {
         spreadsheet_id = "123"
         [[liveness]]
         type = "Http"
-        command = "ls -lha /"
+        command = ["ls", "-lha"]
         [[liveness]]
         type = "Command"
-        command = "ls -lha /"
+        command = ["ls", "-lha"]
         "#;
 
         let _: Healthcheck = build_config(config).unwrap();
@@ -362,13 +371,64 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "doesn't match messenger implementation")]
-    fn wrong_messenger_confg_wrong_host() {
+    fn wrong_messenger_config_wrong_host() {
         let config = r#"
         messenger.url = "https://api.telegram.org/bot123/sendMessage"
         spreadsheet_id = "123"
         [[liveness]]
         type = "Http"
         endpoint = "http://127.0.0.1:9898"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "The length of the items must be `>= 1`")]
+    fn command_cannot_be_empty() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        type = "Command"
+        command = []
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "The length of the value must be `>= 1`")]
+    fn liveness_name_cannot_be_empty_if_specified() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        name = ""
+        type = "Command"
+        command = ["ls"]
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    fn tcp_socket_probe_ipv4() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        type = "Tcp"
+        endpoint = "127.0.0.1:9898"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    fn tcp_socket_probe_ipv6() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        type = "Tcp"
+        endpoint = "[::1]:9898"
         "#;
 
         let _: Healthcheck = build_config(config).unwrap();

@@ -7,6 +7,10 @@ use crate::storage::AppendableLog;
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 use tokio::sync::mpsc::{self};
 use tokio::task::{self, JoinHandle};
@@ -192,7 +196,11 @@ impl Service for SystemService {
         }
     }
 
-    async fn spawn_tasks(&mut self, sender: mpsc::Sender<TaskResult>) -> Vec<JoinHandle<()>> {
+    async fn spawn_tasks(
+        &mut self,
+        shutdown: Arc<AtomicBool>,
+        sender: mpsc::Sender<TaskResult>,
+    ) -> Vec<JoinHandle<()>> {
         let sender = sender.clone();
         let send_notification = self.shared.send_notification.clone();
         let mounts = self.mounts.clone();

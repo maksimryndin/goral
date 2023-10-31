@@ -39,7 +39,7 @@ const fn size_pattern(size: u64) -> &'static str {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Datavalue {
     Text(String),
     Number(f64),
@@ -713,6 +713,12 @@ mod tests {
     impl Storage {
         pub(crate) fn google(&self) -> &SpreadsheetAPI {
             &self.google
+        }
+    }
+
+    impl Datarow {
+        pub(crate) fn keys_values(&self) -> HashMap<String, Datavalue> {
+            self.data.clone().into_iter().collect()
         }
     }
 

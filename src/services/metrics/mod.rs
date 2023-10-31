@@ -10,11 +10,14 @@ use chrono::{DateTime, Utc};
 
 use hyper::Uri;
 use prometheus_parse::{Sample, Scrape, Value};
-use std::cmp::Ordering;
+use std::cmp::Ordering as Cmp;
 use std::collections::HashMap;
 use std::result::Result as StdResult;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
-
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::{self, JoinHandle};
 
@@ -73,14 +76,14 @@ impl MetricsService {
     fn sort_samples(samples: &mut Vec<Sample>) {
         samples.sort_unstable_by(|a, b| {
             if a.metric.ends_with("_count") && b.metric.ends_with("_sum") {
-                return Ordering::Less;
+                return Cmp::Less;
             }
             if matches!(a.value, Value::Histogram(_) | Value::Summary(_))
                 && (b.metric.ends_with("_sum") || b.metric.ends_with("_count"))
             {
-                return Ordering::Less;
+                return Cmp::Less;
             }
-            Ordering::Equal
+            Cmp::Equal
         });
     }
 
@@ -334,7 +337,11 @@ impl Service for MetricsService {
         }
     }
 
-    async fn spawn_tasks(&mut self, sender: mpsc::Sender<TaskResult>) -> Vec<JoinHandle<()>> {
+    async fn spawn_tasks(
+        &mut self,
+        shutdown: Arc<AtomicBool>,
+        sender: mpsc::Sender<TaskResult>,
+    ) -> Vec<JoinHandle<()>> {
         self.endpoints
             .iter()
             .enumerate()
