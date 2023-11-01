@@ -32,6 +32,8 @@ serde_json = "^1.0"
 serde_valid = { version = "0.16.3", features = ["toml"] }
 sysinfo = { version = "0.29.10", default_features = false }
 tokio = { version = "^1.0", features = ["sync", "signal", "io-std", "process", "net"] }
+tonic = { version = "^0.10", features = ["transport", "prost", "tls", "tls-roots"]}
+tonic-health = "0.10.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "json"] }
 url = { version = "2", features = ["serde"] }
@@ -42,3 +44,5 @@ psutil = { version = "3.2.2", default-features = false, features = ["disk"]}
 [dev-dependencies]
 lazy_static = "1.4.0"
 prometheus = "0.13"
+prost = "0.12"
+tonic-build = "0.10.2"

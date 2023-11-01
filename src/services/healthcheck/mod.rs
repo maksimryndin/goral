@@ -2,6 +2,7 @@ pub(crate) mod configuration;
 
 use crate::messenger::configuration::MessengerConfig;
 
+use crate::configuration::APP_NAME;
 use crate::services::healthcheck::configuration::{
     scrape_push_rule, Healthcheck, Liveness as LivenessConfig, LivenessType,
 };
@@ -26,6 +27,10 @@ use tokio::net::TcpSocket;
 use tokio::process::Command;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinHandle;
+use tonic::transport::Endpoint;
+use tonic_health::pb::{
+    health_check_response::ServingStatus, health_client::HealthClient, HealthCheckRequest,
+};
 use tracing::Level;
 
 pub const HEALTHCHECK_SERVICE_NAME: &str = "health";
@@ -35,7 +40,7 @@ const MAX_BYTES_LIVENESS_OUTPUT: usize = 1024;
 enum Probe {
     Http(Uri),
     Tcp(SocketAddr),
-    Grpc(Uri),
+    Grpc(Endpoint),
     Command(Vec<String>),
 }
 
@@ -64,7 +69,8 @@ impl Display for Liveness {
             return write!(f, "{name}");
         }
         match &self.probe {
-            Probe::Http(url) | Probe::Grpc(url) => write!(f, "{url}"),
+            Probe::Http(url) => write!(f, "{url}"),
+            Probe::Grpc(endpoint) => write!(f, "{}", endpoint.uri()),
             Probe::Tcp(sock) => write!(f, "{sock}"),
             Probe::Command(c) => write!(f, "{}", c.join(" ")),
         }
@@ -73,15 +79,17 @@ impl Display for Liveness {
 
 impl From<LivenessConfig> for Liveness {
     fn from(mut c: LivenessConfig) -> Self {
-        let endpoint = c.endpoint.take().map(|u| {
-            let s: String = u.into();
-            Uri::from_maybe_shared(s.into_bytes())
-                .expect("assert: endpoint url is validated in configuration")
-        });
+        let timeout = Duration::from_millis(c.timeout_ms.into());
+        let endpoint = c.endpoint.take();
         let probe = match c.typ {
-            LivenessType::Http => {
-                Probe::Http(endpoint.expect("assert: endpoint is set for http probe"))
-            }
+            LivenessType::Http => Probe::Http(
+                endpoint
+                    .map(|s| {
+                        Uri::from_maybe_shared(s.into_bytes())
+                            .expect("assert: endpoint url is validated in configuration")
+                    })
+                    .expect("assert: endpoint is set for http probe"),
+            ),
             LivenessType::Tcp => Probe::Tcp(
                 SocketAddr::from_str(
                     &endpoint
@@ -90,9 +98,18 @@ impl From<LivenessConfig> for Liveness {
                 )
                 .expect("assert: tcp address is validated at configuration"),
             ),
-            LivenessType::Grpc => {
-                Probe::Grpc(endpoint.expect("assert: endpoint is set for grpc probe"))
-            }
+            LivenessType::Grpc => Probe::Grpc(
+                endpoint
+                    .map(|s| {
+                        Endpoint::from_shared(s)
+                            .expect("assert: grpc endpoint is validated at configuration")
+                            .connect_timeout(timeout)
+                            .timeout(timeout)
+                            .user_agent(APP_NAME)
+                            .expect("assert: can set user agent")
+                    })
+                    .expect("assert: endpoint is set for grpc probe"),
+            ),
             LivenessType::Command => {
                 Probe::Command(c.command.expect("assert: command is set for command probe"))
             }
@@ -102,7 +119,7 @@ impl From<LivenessConfig> for Liveness {
             name: c.name,
             initial_delay: Duration::from_secs(c.initial_delay_secs.into()),
             period: Duration::from_secs(c.period_secs.into()),
-            timeout: Duration::from_millis(c.timeout_ms.into()),
+            timeout,
             probe,
         }
     }
@@ -189,9 +206,21 @@ impl HealthcheckService {
                     })
                     .map_err(|e| e.to_string())
             }
-            Probe::Grpc(url) => {
-                println!("probe is unsupported atm");
-                Err(format!("probe is unsupported atm"))
+            Probe::Grpc(endpoint) => {
+                let conn = endpoint.connect().await.map_err(|e| e.to_string())?;
+                let mut client = HealthClient::new(conn);
+                match client
+                    .check(HealthCheckRequest {
+                        service: "".to_string(),
+                    })
+                    .await
+                {
+                    Ok(response) => match response.into_inner().status() {
+                        ServingStatus::Serving => Ok("".to_string()),
+                        s => Err(s.as_str_name().to_string()),
+                    },
+                    Err(status) => Err(status.to_string()),
+                }
             }
         }
     }
@@ -692,5 +721,65 @@ mod tests {
         server.await.unwrap();
     }
 
-    // Test for gRPC
+    use tonic::{transport::Server, Request, Response, Status};
+    // test.rs is generated from the proto file
+    // syntax = "proto3";
+
+    // package test;
+
+    // service Test {
+    // rpc call(Input) returns (Output);
+    // }
+
+    // message Input {}
+    // message Output {}
+    mod pb {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/services/healthcheck/test.rs"
+        ));
+    }
+
+    #[derive(Default)]
+    pub struct GrpcService {}
+
+    #[tonic::async_trait]
+    impl pb::test_server::Test for GrpcService {
+        async fn call(&self, request: Request<pb::Input>) -> Result<Response<pb::Output>, Status> {
+            let reply = pb::Output {};
+            Ok(Response::new(reply))
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_probe() {
+        tokio::spawn(async {
+            let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+
+            health_reporter
+                .set_serving::<pb::test_server::TestServer<GrpcService>>()
+                .await;
+            let addr = "[::1]:53258".parse().unwrap();
+            let service = GrpcService::default();
+
+            println!("HealthServer + TestServer listening on {}", addr);
+
+            Server::builder()
+                .add_service(health_service)
+                .add_service(pb::test_server::TestServer::new(service))
+                .serve(addr)
+                .await
+                .expect("test assert: able to run grpc service");
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let liveness = Liveness {
+            name: None,
+            initial_delay: Duration::from_millis(0),
+            period: Duration::from_secs(1),
+            timeout: Duration::from_millis(50),
+            probe: Probe::Grpc(Endpoint::from_static("http://[::1]:53258")),
+        };
+        HealthcheckService::is_alive(&liveness).await.unwrap();
+    }
 }
