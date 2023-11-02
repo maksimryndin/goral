@@ -5,11 +5,15 @@ pub(crate) mod logs;
 pub(crate) mod metrics;
 pub(crate) mod system;
 
+use crate::configuration::APP_NAME;
 use crate::storage::{AppendableLog, Datarow};
 use crate::HttpsClient;
 use async_trait::async_trait;
 use futures::future::try_join_all;
-use hyper::{body::HttpBody as _, Client, StatusCode, Uri};
+use hyper::{
+    body::{Body, HttpBody as _},
+    header, Client, Request, StatusCode, Uri,
+};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -181,7 +185,12 @@ impl HttpClient {
     pub(crate) async fn get(&self) -> Result<String, String> {
         let mut res = self
             .client
-            .get(self.url.clone())
+            .request(
+                Request::get(self.url.clone())
+                    .header(header::USER_AGENT, APP_NAME)
+                    .body(Body::empty())
+                    .expect("assert: should be able to construct an http get request"),
+            )
             .await
             .map_err(|e| e.to_string())?;
         let mut size = 0;
@@ -380,6 +389,13 @@ mod tests {
     pub(crate) const UNHEALTHY_REPLY: &str = "Test service is unhealthy";
 
     pub(crate) async fn router(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+        assert_eq!(
+            req.headers()
+                .get(header::USER_AGENT)
+                .map(|h| h.to_str().expect("test assert: header value is ascii")),
+            Some(APP_NAME),
+            "request from Goral should contain User-Agent header with the Goral name"
+        );
         match (req.method(), req.uri().path()) {
             (&Method::GET, "/health") => Ok(Response::new(Body::from(HEALTHY_REPLY))),
             (&Method::GET, "/unhealthy") => Ok(Response::builder()
