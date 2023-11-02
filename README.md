@@ -145,6 +145,13 @@ command = ["ls", "-lha"]
 type = "Tcp"
 endpoint = "[::1]:9898"
 # timeout_ms = 1000 # should be less than or equal period_secs
+[[healthcheck.liveness]]
+# name = "http://[::1]:50050" # by default the tcp socket addr itself is used as a name
+# initial_delay_secs = 0
+# period_secs = 3
+type = "Grpc"
+endpoint = "http://[::1]:50050"
+# timeout_ms = 1000 # should be less than or equal period_secs
 ```
 
 will create a sheet for every liveness probe (in this example - for "http://127.0.0.1:9898" and "ls -lha /").
@@ -153,7 +160,7 @@ Liveness probes follow the same rules as for [k8s](https://kubernetes.io/docs/ta
 * you should choose among HTTP GET (any status `>=200` and `<400`), gRPC, TCP (Goral can open socket) and command (successful exit)
 * you can specify initial delay, period of probe and timeout on probe
 * misconfiguration of a liveness probe is considered a failure
-* for gRPC Health service should be configured on the app side (see also [gRPC health checking protocol](https://github.com/grpc/grpc/blob/v1.59.1/doc/health-checking.md))
+* for gRPC Health service should be configured on the app side (see also [gRPC health checking protocol](https://github.com/grpc/grpc/blob/v1.59.1/doc/health-checking.md)). Only `http` scheme is supported at the moment. If you need a tls check, you can use a command probe with a [grpc health probe](https://github.com/grpc-ecosystem/grpc-health-probe) and specify proper certificates.
 
 Goral saves probe time, status (true for alive) and text output (for HTTP GET - response text, for command - stdout output, for all probes - error text). Each probe is saved at a separate sheet with its own uptime chart.
 In case an output is larger than 1024 bytes, it is truncated and you get permanent warnings in logs of Goral. So configure the output size of your healthcheck reasonably (healthcheck responses shouldn't be heavy).

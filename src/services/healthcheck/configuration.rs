@@ -23,8 +23,8 @@ fn liveness_rule(
             Ok(())
         },
         (Some(addr), None, LivenessType::Grpc) => {
-            if !(addr.starts_with("http://") || addr.starts_with("https://")) {
-                return Err(serde_valid::validation::Error::Custom(format!("Address {addr} for gRPC probe should start with scheme (`http://` or `https://`)")));
+            if !addr.starts_with("http://") {
+                return Err(serde_valid::validation::Error::Custom(format!("Address {addr} for gRPC probe should start with a scheme (only `http://` is supported)")));
             }
             tonic::transport::Endpoint::from_shared(addr.clone().into_bytes()).map_err(|e| serde_valid::validation::Error::Custom(format!("cannot parse a grpc endpoint from {addr}: {e}")))?;
             Ok(())
@@ -442,13 +442,38 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "for gRPC probe should start with scheme")]
+    #[should_panic(expected = "for gRPC probe should start with a scheme")]
     fn grpc_probe_requires_scheme() {
         let config = r#"
         spreadsheet_id = "123"
         [[liveness]]
         type = "Grpc"
         endpoint = "[::1]:50051"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "only `http://` is supported")]
+    fn grpc_probe_https_scheme() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        type = "Grpc"
+        endpoint = "https://[::1]:50051"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    fn grpc_probe() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        type = "Grpc"
+        endpoint = "http://[::1]:50051"
         "#;
 
         let _: Healthcheck = build_config(config).unwrap();
