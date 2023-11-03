@@ -11,6 +11,7 @@ use std::collections::HashMap;
 pub(crate) struct Metadata(HashMap<String, String>);
 pub(crate) type HttpResponse = Response<Body>;
 pub(crate) const DEFAULT_FONT: &str = "Verdana";
+pub(crate) const DEFAULT_FONT_TEXT: &str = "Courier New";
 
 impl Metadata {
     pub(crate) fn new(pairs: Vec<(&'static str, String)>) -> Self {

@@ -7,7 +7,7 @@ use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL;
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
-use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::sync::{
@@ -168,7 +168,15 @@ impl LogsService {
         };
 
         let level = Self::guess_log_level(text)
-            .map(|l| Datavalue::Text(l.to_lowercase()))
+            .map(|l| {
+                let level = l.to_lowercase();
+                match level.as_str() {
+                    "panic" | "fatal" | "critical" | "error" => Datavalue::RedText(level),
+                    "warn" | "alert" => Datavalue::OrangeText(level),
+                    "info" | "notice" => Datavalue::GreenText(level),
+                    _ => Datavalue::Text(level),
+                }
+            })
             .unwrap_or(Datavalue::NotAvailable);
         let datetime = Self::guess_datetime(text);
         let text = text
@@ -188,7 +196,32 @@ impl LogsService {
         })
     }
 
+    fn process_lines(
+        is_shutdown: Arc<AtomicBool>,
+        sender: mpsc::Sender<TaskResult>,
+        mut request_rx: mpsc::Receiver<String>,
+        filter_if_contains: Vec<String>,
+        drop_if_contains: Vec<String>,
+    ) {
+        tracing::info!("started logs processing thread");
+
+        while let Some(line) = request_rx.blocking_recv() {
+            let data = Self::process_line(line, &filter_if_contains, &drop_if_contains);
+            if let Err(_) = sender.blocking_send(TaskResult {
+                id: 0,
+                result: Ok(data),
+            }) {
+                if is_shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+                panic!("assert: log messages queue shouldn't be closed before shutdown signal");
+            }
+        }
+        tracing::info!("exiting logs processing thread");
+    }
+
     async fn logs_collector(
+        is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
         send_notification: Sender,
         filter_if_contains: Vec<String>,
@@ -197,6 +230,18 @@ impl LogsService {
         tracing::info!("starting stdin logs scraping");
         let stdin = BufReader::new(io::stdin()).lines();
         tokio::pin!(stdin);
+        let (tx, rx) = mpsc::channel(sender.capacity());
+        let cloned_sender = sender.clone();
+        let cloned_is_shutdown = is_shutdown.clone();
+        std::thread::spawn(move || {
+            Self::process_lines(
+                cloned_is_shutdown,
+                cloned_sender,
+                rx,
+                filter_if_contains,
+                drop_if_contains,
+            )
+        });
 
         loop {
             tokio::select! {
@@ -205,32 +250,38 @@ impl LogsService {
                     return;
                 },
                 res = stdin.next_line() => {
-                    let result = match res {
+                    match res {
                         Err(e) => {
-                            Err(Data::Message(format!("error reading next log line from stdin `{e}`")))
+                            let msg = format!("error reading next log line from stdin `{e}`");
+                            tracing::error!("{}", msg);
+                            send_notification.try_error(msg);
                         },
                         Ok(Some(line)) => {
-                            Ok(Self::process_line(line, &filter_if_contains, &drop_if_contains))
+                            match tx.try_send(line) {
+                                Err(TrySendError::Full(res)) => {
+                                    let msg = "log messages queue is full so decrease push interval and filter logs by substrings in `filter_if_contains`".to_string();
+                                    tracing::error!("{}. Cannot send log result `{:?}`", msg, res);
+                                    send_notification.try_error(msg);
+                                },
+                                Err(TrySendError::Closed(res)) => {
+                                    if is_shutdown.load(Ordering::Relaxed) {
+                                        tracing::info!("finished stdin logs scraping");
+                                        return;
+                                    }
+                                    let msg = "log messages queue has been unexpectedly closed".to_string();
+                                    tracing::error!("{}: cannot send log result {:?}", msg, res);
+                                    send_notification.fatal(msg).await;
+                                    panic!("assert: log messages queue shouldn't be closed before shutdown signal");
+                                },
+                                _ => {},
+                            }
                         },
                         Ok(None) => {
                             tracing::warn!("finished collecting logs from stdin - no more lines");
                             break;
                         }
                     };
-                    match sender.try_send(TaskResult{id: 0, result}) {
-                        Err(TrySendError::Full(res)) => {
-                            let msg = "log messages queue is full so decrease push interval and filter logs by substrings in `filter_if_contains`".to_string();
-                            tracing::error!("{}. Cannot send log result `{:?}`", msg, res);
-                            send_notification.try_error(msg);
-                        },
-                        Err(TrySendError::Closed(res)) => {
-                            let msg = "log messages queue has been unexpectedly closed".to_string();
-                            tracing::error!("{}: cannot send log result {:?}", msg, res);
-                            send_notification.fatal(msg).await;
-                            panic!("assert: log messages queue shouldn't be closed before shutdown signal");
-                        },
-                        _ => {},
-                    }
+
                 }
             }
         }
@@ -307,15 +358,17 @@ impl Service for LogsService {
 
     async fn spawn_tasks(
         &mut self,
-        shutdown: Arc<AtomicBool>,
+        is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
     ) -> Vec<JoinHandle<()>> {
         let sender = sender.clone();
+        let is_shutdown = is_shutdown.clone();
         let send_notification = self.shared.send_notification.clone();
         let filter_if_contains = self.filter_if_contains.clone();
         let drop_if_contains = self.drop_if_contains.clone();
         vec![tokio::spawn(async move {
             Self::logs_collector(
+                is_shutdown,
                 sender,
                 send_notification,
                 filter_if_contains,
@@ -329,6 +382,7 @@ impl Service for LogsService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
 
     #[test]
     fn filtering() {

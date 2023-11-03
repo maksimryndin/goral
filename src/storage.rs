@@ -1,10 +1,12 @@
 use crate::spreadsheet::sheet::{
     str_to_id, Header, Rows, Sheet, SheetId, TabColorRGB, UpdateSheet, VirtualSheet,
 };
-use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI, DEFAULT_FONT};
+use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI, DEFAULT_FONT, DEFAULT_FONT_TEXT};
 use crate::{get_service_tab_color, Sender, APP_NAME, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use google_sheets4::api::{CellData, CellFormat, ExtendedValue, NumberFormat, RowData, TextFormat};
+use google_sheets4::api::{
+    CellData, CellFormat, Color, ColorStyle, ExtendedValue, NumberFormat, RowData, TextFormat,
+};
 
 use std::collections::HashMap;
 use std::mem;
@@ -42,6 +44,9 @@ const fn size_pattern(size: u64) -> &'static str {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Datavalue {
     Text(String),
+    RedText(String),
+    OrangeText(String),
+    GreenText(String),
     Number(f64),
     Integer(u64),
     IntegerID(u64),
@@ -157,7 +162,76 @@ impl Into<RowData> for Datarow {
                         },
                         CellFormat {
                             text_format: Some(TextFormat {
-                                font_family: Some("Courier New".to_string()),
+                                font_family: Some(DEFAULT_FONT_TEXT.to_string()),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::RedText(t) => (
+                        ExtendedValue {
+                            string_value: Some(t),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            text_format: Some(TextFormat {
+                                bold: Some(true),
+                                font_family: Some(DEFAULT_FONT_TEXT.to_string()),
+                                foreground_color_style: Some(ColorStyle {
+                                    rgb_color: Some(Color {
+                                        alpha: Some(0.0),
+                                        red: Some(1.0),
+                                        green: Some(0.0),
+                                        blue: Some(0.0),
+                                    }),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::OrangeText(t) => (
+                        ExtendedValue {
+                            string_value: Some(t),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            text_format: Some(TextFormat {
+                                bold: Some(true),
+                                font_family: Some(DEFAULT_FONT_TEXT.to_string()),
+                                foreground_color_style: Some(ColorStyle {
+                                    rgb_color: Some(Color {
+                                        alpha: Some(0.0),
+                                        red: Some(1.0),
+                                        green: Some(0.502),
+                                        blue: Some(0.502),
+                                    }),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                    ),
+                    Datavalue::GreenText(t) => (
+                        ExtendedValue {
+                            string_value: Some(t),
+                            ..Default::default()
+                        },
+                        CellFormat {
+                            text_format: Some(TextFormat {
+                                bold: Some(true),
+                                font_family: Some(DEFAULT_FONT_TEXT.to_string()),
+                                foreground_color_style: Some(ColorStyle {
+                                    rgb_color: Some(Color {
+                                        alpha: Some(0.0),
+                                        red: Some(0.0),
+                                        green: Some(0.5),
+                                        blue: Some(0.0),
+                                    }),
+                                    ..Default::default()
+                                }),
                                 ..Default::default()
                             }),
                             ..Default::default()
