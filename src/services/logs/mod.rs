@@ -3,10 +3,13 @@ use crate::messenger::configuration::MessengerConfig;
 
 use crate::services::logs::configuration::{channel_capacity, Logs};
 use crate::services::{Data, Service, TaskResult};
+use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL;
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use lazy_static::lazy_static;
+use regex::Regex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -25,6 +28,7 @@ pub(crate) struct LogsService {
     push_interval: Duration,
     channel_capacity: usize,
     filter_if_contains: Vec<String>,
+    drop_if_contains: Vec<String>,
     messenger_config: Option<MessengerConfig>,
 }
 
@@ -36,45 +40,149 @@ impl LogsService {
             spreadsheet_id: config.spreadsheet_id,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
             filter_if_contains: config.filter_if_contains.unwrap_or(vec![]),
+            drop_if_contains: config.drop_if_contains.unwrap_or(vec![]),
             channel_capacity,
             messenger_config: config.messenger,
         }
     }
 
-    // TODO test for filter
-    fn filter<'a>(text: &'a str, filter_if_contains: &Vec<String>) -> Option<&'a str> {
-        if filter_if_contains.is_empty() {
-            return Some(text);
-        }
-        for substring in filter_if_contains {
-            if text.contains(substring) {
-                return Some(text);
+    fn filter<'a>(
+        text: &'a str,
+        filter_if_contains: &Vec<String>,
+        drop_if_contains: &Vec<String>,
+    ) -> Option<&'a str> {
+        match (filter_if_contains.is_empty(), drop_if_contains.is_empty()) {
+            (false, _) => {
+                for substring in filter_if_contains {
+                    if text.contains(substring) {
+                        return Some(text);
+                    }
+                }
+                tracing::debug!(
+                    "log line {} is dropped because it doesn't contain any of {:?}",
+                    text,
+                    filter_if_contains
+                );
+                None
             }
+            (true, false) => {
+                for substring in drop_if_contains {
+                    if text.contains(substring) {
+                        tracing::debug!(
+                            "log line {} is dropped because it contains {:?}",
+                            text,
+                            substring
+                        );
+                        return None;
+                    }
+                }
+                Some(text)
+            }
+            (true, true) => Some(text),
         }
-        tracing::debug!(
-            "log line {} is dropped because it doesn't contain any of {:?}",
-            text,
-            filter_if_contains
-        );
-        None
     }
 
-    fn process_line(line: String, filter_if_contains: &Vec<String>) -> Data {
+    fn guess_log_level(line: &str) -> Option<&str> {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(
+                r#"(?xi)
+                (?P<level>(
+                    panic|panicked|fatal|critical|error|warn|alert|info|notice|debug|trace|err|crit
+                ))[^\w]
+                "#
+            )
+            .expect("assert: log level regex is properly constructed");
+        }
+        RE.captures(line).and_then(|cap| {
+            cap.name("level").map(|level| {
+                let level = level.as_str();
+                match level {
+                    "panicked" => "panic",
+                    "err" => "error",
+                    "crit" => "critical",
+                    _ => level,
+                }
+            })
+        })
+    }
+
+    fn capture_datetime(line: &str) -> Option<NaiveDateTime> {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(
+                r"(?x)
+                (?P<datetime>
+                    \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s\+\d{2}:\d{2}|
+                    \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}|
+                    \d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}|
+                    \d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\s\+\d{2}:\d{2}|
+                    \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z|
+                    \d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}:\d{2}\.\d+|
+                    \d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}:\d{2}
+                )"
+            )
+            .expect("assert: datetime regex is properly constructed");
+        }
+        RE.captures(line).and_then(|cap| {
+            cap.name("datetime").and_then(|datetime| {
+                let captured = datetime.as_str();
+                captured
+                    .parse::<DateTime<Utc>>()
+                    .ok()
+                    .map(|d| d.naive_utc())
+                    .or_else(|| {
+                        NaiveDateTime::parse_from_str(captured, "%Y-%m-%dT%H:%M:%S%.f").ok()
+                    })
+                    .or_else(|| {
+                        NaiveDateTime::parse_from_str(captured, "%Y/%m/%d %H:%M:%S%.f").ok()
+                    })
+                    .or_else(|| {
+                        NaiveDateTime::parse_from_str(captured, "%Y-%m-%d %H:%M:%S%.f").ok()
+                    })
+                    .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y/%m/%d %H:%M:%S").ok())
+                    .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y-%m-%d %H:%M:%S").ok())
+            })
+        })
+    }
+
+    fn guess_datetime(line: &str) -> NaiveDateTime {
+        let now = Utc::now().naive_utc();
+        Self::capture_datetime(line)
+            .filter(|parsed| parsed.signed_duration_since(now).abs() < ChronoDuration::seconds(60))
+            .unwrap_or(now)
+    }
+
+    fn process_line(
+        line: String,
+        filter_if_contains: &Vec<String>,
+        drop_if_contains: &Vec<String>,
+    ) -> Data {
         let text = line.trim();
         if text.is_empty() {
             return Data::Empty;
         }
-        let text = if let Some(text) = Self::filter(text, filter_if_contains) {
+
+        let text = if let Some(text) = Self::filter(text, filter_if_contains, drop_if_contains) {
             text
         } else {
             return Data::Empty;
         };
 
+        let level = Self::guess_log_level(text)
+            .map(|l| Datavalue::Text(l.to_lowercase()))
+            .unwrap_or(Datavalue::NotAvailable);
+        let datetime = Self::guess_datetime(text);
+        let text = text
+            .chars()
+            .take(GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL)
+            .collect();
         Data::Single({
             Datarow::new(
                 LOGS_SERVICE_NAME.to_string(),
-                Utc::now().naive_utc(),
-                vec![(format!("log_line"), Datavalue::Text(text.to_string()))],
+                datetime,
+                vec![
+                    ("level".to_string(), level),
+                    ("log_line".to_string(), Datavalue::Text(text)),
+                ],
                 None,
             )
         })
@@ -84,6 +192,7 @@ impl LogsService {
         sender: mpsc::Sender<TaskResult>,
         send_notification: Sender,
         filter_if_contains: Vec<String>,
+        drop_if_contains: Vec<String>,
     ) {
         tracing::info!("starting stdin logs scraping");
         let stdin = BufReader::new(io::stdin()).lines();
@@ -101,7 +210,7 @@ impl LogsService {
                             Err(Data::Message(format!("error reading next log line from stdin `{e}`")))
                         },
                         Ok(Some(line)) => {
-                            Ok(Self::process_line(line, &filter_if_contains))
+                            Ok(Self::process_line(line, &filter_if_contains, &drop_if_contains))
                         },
                         Ok(None) => {
                             tracing::warn!("finished collecting logs from stdin - no more lines");
@@ -204,8 +313,152 @@ impl Service for LogsService {
         let sender = sender.clone();
         let send_notification = self.shared.send_notification.clone();
         let filter_if_contains = self.filter_if_contains.clone();
+        let drop_if_contains = self.drop_if_contains.clone();
         vec![tokio::spawn(async move {
-            Self::logs_collector(sender, send_notification, filter_if_contains).await;
+            Self::logs_collector(
+                sender,
+                send_notification,
+                filter_if_contains,
+                drop_if_contains,
+            )
+            .await;
         })]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filtering() {
+        assert_eq!(
+            LogsService::filter("pine-apple", &vec!["apple".to_string()], &vec![]),
+            Some("pine-apple")
+        );
+        assert_eq!(
+            LogsService::filter("pine-apple", &vec![], &vec!["apple".to_string()]),
+            None
+        );
+        assert_eq!(
+            LogsService::filter("pine-apple", &vec![], &vec![]),
+            Some("pine-apple")
+        );
+    }
+
+    #[test]
+    fn log_date_time() {
+        assert_eq!(
+            LogsService::capture_datetime("INFO:2023/02/17 14:30:15 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 02, 17)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(14, 30, 15)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            LogsService::capture_datetime("INFO:2023-02-17 14:30:15 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 02, 17)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(14, 30, 15)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            LogsService::capture_datetime(
+                r#"[2m2023-11-02 12:29:51.552906[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            LogsService::capture_datetime(
+                r#"[2m2023/11/02 12:29:51.552906[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            LogsService::capture_datetime(
+                r#"[2m2023-11-02T12:29:51.552906Z[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            LogsService::capture_datetime(
+                "INFO:2014-11-28 21:00:09 +09:00 This is an info message."
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2014, 11, 28)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(12, 00, 09)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            LogsService::capture_datetime(
+                "INFO:2014-11-28T21:00:09+09:00 This is an info message."
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2014, 11, 28)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(12, 00, 09)
+                    .expect("test assert: static datetime")
+            )
+        );
+    }
+
+    #[test]
+    fn log_level() {
+        assert_eq!(
+            LogsService::guess_log_level("INFO:2023/02/17 14:30:15 This is an info message."),
+            Some("INFO")
+        );
+        assert_eq!(
+            LogsService::guess_log_level("ERROR:the.module.name:The log message"),
+            Some("ERROR")
+        );
+        assert_eq!(LogsService::guess_log_level("thread 'services::logs::tests::log_level' panicked at src/services/logs/mod.rs:260:9:"), Some("panic"));
+        assert_eq!(
+            LogsService::guess_log_level("INFO:2023/02/17 14:30:15 err channel is closed."),
+            Some("INFO")
+        );
+        assert_eq!(
+            LogsService::guess_log_level("[2m2023-11-02T12:11:49.767270Z[0m [32m INFO[0m [2mgoral::storage[0m[2m:[0m appending to log 9 rows for service system"),
+            Some("INFO")
+        );
+        assert_eq!(
+            LogsService::guess_log_level(
+                r#"\33[2m2023-11-02T12:25:20.879794Z\33[0m \33[32m INFO\33[0m \33[2mgoral::storage\33[0m\33[2m:\33[0m appended to log 10 rows for service health\n"#
+            ),
+            Some("INFO")
+        );
+        assert_eq!(
+            LogsService::guess_log_level(
+                r#"[2m2023-11-02T12:29:51.552906Z[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some("INFO")
+        );
+        assert_eq!(
+            LogsService::guess_log_level(
+                r#"{"timestamp":"2023-11-02T17:13:21.321597Z","level":"INFO","fields":{"message":"appending to log 9 rows for service system"},"target":"goral::storage"}"#
+            ),
+            Some("INFO")
+        );
     }
 }

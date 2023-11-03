@@ -307,7 +307,7 @@ impl HealthcheckService {
         } else {
             (Level::ERROR,
             format!(
-                "Liveness probe for `{:?}` failed with output at [spreadsheet]({}), sheet may be created a bit later",
+                "Liveness probe for `{:?}` failed with an output at the [spreadsheet]({}), the sheet may be created a bit later",
                 liveness, log.sheet_url(datarow.sheet_id(log.host_id(), self.name()))))
         };
         if let Some(messenger) = self.shared.messenger.as_ref() {
@@ -745,7 +745,7 @@ mod tests {
 
     #[tonic::async_trait]
     impl pb::test_server::Test for GrpcService {
-        async fn call(&self, request: Request<pb::Input>) -> Result<Response<pb::Output>, Status> {
+        async fn call(&self, _request: Request<pb::Input>) -> Result<Response<pb::Output>, Status> {
             let reply = pb::Output {};
             Ok(Response::new(reply))
         }

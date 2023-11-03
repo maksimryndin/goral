@@ -14,11 +14,24 @@ pub(super) fn channel_capacity(push_interval_secs: &u16) -> usize {
     number_of_queued_rows as usize
 }
 
+fn if_contains(
+    filter_if_contains: &Option<Vec<String>>,
+    drop_if_contains: &Option<Vec<String>>,
+) -> Result<(), serde_valid::validation::Error> {
+    match (filter_if_contains, drop_if_contains) {
+        (Some(filter), Some(dropping)) if !filter.is_empty() && !dropping.is_empty() => {
+            Err(serde_valid::validation::Error::Custom("either `filter_if_contains` or `drop_if_contains` should be specified but not both".to_string()))
+        },
+        _ => Ok(())
+    }
+}
+
 fn logs_push_interval_secs() -> u16 {
     5
 }
 
 #[derive(Debug, Deserialize, Validate)]
+#[rule(if_contains(filter_if_contains, drop_if_contains))]
 #[serde(deny_unknown_fields)]
 #[allow(unused)]
 pub(crate) struct Logs {
@@ -32,7 +45,7 @@ pub(crate) struct Logs {
     #[validate(min_items = 1)]
     pub(crate) filter_if_contains: Option<Vec<String>>,
     #[validate(min_items = 1)]
-    pub(crate) drop_if_contains: Option<Vec<String>>, // TODO impelement, add to README
+    pub(crate) drop_if_contains: Option<Vec<String>>,
 }
 
 #[cfg(test)]
@@ -67,6 +80,17 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "drop_if_contains")]
+    fn drop_if_contains_cannot_be_empty() {
+        let config = r#"
+        spreadsheet_id = "123"
+        drop_if_contains = []
+        "#;
+
+        let _: Logs = build_config(config).unwrap();
+    }
+
+    #[test]
     #[should_panic(expected = "push_interval_secs")]
     fn push_interval_cannot_be_less_than_minimum() {
         let config = r#"
@@ -94,6 +118,20 @@ mod tests {
         let config = r#"
         messenger.url = "https://api.telegram.org/bot123/sendMessage"
         spreadsheet_id = "123"
+        "#;
+
+        let _: Logs = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "either `filter_if_contains` or `drop_if_contains` should be specified but not both"
+    )]
+    fn filter_and_drop_cannot_coexist() {
+        let config = r#"
+        spreadsheet_id = "123"
+        filter_if_contains = ["pine"]
+        drop_if_contains = ["apple", "pine"]
         "#;
 
         let _: Logs = build_config(config).unwrap();

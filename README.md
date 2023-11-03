@@ -204,7 +204,9 @@ spreadsheet_id = "<spreadsheet_id>"
 #[[logs.rules]]
 ```
 
-will create a single sheet with logs.
+will create a single sheet with columns `datetime`, `level`, `log_line`.
+A log line is truncated to 50 000 chars as it is a Google Sheets limit.
+Goral tries to extract log level and datetime from a log line. If it fails to extract a log level then `N/A` is displayed. If it fails to extract datetime, then the current system time is used.
 
 For logs collecting Goral reads its stdin. Basically it is a portable way to collect stdout of another process without a privileged access.
 There is a caveat - if we make a simple pipe like `instrumented_app | goral` then in case of a termination of the `instrumented_app` Goral will not see any input and will stop reading.
@@ -219,6 +221,7 @@ Just be sure to autorecreate a fake writer in case of a host system restarts.
 See also [Deployment](#recommended-deployment) section for an example.
 
 As there may be a huge amount of logs, it is recommended to filter the volume by specifiying an array of substrings (_case sensitive_) in `filter_if_contains` (e.g. `["info", "warn", "error"]`) and/or have a separate spreadsheet for log collection as a huge amount of them may hurdle the use of Google sheets due to the constant updates.
+
 
 ### System
 

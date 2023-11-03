@@ -21,6 +21,7 @@ use crate::spreadsheet::spreadsheet::tests::TestState;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en
 const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
+pub(crate) const GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL: usize = 50_000;
 
 async fn handle_error<T>(
     spreadsheet: &SpreadsheetAPI,
@@ -230,7 +231,7 @@ impl SpreadsheetAPI {
 
         let result = self.update(req, spreadsheet_id).await;
 
-        tracing::info!("{:?}", result);
+        tracing::debug!("{:?}", result);
         handle_error(self, result).await
     }
 
