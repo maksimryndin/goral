@@ -48,14 +48,20 @@ To use Goral you need to have a Google account and obtain a service account:
 5) Create a spreadsheet (where the scraped data will be stored) and add the service account email as an Editor to the spreadsheet
 6) Extract spreadsheet id from the spreadsheet url
 
+Note: you can also install Google Sheets app for your phone to have an access to the data.
+
 And notifications are sent to messengers:
 
 ### Telegram
+
+<details>
+  <summary>Bot creation</summary>
 
 1) Create a bot - see https://core.telegram.org/bots/features#creating-a-new-bot
 2) Create a private group for notifications to be sent to
 3) Add your bot to the group
 4) Obtain a `chat_id` following the accepted answer https://stackoverflow.com/questions/33858927/how-to-obtain-the-chat-id-of-a-private-telegram-channel
+</details>
 
 Example configuration:
 
@@ -68,7 +74,11 @@ messenger.url = "https://api.telegram.org/bot<bot token>/sendMessage"
 
 ### Slack
 
+<details>
+  <summary>App creation</summary>
+
 Follow guides https://api.slack.com/start/quickstart and https://api.slack.com/tutorials/tracks/posting-messages-with-curl
+</details>
 
 Example configuration:
 
@@ -82,9 +92,13 @@ messenger.url = "https://slack.com/api/chat.postMessage"
 
 ### Discord
 
+<details>
+  <summary>Webhook creation</summary>
+
 1) Create a text channel
 2) In the settings of the channel (cogwheel) go to the Integrations -> Webhooks
 3) Either use the default one or create a new webhook
+</details>
 
 Example configuration:
 
@@ -105,12 +119,26 @@ Every service has a messenger configuration (see [Setup](#setup)). It is recomme
 
 General service is responsible for reserved communication channel and important notifications about Goral itself. Its configuration
 
+<details open>
+  <summary>Basic configuration</summary>
+
+```toml
+[general]
+service_account_credentials_path = "/path/to/service_account.json"
+messenger.url = "<messenger api url for sending messages>"
+```
+</details>
+
+<details>
+  <summary>Full configuration</summary>
+
 ```toml
 [general]
 # log_level = "info"
 service_account_credentials_path = "/path/to/service_account.json"
 messenger.url = "<messenger api url for sending messages>"
 ```
+</details>
 
 Configuration of General service is a minimum configuration for Goral.
 
@@ -118,12 +146,26 @@ Configuration of General service is a minimum configuration for Goral.
 
 Healthcheck service with a configuration
 
+<details open>
+  <summary>Basic configuration</summary>
+
+```toml
+[healthcheck]
+spreadsheet_id = "<spreadsheet_id>"
+[[healthcheck.liveness]]
+type = "Http"
+endpoint = "http://127.0.0.1:9898"
+```
+</details>
+
+<details>
+  <summary>Full configuration</summary>
+
 ```toml
 [healthcheck]
 spreadsheet_id = "<spreadsheet_id>"
 # messenger.url = "<messenger api url for sending messages>"
 # push_interval_secs = 30
-#[[healthcheck.rules]]
 [[healthcheck.liveness]]
 # name = "http://127.0.0.1:9898" # by default the endpoint itself is used as a name
 # initial_delay_secs = 0
@@ -153,8 +195,9 @@ type = "Grpc"
 endpoint = "http://[::1]:50050"
 # timeout_ms = 1000 # should be less than or equal period_secs
 ```
+</details>
 
-will create a sheet for every liveness probe (in this example - for "http://127.0.0.1:9898" and "ls -lha /").
+will create a sheet for every liveness probe.
 
 Liveness probes follow the same rules as for [k8s](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/). Namely:
 * you should choose among HTTP GET (any status `>=200` and `<400`), gRPC, TCP (Goral can open socket) and command (successful exit)
@@ -172,6 +215,19 @@ If a messenger is configured, then any healthcheck change (healthy -> unhealthy 
 
 Metrics scrape endpoints with Prometheus metrics. Maximum response body is set to 16384 bytes.
 
+<details open>
+  <summary>Basic configuration</summary>
+
+```toml
+[metrics]
+spreadsheet_id = "<spreadsheet_id>"
+endpoints = ["<prometheus metrics endpoint1>", "<prometheus metrics endpoint2>"]
+```
+</details>
+
+<details>
+  <summary>Full configuration</summary>
+
 ```toml
 [metrics]
 spreadsheet_id = "<spreadsheet_id>"
@@ -180,8 +236,8 @@ spreadsheet_id = "<spreadsheet_id>"
 # scrape_interval_secs = 10
 # scrape_timeout_ms = 3000
 endpoints = ["<prometheus metrics endpoint1>", "<prometheus metrics endpoint2>"]
-#[[metrics.rules]]
 ```
+</details>
 
 For every endpoint and every metric Metrics service creates a separate sheet. When several endpoints are scraped, their sheet names start with `<port>:` to distinguish several instances of the same app.
 
@@ -195,14 +251,27 @@ If a messenger is configured, then any scraping error is sent via the messenger 
 
 Logs service with the following configuration:
 
+<details open>
+  <summary>Basic configuration</summary>
+
+```toml
+[logs]
+spreadsheet_id = "<spreadsheet_id>"
+```
+</details>
+
+<details>
+  <summary>Full configuration</summary>
+
 ```toml
 [logs]
 spreadsheet_id = "<spreadsheet_id>"
 # messenger.url = "<messenger api url for sending messages>"
 # push_interval_secs = 5
 # filter_if_contains = []
-#[[logs.rules]]
+# drop_if_contains = []
 ```
+</details>
 
 will create a single sheet with columns `datetime`, `level`, `log_line`.
 A log line is truncated to 50 000 chars as it is a Google Sheets limit.
@@ -220,12 +289,24 @@ With this named pipes approach the `instrumented_app` restarts doesn't stop Gora
 Just be sure to autorecreate a fake writer in case of a host system restarts.
 See also [Deployment](#recommended-deployment) section for an example.
 
-As there may be a huge amount of logs, it is recommended to filter the volume by specifiying an array of substrings (_case sensitive_) in `filter_if_contains` (e.g. `["info", "warn", "error"]`) and/or have a separate spreadsheet for log collection as a huge amount of them may hurdle the use of Google sheets due to the constant updates.
+As there may be a huge amount of logs, it is recommended to filter the volume by specifiying an array of substrings (_case sensitive_) in `filter_if_contains` (e.g. `["info", "warn", "error"]`) and `drop_if_contains`, and/or have a separate spreadsheet for log collection as a huge amount of them may hurdle the use of Google sheets due to the constant updates.
 
 
 ### System
 
 System service configuration:
+
+<details open>
+  <summary>Basic configuration</summary>
+
+```toml
+[system]
+spreadsheet_id = "<spreadsheet_id>"
+```
+</details>
+
+<details>
+  <summary>Full configuration</summary>
 
 ```toml
 [system]
@@ -236,8 +317,8 @@ spreadsheet_id = "<spreadsheet_id>"
 # messenger.url = "<messenger api url for sending messages>"
 # mounts = ["/"]
 # names = ["goral"]
-#[[system.rules]]
 ```
+</details>
 
 With this configuration System service will create following sheets:
 * `basic`: with general information about the system (boot time, memory, cpus, swap, number of processes)
@@ -260,15 +341,26 @@ If there is an error while collecting system info, it is sent via a configured m
 Goral allows you to append key-value data to Google spreadsheet. Let's take an example. You provide SAAS for wholesalers and have several services, let's say "Orders" and "Marketing Campaigns". 
 Your client asks you for a billing data for each of the services in a spreadsheet format at the end of the month. You turn on KV Goral service with the following configuration:
 
+<details open>
+  <summary>Basic configuration</summary>
+
 ```toml
 [kv]
 spreadsheet_id = "<spreadsheet_id>"
 port = <"port from the range 49152-65535">
-# messenger.bot_token = "<bot token>"
-# messenger.chat_id = "<chat id>"
-# messenger.url = "<messenger api url for sending messages>"
-#[[kv.rules]]
 ```
+</details>
+
+<details>
+  <summary>Full configuration</summary>
+  
+```toml
+[kv]
+spreadsheet_id = "<spreadsheet_id>"
+port = <"port from the range 49152-65535">
+# messenger.url = "<messenger api url for sending messages>"
+```
+</details>
 
 Such a configuration runs a server process in the Goral daemon listening at the specified port (localhost only for security reasons). From your app you periodically make a batch POST request to `localhost:<port>/api/kv` with a json body:
 ```json
