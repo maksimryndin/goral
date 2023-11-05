@@ -387,6 +387,44 @@ mod tests {
 
     pub(crate) const HEALTHY_REPLY: &str = "Test service is healthy";
     pub(crate) const UNHEALTHY_REPLY: &str = "Test service is unhealthy";
+    const METRICS_REPLY: &str = r#"""
+    # HELP example_http_request_duration_seconds The HTTP request latencies in seconds.
+    # TYPE example_http_request_duration_seconds histogram
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="0.005"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="0.01"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="0.025"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="0.05"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="0.1"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="0.25"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="0.5"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="1"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="2.5"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="5"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="10"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="0",le="+Inf"} 18
+    example_http_request_duration_seconds_sum{handler="all",parity="0"} 0.005173251
+    example_http_request_duration_seconds_count{handler="all",parity="0"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="0.005"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="0.01"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="0.025"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="0.05"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="0.1"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="0.25"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="0.5"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="1"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="2.5"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="5"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="10"} 18
+    example_http_request_duration_seconds_bucket{handler="all",parity="1",le="+Inf"} 18
+    example_http_request_duration_seconds_sum{handler="all",parity="1"} 0.004740836999999999
+    example_http_request_duration_seconds_count{handler="all",parity="1"} 18
+    # HELP example_http_requests_total Number of HTTP requests made.
+    # TYPE example_http_requests_total counter
+    example_http_requests_total{handler="all"} 37
+    # HELP example_http_response_size_bytes The HTTP response sizes in bytes.
+    # TYPE example_http_response_size_bytes gauge
+    example_http_response_size_bytes{handler="all"} 2779
+    """#;
 
     pub(crate) async fn router(req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
         assert_eq!(
@@ -402,6 +440,12 @@ mod tests {
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(UNHEALTHY_REPLY.into())
                 .expect("test assert: should be able to construct response for static body")),
+            (&Method::GET, "/metrics") => Ok(Response::new(Body::from(METRICS_REPLY))),
+            (&Method::GET, "/timeout") => {
+                let timeout = Duration::from_secs(1);
+                tokio::time::sleep(timeout).await;
+                Ok(Response::new(Body::from(format!("timeout {timeout:?}"))))
+            }
             _ => {
                 let mut not_found = Response::default();
                 *not_found.status_mut() = StatusCode::NOT_FOUND;

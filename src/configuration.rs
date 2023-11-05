@@ -5,12 +5,12 @@ use crate::services::logs::configuration::Logs;
 use crate::services::metrics::configuration::Metrics;
 use crate::services::system::configuration::System;
 use config::{Config, ConfigError, Environment, File};
+use lazy_static::lazy_static;
+use regex::Regex;
 use serde::de::{self, Deserialize, Deserializer};
 use serde_derive::Deserialize;
 use serde_valid::Validate;
-
 use std::str::FromStr;
-
 use url::Url;
 
 pub const APP_NAME: &str = "GORAL";
@@ -62,6 +62,28 @@ pub(crate) fn port_validation(url: &Url) -> Result<(), serde_valid::validation::
             "port for url {} should be specified",
             url
         )))
+}
+
+pub(crate) fn log_name(name: &str) -> Result<(), serde_valid::validation::Error> {
+    const REGEX: &str = r"^[^@]+$";
+    lazy_static! {
+        static ref RE: Regex =
+            Regex::new(REGEX).expect("assert: log name regex is properly constructed");
+    }
+    if !RE.is_match(name) {
+        return Err(serde_valid::validation::Error::Custom(format!(
+            "name should match a regex `{REGEX}`"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn log_name_opt(name: &Option<String>) -> Result<(), serde_valid::validation::Error> {
+    if let Some(name) = name {
+        log_name(name)
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn case_insensitive_enum<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -172,5 +194,12 @@ pub(crate) mod tests {
         assert_eq!(ceiled_division(7, 5), 2);
         assert_eq!(ceiled_division(10, 5), 2);
         assert_eq!(ceiled_division(11, 5), 3);
+    }
+
+    #[test]
+    fn log_name_validation() {
+        assert!(log_name("john@mail.org").is_err());
+        assert!(log_name("john_mail.org").is_ok());
+        assert!(log_name("http://john_mail.org/path").is_ok());
     }
 }

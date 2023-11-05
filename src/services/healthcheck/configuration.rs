@@ -1,5 +1,6 @@
 use crate::configuration::{
-    case_insensitive_enum, ceiled_division, host_validation, port_validation, push_interval_secs,
+    case_insensitive_enum, ceiled_division, host_validation, log_name_opt, port_validation,
+    push_interval_secs,
 };
 use crate::messenger::configuration::MessengerConfig;
 
@@ -145,6 +146,7 @@ impl Display for LivenessType {
 #[rule(timeout_period_rule(period_secs, timeout_ms))]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Liveness {
+    #[validate(custom(log_name_opt))]
     #[validate(min_length = 1)]
     pub(crate) name: Option<String>,
     #[serde(default)]
@@ -474,6 +476,20 @@ mod tests {
         [[liveness]]
         type = "Grpc"
         endpoint = "http://[::1]:50051"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "name should match a regex")]
+    fn invalid_name() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[liveness]]
+        type = "Grpc"
+        endpoint = "http://[::1]:50051"
+        name = "john@mail.org"
         "#;
 
         let _: Healthcheck = build_config(config).unwrap();

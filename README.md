@@ -207,7 +207,7 @@ Liveness probes follow the same rules as for [k8s](https://kubernetes.io/docs/ta
 
 Goral saves probe time, status (true for alive) and text output (for HTTP GET - response text, for command - stdout output, for all probes - error text). Each probe is saved at a separate sheet with its own uptime chart.
 In case an output is larger than 1024 bytes, it is truncated and you get permanent warnings in logs of Goral. So configure the output size of your healthcheck reasonably (healthcheck responses shouldn't be heavy).
-For command healthchecks it is recommended to wrap you command in some script or give it an alias so that in case of small changes in command arguments use the same sheet for data (otherwise Goral will create a new sheet).
+For command healthchecks it is recommended to assign a name to liveness probe or wrap your command in some script so that in case of small changes in command arguments preserve the same sheet for data (otherwise Goral will create a new sheet since the title has changed).
 
 If a messenger is configured, then any healthcheck change (healthy -> unhealthy and vice versa) is sent via the messenger. In case of many endpoints with short liveness periods there is a risk to hit a messenger rate limit. 
 
@@ -221,7 +221,8 @@ Metrics scrape endpoints with Prometheus metrics. Maximum response body is set t
 ```toml
 [metrics]
 spreadsheet_id = "<spreadsheet_id>"
-endpoints = ["<prometheus metrics endpoint1>", "<prometheus metrics endpoint2>"]
+[[target]]
+endpoint = "<prometheus metrics endpoint1>"
 ```
 </details>
 
@@ -235,11 +236,16 @@ spreadsheet_id = "<spreadsheet_id>"
 # push_interval_secs = 30
 # scrape_interval_secs = 10
 # scrape_timeout_ms = 3000
-endpoints = ["<prometheus metrics endpoint1>", "<prometheus metrics endpoint2>"]
+[[target]]
+endpoint = "<prometheus metrics endpoint1>"
+name = "app1"
+[[target]]
+endpoint = "<prometheus metrics endpoint2>"
+name = "app2"
 ```
 </details>
 
-For every endpoint and every metric Metrics service creates a separate sheet. When several endpoints are scraped, their sheet names start with `<port>:` to distinguish several instances of the same app.
+For every scrape target and every metric Metrics service creates a separate sheet. When several targets are scraped, their sheet names start with `<name>:` to distinguish several instances of the same app.
 
 If there is an error while scraping, it is sent via a configured messenger or via a default messenger of General service.
 

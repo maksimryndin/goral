@@ -1,6 +1,6 @@
 use crate::configuration::{
-    ceiled_division, host_validation, port_validation, push_interval_secs, scrape_interval_secs,
-    scrape_timeout_interval_rule,
+    ceiled_division, host_validation, log_name_opt, port_validation, push_interval_secs,
+    scrape_interval_secs, scrape_timeout_interval_rule,
 };
 use crate::messenger::configuration::MessengerConfig;
 use serde_derive::Deserialize;
@@ -8,7 +8,7 @@ use serde_valid::Validate;
 use url::Url;
 
 pub(super) fn scrape_push_rule(
-    endpoints: &Vec<Url>,
+    endpoints: &Vec<Target>,
     push_interval_secs: &u16,
     scrape_interval_secs: &u16,
     scrape_timeout_ms: &u32,
@@ -53,14 +53,23 @@ pub(super) fn scrape_push_rule(
 }
 
 pub(crate) fn host_port_validation_for_http(
-    endpoints: &Vec<Url>,
+    url: &Url,
 ) -> Result<(), serde_valid::validation::Error> {
-    for e in endpoints {
-        host_validation(e)?;
-        port_validation(e)?;
-        if e.scheme() != "http" && e.scheme() != "https" {
+    host_validation(url)?;
+    port_validation(url)?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err(serde_valid::validation::Error::Custom(format!(
+            "Scheme for metrics endpoint {url} should be either http or https"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn target_names(target: &Vec<Target>) -> Result<(), serde_valid::validation::Error> {
+    for t in target {
+        if target.len() > 1 && t.name.is_none() {
             return Err(serde_valid::validation::Error::Custom(format!(
-                "Scheme for metrics endpoint {e} should be either http or https"
+                "Target should have a name if several targets are specified"
             )));
         }
     }
@@ -71,10 +80,20 @@ fn scrape_timeout_ms() -> u32 {
     3000
 }
 
+#[derive(Debug, Deserialize, PartialEq, Validate)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Target {
+    #[validate(custom(host_port_validation_for_http))]
+    pub(crate) endpoint: Url,
+    #[validate(custom(log_name_opt))]
+    #[validate(min_length = 1)]
+    pub(crate) name: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
 #[rule(scrape_timeout_interval_rule(scrape_interval_secs, scrape_timeout_ms))]
-#[rule(scrape_push_rule(endpoints, push_interval_secs, scrape_interval_secs, scrape_timeout_ms))]
+#[rule(scrape_push_rule(target, push_interval_secs, scrape_interval_secs, scrape_timeout_ms))]
 #[allow(unused)]
 pub(crate) struct Metrics {
     #[validate]
@@ -89,9 +108,10 @@ pub(crate) struct Metrics {
     #[validate(minimum = 1)]
     #[serde(default = "scrape_timeout_ms")]
     pub(crate) scrape_timeout_ms: u32,
+    #[validate]
+    #[validate(custom(target_names))]
     #[validate(min_items = 1)]
-    #[validate(custom(host_port_validation_for_http))]
-    pub(crate) endpoints: Vec<Url>,
+    pub(crate) target: Vec<Target>,
 }
 
 #[cfg(test)]
@@ -105,15 +125,19 @@ mod tests {
     fn minimal_confg() {
         let config = r#"
         spreadsheet_id = "123"
-        endpoints = ["http://127.0.0.1:9898/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
         "#;
 
         let config: Metrics =
             build_config(config).expect("should be able to build minimum configuration");
         assert_eq!(config.spreadsheet_id, "123");
         assert_eq!(
-            config.endpoints[0],
-            Url::from_str("http://127.0.0.1:9898/metrics").unwrap()
+            config.target[0],
+            Target {
+                endpoint: Url::from_str("http://127.0.0.1:9898/metrics").unwrap(),
+                name: None
+            }
         );
         // Defaults
         assert_eq!(config.push_interval_secs, 30);
@@ -121,7 +145,7 @@ mod tests {
         assert_eq!(config.scrape_timeout_ms, 3000);
         assert!(
             scrape_push_rule(
-                &config.endpoints,
+                &config.target,
                 &config.push_interval_secs,
                 &config.scrape_interval_secs,
                 &config.scrape_timeout_ms
@@ -132,11 +156,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "endpoints")]
+    #[should_panic(expected = "target")]
     fn endpoints_cannot_be_empty() {
         let config = r#"
         spreadsheet_id = "123"
-        endpoints = []
+        target = []
         "#;
 
         let _: Metrics = build_config(config).unwrap();
@@ -148,7 +172,8 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         scrape_timeout_ms = 0
-        endpoints = ["http://127.0.0.1:9898/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
         "#;
 
         let _: Metrics = build_config(config).unwrap();
@@ -161,7 +186,8 @@ mod tests {
         spreadsheet_id = "123"
         scrape_interval_secs = 10
         scrape_timeout_ms = 11000
-        endpoints = ["http://127.0.0.1:9898/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
         "#;
 
         let _: Metrics = build_config(config).unwrap();
@@ -174,7 +200,8 @@ mod tests {
         spreadsheet_id = "123"
         push_interval_secs = 5
         scrape_interval_secs = 10
-        endpoints = ["http://127.0.0.1:9898/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
         "#;
 
         let _: Metrics = build_config(config).unwrap();
@@ -187,7 +214,8 @@ mod tests {
         spreadsheet_id = "123"
         push_interval_secs = 31
         scrape_interval_secs = 10
-        endpoints = ["http://127.0.0.1:9898/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
         "#;
 
         let _: Metrics = build_config(config).unwrap();
@@ -199,7 +227,8 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         scrape_interval_secs = 0
-        endpoints = ["http://127.0.0.1:9898/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
         "#;
 
         let _: Metrics = build_config(config).unwrap();
@@ -210,7 +239,8 @@ mod tests {
     fn port_is_required() {
         let config = r#"
         spreadsheet_id = "123"
-        endpoints = ["http://127.0.0.1/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1/metrics"
         "#;
 
         let _: Metrics = build_config(config).unwrap();
@@ -222,7 +252,8 @@ mod tests {
         let config = r#"
         spreadsheet_id = "123"
         push_interval_secs = 9
-        endpoints = ["http://127.0.0.1/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
         "#;
 
         let _: Metrics = build_config(config).unwrap();
@@ -234,7 +265,48 @@ mod tests {
         let config = r#"
         messenger.url = "https://api.telegram.org/bot123/sendMessage"
         spreadsheet_id = "123"
-        endpoints = ["http://127.0.0.1/metrics"]
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Target should have a name if several targets are specified")]
+    fn several_targets_require_names() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
+        [[target]]
+        endpoint = "http://127.0.0.1:9899/metrics"
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "The length of the value must be `>= 1`")]
+    fn name_cannot_be_empty() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
+        name = ""
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "name should match a regex")]
+    fn invalid_name() {
+        let config = r#"
+        spreadsheet_id = "123"
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
+        name = "john@mail.org"
         "#;
 
         let _: Metrics = build_config(config).unwrap();

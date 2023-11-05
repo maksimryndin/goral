@@ -1,7 +1,7 @@
 pub(crate) mod configuration;
 
 use crate::messenger::configuration::MessengerConfig;
-use crate::services::metrics::configuration::{scrape_push_rule, Metrics};
+use crate::services::metrics::configuration::{scrape_push_rule, Metrics, Target};
 use crate::services::{Data, HttpClient, Service, TaskResult};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
@@ -24,11 +24,19 @@ use tokio::task::{self, JoinHandle};
 pub const METRICS_SERVICE_NAME: &str = "metrics";
 const MAX_BYTES_METRICS_OUTPUT: usize = 2_usize.pow(14); // ~16 KiB
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ScrapeTarget {
+    index: usize,
     url: Uri,
+    name: Option<String>,
     timeout: Duration,
     interval: Duration,
+}
+
+impl ScrapeTarget {
+    fn name(&self) -> Option<&String> {
+        self.name.as_ref()
+    }
 }
 
 pub(crate) struct MetricsService {
@@ -36,16 +44,14 @@ pub(crate) struct MetricsService {
     messenger_config: Option<MessengerConfig>,
     spreadsheet_id: String,
     push_interval: Duration,
-    scrape_interval: Duration,
-    scrape_timeout: Duration,
-    endpoints: Vec<Uri>,
+    targets: Vec<ScrapeTarget>,
     channel_capacity: usize,
 }
 
 impl MetricsService {
     pub(crate) fn new(shared: Shared, config: Metrics) -> MetricsService {
         let channel_capacity = scrape_push_rule(
-            &config.endpoints,
+            &config.target,
             &config.push_interval_secs,
             &config.scrape_interval_secs,
             &config.scrape_timeout_ms,
@@ -56,15 +62,21 @@ impl MetricsService {
             messenger_config: config.messenger,
             spreadsheet_id: config.spreadsheet_id,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
-            scrape_interval: Duration::from_secs(config.scrape_interval_secs.into()),
-            scrape_timeout: Duration::from_millis(config.scrape_timeout_ms.into()),
-            endpoints: config
-                .endpoints
+            targets: config
+                .target
                 .into_iter()
-                .map(|u| {
-                    let s: String = u.into();
-                    Uri::from_maybe_shared(s.into_bytes())
-                        .expect("assert: endpoint url is validated in configuration")
+                .enumerate()
+                .map(|(index, t)| {
+                    let s: String = t.endpoint.into();
+                    let url = Uri::from_maybe_shared(s.into_bytes())
+                        .expect("assert: endpoint url is validated in configuration");
+                    ScrapeTarget {
+                        url,
+                        index,
+                        name: t.name,
+                        timeout: Duration::from_millis(config.scrape_timeout_ms.into()),
+                        interval: Duration::from_secs(config.scrape_interval_secs.into()),
+                    }
                 })
                 .collect(),
             channel_capacity,
@@ -185,9 +197,9 @@ impl MetricsService {
                     .get(&metric_name)
                     .expect("assert: all metrics are in docs by their basenames");
                 let log_name = if let Some(prefix) = identifier.as_ref() {
-                    // Prmotheus metric name cannot contain `:` so we use it as a delimiter
+                    // Prmotheus metric name cannot contain `/` so we use it as a delimiter
                     // see https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-                    format!("{prefix}:{metric_name}")
+                    format!("{prefix}/{metric_name}")
                 } else {
                     metric_name
                 };
@@ -212,21 +224,16 @@ impl MetricsService {
     }
 
     async fn run_scrape(
+        is_shutdown: Arc<AtomicBool>,
         client: HttpClient,
-        index: usize,
         scrape_target: ScrapeTarget,
         sender: mpsc::Sender<TaskResult>,
         send_notification: Sender,
-        identifier: Option<String>,
     ) {
         let mut interval = tokio::time::interval(scrape_target.interval);
         tracing::info!("starting metrics scraping for {:?}", scrape_target.url);
         loop {
             tokio::select! {
-                _ = sender.closed() => {
-                    tracing::info!("finished scraping for {:?}", scrape_target.url);
-                    return;
-                },
                 _ = interval.tick() => {
                     tracing::trace!("metrics scrape for {:?}", scrape_target.url);
                     let scrape_time = Utc::now();
@@ -234,7 +241,7 @@ impl MetricsService {
                     let result = match scrape_result {
                         Ok(output) => {
                             tracing::info!("starting metrics parsing for {:?}", scrape_target.url);
-                            let identifier = identifier.clone();
+                            let identifier = scrape_target.name().cloned();
                             let join_result = task::spawn_blocking(move || {
                                 Self::parse_scrape_output(output, scrape_time, identifier)
                             }).await;
@@ -255,13 +262,16 @@ impl MetricsService {
                         },
                     };
 
-                    match sender.try_send(TaskResult{id: index, result}) {
+                    match sender.try_send(TaskResult{id: scrape_target.index, result}) {
                         Err(TrySendError::Full(res)) => {
                             let msg = "scrape messages queue is full so increase scrape interval and decrease push interval".to_string();
                             tracing::error!("{}. Cannot send scrape target `{:?}` result `{:?}`", msg, scrape_target, res);
                             send_notification.try_error(msg);
                         },
                         Err(TrySendError::Closed(res)) => {
+                            if is_shutdown.load(Ordering::Relaxed) {
+                                return;
+                            }
                             let msg = "scrape messages queue has been unexpectedly closed".to_string();
                             tracing::error!("{}: cannot send scrape target {:?} result {:?}", msg, scrape_target, res);
                             send_notification.fatal(msg).await;
@@ -330,7 +340,7 @@ impl Service for MetricsService {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
                 tracing::error!("{}", msg);
-                self.send_error(&self.endpoints[id], &msg).await;
+                self.send_error(&self.targets[id].url, &msg).await;
                 Data::Empty
             }
             _ => panic!("assert: metrics result contains either multiple datarows or error text"),
@@ -339,45 +349,174 @@ impl Service for MetricsService {
 
     async fn spawn_tasks(
         &mut self,
-        shutdown: Arc<AtomicBool>,
+        is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
     ) -> Vec<JoinHandle<()>> {
-        self.endpoints
+        self.targets
             .iter()
-            .enumerate()
-            .map(|(index, u)| {
-                let url = u.clone();
+            .map(|t| {
                 let sender = sender.clone();
-                let interval = self.scrape_interval.clone();
-                let identifier = if self.endpoints.len() > 1 {
-                    Some(
-                        url.port()
-                            .expect("assert: metric endpoint port is validated at configuration")
-                            .to_string(),
-                    )
-                } else {
-                    None
-                };
-                let scrape_target = ScrapeTarget {
-                    url: url.clone(),
-                    interval,
-                    timeout: self.scrape_timeout,
-                };
+                let scrape_target = t.clone();
+                let is_shutdown = is_shutdown.clone();
                 let client =
-                    HttpClient::new(MAX_BYTES_METRICS_OUTPUT, true, self.scrape_interval, url);
+                    HttpClient::new(MAX_BYTES_METRICS_OUTPUT, true, t.interval, t.url.clone());
                 let send_notification = self.shared.send_notification.clone();
                 tokio::spawn(async move {
                     Self::run_scrape(
+                        is_shutdown,
                         client,
-                        index,
                         scrape_target,
                         sender,
                         send_notification,
-                        identifier,
                     )
                     .await;
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::tests::run_server;
+
+    #[tokio::test]
+    async fn single_metrics_scrape() {
+        tokio::spawn(async {
+            run_server(53270).await;
+        });
+
+        const NUM_OF_SCRAPES: usize = 1;
+        let (send_notification, mut notifications_receiver) = mpsc::channel(1);
+        let send_notification = Sender::new(send_notification);
+        let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_SCRAPES);
+        let is_shutdown = Arc::new(AtomicBool::new(false));
+
+        let target = ScrapeTarget {
+            index: 0,
+            url: Uri::from_static("http://127.0.0.1:53270/metrics"),
+            name: Some("test_metrics".to_string()),
+            timeout: Duration::from_millis(50),
+            interval: Duration::from_secs(1),
+        };
+
+        let client = HttpClient::new(
+            MAX_BYTES_METRICS_OUTPUT,
+            true,
+            target.interval,
+            target.url.clone(),
+        );
+
+        let notifications = tokio::spawn(async move {
+            while let Some(notification) = notifications_receiver.recv().await {
+                println!("Notification received: {notification:?}");
+            }
+        });
+
+        let is_shutdown_clone = is_shutdown.clone();
+        let scrape_handle = tokio::spawn(async move {
+            MetricsService::run_scrape(
+                is_shutdown_clone,
+                client,
+                target,
+                data_sender,
+                send_notification,
+            )
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_secs(NUM_OF_SCRAPES as u64)).await;
+        is_shutdown.store(true, Ordering::Release);
+        data_receiver.close();
+
+        if let Some(TaskResult {
+            result: Ok(Data::Many(datarows)),
+            ..
+        }) = data_receiver.recv().await
+        {
+            assert_eq!(
+                datarows[0].keys_values().get("le=0.005"),
+                Some(&Datavalue::Number(18.0))
+            );
+            assert_eq!(
+                datarows[0]
+                    .keys_values()
+                    .get("example_http_request_duration_seconds_count"),
+                Some(&Datavalue::Number(18.0))
+            );
+            assert_eq!(
+                datarows[0].keys_values().get("handler"),
+                Some(&Datavalue::Text("all".to_string()))
+            );
+        } else {
+            panic!("test assert: at least one successfull scrape should be collected");
+        }
+
+        scrape_handle.await.unwrap(); // scrape should finish as the data channel is closed
+        notifications.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn metrics_scrape_timeout() {
+        tokio::spawn(async {
+            run_server(53271).await;
+        });
+
+        const NUM_OF_SCRAPES: usize = 1;
+        let (send_notification, mut notifications_receiver) = mpsc::channel(1);
+        let send_notification = Sender::new(send_notification);
+        let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_SCRAPES);
+        let is_shutdown = Arc::new(AtomicBool::new(false));
+
+        let target = ScrapeTarget {
+            index: 0,
+            url: Uri::from_static("http://127.0.0.1:53271/timeout"),
+            name: Some("test_metrics".to_string()),
+            timeout: Duration::from_millis(1),
+            interval: Duration::from_secs(1),
+        };
+
+        let client = HttpClient::new(
+            MAX_BYTES_METRICS_OUTPUT,
+            true,
+            target.interval,
+            target.url.clone(),
+        );
+
+        let notifications = tokio::spawn(async move {
+            while let Some(notification) = notifications_receiver.recv().await {
+                println!("Notification received: {notification:?}");
+            }
+        });
+
+        let is_shutdown_clone = is_shutdown.clone();
+        let scrape_handle = tokio::spawn(async move {
+            MetricsService::run_scrape(
+                is_shutdown_clone,
+                client,
+                target,
+                data_sender,
+                send_notification,
+            )
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_secs(NUM_OF_SCRAPES as u64)).await;
+        is_shutdown.store(true, Ordering::Release);
+        data_receiver.close();
+
+        if let Some(TaskResult {
+            result: Err(Data::Message(err)),
+            ..
+        }) = data_receiver.recv().await
+        {
+            assert!(err.starts_with("scrape timeout"), "{}", err);
+        } else {
+            panic!("test assert: at least one timeout should be happen");
+        }
+
+        scrape_handle.await.unwrap(); // scrape should finish as the data channel is closed
+        notifications.await.unwrap();
     }
 }
