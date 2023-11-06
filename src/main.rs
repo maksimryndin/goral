@@ -5,7 +5,7 @@ use futures::future::try_join_all;
 use goral::configuration::{Configuration, APP_NAME};
 use goral::spreadsheet::{get_google_auth, SpreadsheetAPI};
 use goral::storage::{create_log, Storage};
-use goral::{collect_messengers, collect_services, Sender, Shared};
+use goral::{collect_messengers, collect_services, welcome, Sender, Shared};
 use std::fmt::Debug;
 use std::panic;
 use std::process;
@@ -93,12 +93,7 @@ async fn start() -> Result<(), String> {
     let (tx, rx) = mpsc::channel(5 * 10); // 5 services (except General) can generate 10 simultaneous messages
     let tx = Sender::new(tx);
     let sheets_api = SpreadsheetAPI::new(auth, tx.clone());
-    let storage = Arc::new(Storage::new(
-        args.id.to_string(),
-        project_id,
-        sheets_api,
-        tx.clone(),
-    ));
+    let storage = Arc::new(Storage::new(args.id.to_string(), sheets_api, tx.clone()));
     let shared = Shared::new(tx.clone());
 
     let messengers = collect_messengers(&config);
@@ -121,7 +116,7 @@ async fn start() -> Result<(), String> {
 
     let goral = try_join_all(tasks);
     tokio::pin!(goral);
-    storage.welcome().await;
+    welcome(tx.clone(), project_id).await;
     tracing::info!("{APP_NAME} started with pid {}", process::id());
 
     tokio::select! {

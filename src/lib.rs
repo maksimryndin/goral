@@ -21,6 +21,7 @@ use std::fmt::{self, Debug};
 use std::sync::Arc;
 use std::time::Duration;
 pub use storage::*;
+use sysinfo::{System, SystemExt};
 use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender as TokioSender};
 use tracing::Level;
 
@@ -293,8 +294,40 @@ impl Debug for Shared {
     }
 }
 
+pub async fn welcome(send_notification: Sender, project_id: String) {
+    let sys = tokio::task::spawn_blocking(|| {
+        sysinfo::set_open_files_limit(0);
+        let sys = System::new_all();
+        let mem = sys.total_memory() / 1000 / 1000 / 1000;
+        match (
+            sys.name(),
+            sys.long_os_version(),
+            sys.kernel_version(),
+            sys.host_name(),
+        ) {
+            (Some(name), Some(os_version), Some(kernel_version), Some(host_name)) => format!(
+                "{name} {os_version}(kernel {kernel_version}); hostname: {host_name}, RAM {mem}G"
+            ),
+            (Some(name), Some(os_version), None, Some(host_name)) => {
+                format!("{name} {os_version}; hostname: {host_name}, RAM {mem}G")
+            }
+            (Some(name), Some(os_version), None, None) => {
+                format!("{name} {os_version}; RAM {mem}G")
+            }
+            (Some(name), None, None, None) => format!("{name}; RAM {mem}G"),
+            _ => format!("RAM {mem}G"),
+        }
+    })
+    .await
+    .expect("assert: should be able to collect basic system info");
+    let msg = format!(
+        "{APP_NAME} has started with [api usage page](https://console.cloud.google.com/apis/dashboard?project={project_id}&show=all) and [api quota page](https://console.cloud.google.com/iam-admin/quotas?project={project_id}) at `{sys}`", 
+    );
+    tracing::info!("{}", msg);
+    send_notification.info(msg).await;
+}
+
 #[cfg(test)]
 mod tests {
     pub(crate) const TEST_HOST_ID: &str = "testhost";
-    pub(crate) const TEST_PROJECT_ID: &str = "test-project";
 }

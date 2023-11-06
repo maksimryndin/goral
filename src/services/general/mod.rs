@@ -120,7 +120,7 @@ mod tests {
     use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
     use crate::spreadsheet::tests::TestState;
     use crate::storage::Storage;
-    use crate::tests::{TEST_HOST_ID, TEST_PROJECT_ID};
+    use crate::tests::TEST_HOST_ID;
     use crate::{create_log, Sender, Shared};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -140,7 +140,6 @@ mod tests {
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            TEST_PROJECT_ID.to_string(),
             sheets_api,
             send_notification.clone(),
         ));

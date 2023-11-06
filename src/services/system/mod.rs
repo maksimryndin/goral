@@ -13,7 +13,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::mpsc::{self};
-use tokio::task::{self, JoinHandle};
+use tokio::task::JoinHandle;
 
 pub const SYSTEM_SERVICE_NAME: &str = "system";
 
@@ -51,6 +51,7 @@ impl SystemService {
     }
 
     fn collect_sysinfo(
+        is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
         mut request_rx: mpsc::Receiver<DateTime<Utc>>,
         mounts: Vec<String>,
@@ -64,7 +65,10 @@ impl SystemService {
                 .map(|datarows| Data::Many(datarows))
                 .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
             if let Err(_) = sender.blocking_send(TaskResult { id: 0, result }) {
-                break;
+                if is_shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+                panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
             }
         }
         tracing::info!("exiting system info scraping thread");
@@ -82,6 +86,7 @@ impl SystemService {
     }
 
     async fn sys_observer(
+        is_shutdown: Arc<AtomicBool>,
         scrape_interval: Duration,
         scrape_timeout: Duration,
         sender: mpsc::Sender<TaskResult>,
@@ -93,35 +98,26 @@ impl SystemService {
         let (mut tx, rx) = mpsc::channel::<DateTime<Utc>>(1);
         tracing::info!("starting system info scraping");
         let cloned_sender = sender.clone();
-        let join_result =
-            task::spawn_blocking(move || Self::collect_sysinfo(cloned_sender, rx, mounts, names));
-        tokio::pin!(join_result);
+        let cloned_is_shutdown = is_shutdown.clone();
+        std::thread::Builder::new()
+            .name("sysinfo-collector".into())
+            .spawn(move || {
+                Self::collect_sysinfo(cloned_is_shutdown, cloned_sender, rx, mounts, names)
+            })
+            .expect("assert: can spawn sysinfo collecting thread");
 
         loop {
             tokio::select! {
-                _ = sender.closed() => {
-                    tracing::info!("finished system scraping");
-                    return;
-                },
-                res = &mut join_result => {
-                    match res {
-                        Err(e) => {
-                            let msg = "failed to spawn sysinfo collection in a separate thread".to_string();
-                            tracing::error!("{}: `{}`", msg, e);
-                            send_notification.fatal(msg).await;
-                            panic!("assert: should be able to spawn blocking tasks");
-                        },
-                        Ok(_) => {
-                            tracing::info!("finished collecting sysinfo");
-                        },
-                    };
-                }
                 _ = interval.tick() => {
                     let scrape_time = Utc::now();
                     if let Err(e) = Self::make_timed_scrape(&mut tx, scrape_timeout, scrape_time).await {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("finished sysinfo collection");
+                            return;
+                        }
                         let msg = format!("error sending request for sysinfo `{}`", e);
                         tracing::error!("{}", msg);
-                        send_notification.try_error(msg);
+                        send_notification.fatal(msg).await;
                     }
                 }
             }
@@ -198,9 +194,10 @@ impl Service for SystemService {
 
     async fn spawn_tasks(
         &mut self,
-        shutdown: Arc<AtomicBool>,
+        is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
     ) -> Vec<JoinHandle<()>> {
+        let is_shutdown = is_shutdown.clone();
         let sender = sender.clone();
         let send_notification = self.shared.send_notification.clone();
         let mounts = self.mounts.clone();
@@ -209,6 +206,7 @@ impl Service for SystemService {
         let scrape_timeout = self.scrape_timeout.clone();
         vec![tokio::spawn(async move {
             Self::sys_observer(
+                is_shutdown,
                 scrape_interval,
                 scrape_timeout,
                 sender,
@@ -218,5 +216,99 @@ impl Service for SystemService {
             )
             .await;
         })]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Datavalue;
+    use crate::Notification;
+    use tracing::Level;
+
+    #[tokio::test]
+    async fn single_sys_scrape() {
+        const NUM_OF_SCRAPES: usize = 1;
+        let (send_notification, mut notifications_receiver) = mpsc::channel(1);
+        let send_notification = Sender::new(send_notification);
+        let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_SCRAPES);
+        let is_shutdown = Arc::new(AtomicBool::new(false));
+
+        let notifications = tokio::spawn(async move {
+            while let Some(notification) = notifications_receiver.recv().await {
+                println!("Notification received: {notification:?}");
+            }
+        });
+
+        let is_shutdown_clone = is_shutdown.clone();
+        let scrape_handle = tokio::spawn(async move {
+            SystemService::sys_observer(
+                is_shutdown_clone,
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                data_sender,
+                send_notification,
+                vec![],
+                vec![],
+            )
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_secs(2 * NUM_OF_SCRAPES as u64)).await;
+        is_shutdown.store(true, Ordering::Release);
+        data_receiver.close();
+
+        if let Some(TaskResult {
+            result: Ok(Data::Many(datarows)),
+            ..
+        }) = data_receiver.recv().await
+        {
+            if let Some(Datavalue::HeatmapPercent(mem_use)) =
+                datarows[0].keys_values().get("memory_use")
+            {
+                assert!(*mem_use > 0.0, "memory usage should be positive");
+            } else {
+                panic!("test assert: memory use should be scraped");
+            }
+        } else {
+            panic!("test assert: at least one successfull scrape should be collected");
+        }
+
+        scrape_handle.await.unwrap(); // scrape should finish as the data channel is closed
+        notifications.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sys_scrape_timeout() {
+        let (send_notification, mut notifications_receiver) = mpsc::channel(1);
+        let send_notification = Sender::new(send_notification);
+        let (data_sender, mut data_receiver) = mpsc::channel(1);
+        let is_shutdown = Arc::new(AtomicBool::new(false));
+
+        let notification = tokio::spawn(async move { notifications_receiver.recv().await });
+
+        let is_shutdown_clone = is_shutdown.clone();
+        let scrape_handle = tokio::spawn(async move {
+            SystemService::sys_observer(
+                is_shutdown_clone,
+                Duration::from_secs(1),
+                Duration::from_millis(1),
+                data_sender,
+                send_notification,
+                vec![],
+                vec![],
+            )
+            .await;
+        });
+        if let Some(Notification { message, level }) = notification.await.unwrap() {
+            assert!(message.contains("sysinfo scrape timeout"));
+            assert_eq!(level, Level::ERROR);
+        } else {
+            panic!("test assert: at least one timeout should be happen");
+        }
+
+        is_shutdown.store(true, Ordering::Release);
+        data_receiver.close();
+        scrape_handle.await.unwrap(); // scrape should finish as the data channel is closed
     }
 }

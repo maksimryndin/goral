@@ -2,7 +2,7 @@ use crate::spreadsheet::sheet::{
     str_to_id, Header, Rows, Sheet, SheetId, TabColorRGB, UpdateSheet, VirtualSheet,
 };
 use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI, DEFAULT_FONT, DEFAULT_FONT_TEXT};
-use crate::{get_service_tab_color, Sender, APP_NAME, HOST_ID_CHARS_LIMIT};
+use crate::{get_service_tab_color, Sender, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use google_sheets4::api::{
     CellData, CellFormat, Color, ColorStyle, ExtendedValue, NumberFormat, RowData, TextFormat,
@@ -400,35 +400,20 @@ impl Into<RowData> for Datarow {
 pub struct Storage {
     google: SpreadsheetAPI,
     host_id: String,
-    project_id: String,
     send_notification: Sender,
 }
 
 impl Storage {
-    pub fn new(
-        host_id: String,
-        project_id: String,
-        google: SpreadsheetAPI,
-        send_notification: Sender,
-    ) -> Self {
+    pub fn new(host_id: String, google: SpreadsheetAPI, send_notification: Sender) -> Self {
         assert!(
             host_id.chars().count() <= HOST_ID_CHARS_LIMIT,
             "host id should be no more than {HOST_ID_CHARS_LIMIT} characters"
         );
         Self {
             host_id,
-            project_id,
             google,
             send_notification,
         }
-    }
-
-    pub async fn welcome(&self) {
-        let msg = format!(
-            "{APP_NAME} started with [api usage page](https://console.cloud.google.com/apis/dashboard?project={}&show=all) and [api quota page](https://console.cloud.google.com/iam-admin/quotas?project={})", 
-            self.project_id, self.project_id);
-        tracing::info!("{}", msg);
-        self.send_notification.info(msg).await;
     }
 }
 
@@ -779,7 +764,7 @@ mod tests {
     use crate::services::general::GENERAL_SERVICE_NAME;
     use crate::spreadsheet::sheet::tests::mock_ordinary_google_sheet;
     use crate::spreadsheet::tests::TestState;
-    use crate::tests::{TEST_HOST_ID, TEST_PROJECT_ID};
+    use crate::tests::TEST_HOST_ID;
     use crate::Sender;
     use google_sheets4::Error;
     use tokio::sync::mpsc;
@@ -888,7 +873,6 @@ mod tests {
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            TEST_PROJECT_ID.to_string(),
             sheets_api,
             tx.clone(),
         ));
@@ -1080,7 +1064,6 @@ mod tests {
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            TEST_PROJECT_ID.to_string(),
             sheets_api,
             tx.clone(),
         ));
@@ -1135,7 +1118,6 @@ mod tests {
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            TEST_PROJECT_ID.to_string(),
             sheets_api,
             tx.clone(),
         ));
@@ -1198,7 +1180,6 @@ mod tests {
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            TEST_PROJECT_ID.to_string(),
             sheets_api,
             tx.clone(),
         ));
@@ -1266,7 +1247,6 @@ mod tests {
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            TEST_PROJECT_ID.to_string(),
             sheets_api,
             tx.clone(),
         ));
@@ -1334,7 +1314,6 @@ mod tests {
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            TEST_PROJECT_ID.to_string(),
             sheets_api,
             tx.clone(),
         ));

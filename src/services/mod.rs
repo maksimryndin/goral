@@ -239,7 +239,7 @@ mod tests {
     use crate::spreadsheet::tests::TestState;
     use crate::spreadsheet::Metadata;
     use crate::storage::{jitter_duration, Datavalue, Storage};
-    use crate::tests::{TEST_HOST_ID, TEST_PROJECT_ID};
+    use crate::tests::TEST_HOST_ID;
     use crate::{create_log, Sender};
     use chrono::Utc;
     use hyper::service::{make_service_fn, service_fn};
@@ -338,7 +338,6 @@ mod tests {
         );
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
-            TEST_PROJECT_ID.to_string(),
             sheets_api,
             tx.clone(),
         ));

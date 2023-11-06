@@ -1,7 +1,7 @@
 pub(crate) mod configuration;
 
 use crate::messenger::configuration::MessengerConfig;
-use crate::services::metrics::configuration::{scrape_push_rule, Metrics, Target};
+use crate::services::metrics::configuration::{scrape_push_rule, Metrics};
 use crate::services::{Data, HttpClient, Service, TaskResult};
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};

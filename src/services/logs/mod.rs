@@ -233,15 +233,18 @@ impl LogsService {
         let (tx, rx) = mpsc::channel(sender.capacity());
         let cloned_sender = sender.clone();
         let cloned_is_shutdown = is_shutdown.clone();
-        std::thread::spawn(move || {
-            Self::process_lines(
-                cloned_is_shutdown,
-                cloned_sender,
-                rx,
-                filter_if_contains,
-                drop_if_contains,
-            )
-        });
+        std::thread::Builder::new()
+            .name("logs-collector".into())
+            .spawn(move || {
+                Self::process_lines(
+                    cloned_is_shutdown,
+                    cloned_sender,
+                    rx,
+                    filter_if_contains,
+                    drop_if_contains,
+                )
+            })
+            .expect("assert: can spawn logs collecting thread");
 
         loop {
             tokio::select! {
