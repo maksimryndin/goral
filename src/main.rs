@@ -8,6 +8,7 @@ use goral::storage::{create_log, Storage};
 use goral::{collect_messengers, collect_services, welcome, Sender, Shared};
 use std::fmt::Debug;
 use std::panic;
+use std::path::PathBuf;
 use std::process;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,7 +48,7 @@ struct Args {
     /// (e.g. `GORAL__RESOURCES__ALERT_IF_FREE_DISK_SPACE_PERCENT_LESS_THAN`)
     /// overwrite config values.
     #[arg(short, long)]
-    config: String,
+    config: PathBuf,
     /// Host identifier (8 characters). Keep this argument persistent for this instance of Goral
     /// to properly identify your apps running at this host.
     /// It should be unique among all your hosts where Gorals observe your apps
@@ -65,7 +66,7 @@ struct Args {
 async fn start() -> Result<(), String> {
     let args = Args::parse();
 
-    let config = Configuration::new(&args.config).map_err(|e|
+    let config = Configuration::new(&args.config.display().to_string()).map_err(|e|
         format!(
             "Incorrect configuration (can be potentially overriden by environment variables starting with `GORAL__`): {e}"
         )
