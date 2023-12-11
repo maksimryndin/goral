@@ -344,7 +344,7 @@ impl VirtualSheet {
     ) -> Self {
         let sheet = Sheet {
             sheet_id,
-            title, // TODO no more than 50 chars
+            title,
             hidden: false,
             index: 0,
             sheet_type,

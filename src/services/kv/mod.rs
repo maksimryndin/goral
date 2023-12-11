@@ -2,18 +2,18 @@ pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
 
 use crate::services::kv::configuration::Kv;
-use crate::services::Service;
+use crate::services::{capture_datetime, Service};
 use crate::spreadsheet::HttpResponse;
 use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{
     body::Buf, header, Body, Method, Request as HyperRequest, Response as HyperResponse, Server,
     StatusCode,
 };
-use serde::{Deserialize, Serialize};
+use serde::{de::Deserializer, Deserialize, Serialize};
 use serde_valid::Validate;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,16 +39,25 @@ fn unique_keys(data: &Vec<(String, Value)>) -> Result<(), serde_valid::validatio
     }
 }
 
-// TODO test for proper serialization (with different datetime formats, check for timestamp)
+fn deserialize_datetime<'de, D>(deserializer: D) -> Result<NaiveDateTime, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let buf = String::deserialize(deserializer)?;
+    capture_datetime(&buf)
+        .ok_or_else(|| serde::de::Error::custom(format!("cannot deserialize {} as datetime", buf)))
+}
+
 // for untagged enum an order is important
 // https://serde.rs/enum-representations.html#untagged
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 enum Value {
     Integer(u64),
     Number(f64),
     Bool(bool),
-    Datetime(DateTime<Utc>),
+    #[serde(deserialize_with = "deserialize_datetime")]
+    Datetime(NaiveDateTime),
     Text(String),
 }
 
@@ -59,15 +68,15 @@ impl Into<Datavalue> for Value {
             Integer(v) => Datavalue::Integer(v),
             Number(v) => Datavalue::Number(v),
             Bool(v) => Datavalue::Bool(v),
-            Datetime(v) => Datavalue::Datetime(v.naive_utc()),
+            Datetime(v) => Datavalue::Datetime(v),
             Text(v) => Datavalue::Text(v),
         }
     }
 }
 
 #[derive(Debug, Deserialize, Validate)]
-#[rule(unique_keys(data))]
 struct KVRow {
+    #[validate(pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$")]
     log_name: String,
     datetime: DateTime<Utc>,
     #[validate(custom(unique_keys))]
@@ -88,11 +97,12 @@ impl Into<Datarow> for KVRow {
 
 #[derive(Debug, Deserialize, Validate)]
 struct Request {
+    #[validate(min_items = 1)]
     #[validate]
     rows: Vec<KVRow>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Response {
     sheet_urls: Vec<String>,
 }
@@ -155,6 +165,15 @@ impl KvService {
                     }
                     Ok(b) => b,
                 };
+                if let Err(e) = req_body.validate() {
+                    return Ok(HyperResponse::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(e.to_string().into())
+                        .expect(
+                            "assert: should be able to construct response for invalid kv request",
+                        ));
+                }
                 let (reply_to, rx) = oneshot::channel();
 
                 let datarows = req_body
@@ -309,5 +328,223 @@ impl Service for KvService {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::tests::build_config;
+    use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
+    use crate::spreadsheet::tests::TestState;
+    use crate::spreadsheet::Metadata;
+    use crate::storage::Storage;
+    use crate::tests::TEST_HOST_ID;
+    use crate::{create_log, Sender, Shared};
+    use hyper::{header, Body, Client, Method};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::{broadcast, mpsc};
+
+    #[tokio::test]
+    async fn kv_service_flow() {
+        const NUMBER_OF_MESSAGES: usize = 10;
+
+        let (send_notification, _) = mpsc::channel(NUMBER_OF_MESSAGES);
+        let send_notification = Sender::new(send_notification);
+        let sheets_api = SpreadsheetAPI::new(
+            send_notification.clone(),
+            TestState::new(vec![], None, None),
+        );
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            sheets_api,
+            send_notification.clone(),
+        ));
+        let log = create_log(
+            storage.clone(),
+            "spreadsheet1".to_string(),
+            KV_SERVICE_NAME.to_string(),
+        );
+
+        let (shutdown, rx) = broadcast::channel(1);
+
+        let config = r#"
+        spreadsheet_id = "123"
+        port = 49152
+        "#;
+
+        let config: Kv =
+            build_config(config).expect("should be able to build minimum configuration");
+
+        let shared = Shared::new(send_notification);
+        let service = tokio::spawn(async move {
+            let mut service = KvService::new(shared, config);
+            service.run(log, rx).await;
+        });
+
+        let client = Client::new();
+
+        let payload = serde_json::to_string(&json!({"rows": [
+            {
+                "log_name": "js_error",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": [("trace_id", 123), ("exception", "ERROR"), ("is_error", true), ("amount", 3.5), ("datetime", "2023-12-11 09:19:32.827321506")]
+            },
+            {
+                "log_name": "browser_report",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": [("csp_violation", "cross origin resource"), ("datetime", "2023-12-11 09:19:32.827321506")]
+            }
+        ]})).unwrap();
+
+        let req = HyperRequest::builder()
+            .method(Method::POST)
+            .uri("http://localhost:49152/api/kv")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload))
+            .expect("request builder");
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let response = client.request(req).await.unwrap();
+        let body = hyper::body::aggregate(response).await.unwrap();
+        let kv_response: Response = serde_json::from_reader(body.reader()).unwrap();
+
+        assert_eq!(
+            kv_response.sheet_urls.len(),
+            2,
+            "2 sheets should be created: for `js_error` and `browser_report`"
+        );
+
+        shutdown
+            .send(1)
+            .expect("test assert: kv service should run when shutdown signal is sent");
+
+        service.await.unwrap();
+
+        let (all_sheets, _, _) = storage
+            .google()
+            .sheets_filtered_by_metadata("spreadsheet1", &Metadata::new(vec![]))
+            .await
+            .unwrap();
+        assert_eq!(
+            all_sheets.len(),
+            2,
+            "2 sheets should be created: for `js_error` and `browser_report`"
+        );
+        assert!(
+            all_sheets[0].title().contains("js_error")
+                || all_sheets[1].title().contains("js_error")
+        );
+        assert!(
+            all_sheets[0].title().contains("browser_report")
+                || all_sheets[1].title().contains("browser_report")
+        );
+        assert_eq!(
+            all_sheets[0].row_count(),
+            Some(1 + 1), // one row for data and one row for headers
+            "sheet contains all data from the request"
+        );
+    }
+
+    #[test]
+    fn kv_valid_request() {
+        let data = json!({"rows": [
+            {
+                "log_name": "js_error",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": [("trace_id", 123), ("exception", "ERROR"), ("is_error", true), ("amount", 3.5), ("datetime", "2023-12-11 09:19:32.827321506")]
+            },
+            {
+                "log_name": "browser_report",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": [("csp_violation", "cross origin resource"), ("datetime", "2023-12-11 09:19:32.827321506")]
+            }
+        ]});
+
+        let r: Request = serde_json::from_value(data)
+            .expect("test assert: can deserialize proper kv request payload");
+        r.validate().unwrap();
+        assert_eq!(r.rows[0].log_name, "js_error".to_string());
+        assert_eq!(
+            r.rows[0].datetime,
+            "2023-12-09T09:50:46.136945094Z"
+                .parse::<DateTime<Utc>>()
+                .unwrap()
+        );
+        assert_eq!(r.rows[1].log_name, "browser_report".to_string());
+        match r.rows[0].data[0].1 {
+            Value::Integer(_) => {}
+            _ => panic!("test assert: int should be parsed as integer"),
+        }
+        match r.rows[0].data[1].1 {
+            Value::Text(_) => {}
+            _ => panic!("test assert: text should be parsed as text"),
+        }
+        match r.rows[0].data[2].1 {
+            Value::Bool(_) => {}
+            _ => panic!("test assert: bool should be parsed as bool"),
+        }
+        match r.rows[0].data[3].1 {
+            Value::Number(_) => {}
+            _ => panic!("test assert: float should be parsed as number"),
+        }
+        match r.rows[0].data[4].1 {
+            Value::Datetime(_) => {}
+            _ => panic!("test assert: datetime should be parsed as naive datetime"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "min_items: 1")]
+    fn kv_empty_rows() {
+        let data = json!({"rows": []});
+        let r: Request = serde_json::from_value(data).unwrap();
+        r.validate().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "^[a-zA-Z_][a-zA-Z0-9_]*$")]
+    fn kv_invalid_log_name() {
+        let data = json!({"rows": [
+            {
+                "log_name": "js error",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": [("trace_id", 123)]
+            }
+        ]});
+
+        let r: Request = serde_json::from_value(data).unwrap();
+        r.validate().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "min_items: 1")]
+    fn kv_empty_data() {
+        let data = json!({"rows": [
+            {
+                "log_name": "js_error",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": []
+            }
+        ]});
+
+        let r: Request = serde_json::from_value(data).unwrap();
+        r.validate().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "`data` should have unique keys")]
+    fn kv_duplicate_keys() {
+        let data = json!({"rows": [
+            {
+                "log_name": "js_error",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": [("trace_id", 123), ("exception", "ERROR"), ("is_error", true), ("trace_id", 3.5), ("datetime", "2023-12-11 09:19:32.827321506")]
+            }
+        ]});
+
+        let r: Request = serde_json::from_value(data).unwrap();
+        r.validate().unwrap();
     }
 }

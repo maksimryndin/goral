@@ -249,7 +249,7 @@ For every scrape target and every metric Metrics service creates a separate shee
 
 If there is an error while scraping, it is sent via a configured messenger or via a default messenger of General service.
 
-*Note:* if the observed app restarts, then its metric counters are reset. Goral just scrapes metrics as-is without _trying to merge them_. For metrics data it is usually acceptable. If you need some more reliable way to collect data - consider using [KV Log](#kv-log) as it uses a synchronous push strategy and allows you to fetch the last row for each `log_name` - thus you can setup a merge strategy on the app side.
+*Note:* if the observed app restarts, then its metric counters are reset. Goral just scrapes metrics as-is without _trying to merge them_. For metrics data it is usually acceptable. If you need some more reliable way to collect data - consider using [KV Log](#kv-log) as it uses a synchronous push strategy and allows you to setup a merge strategy on the app side.
 
 If a messenger is configured, then any scraping error is sent via the messenger (even it is the same error, it is sent each time). In case of many scrape endpoints with short scrape intervals there is a risk to hit a messenger rate limit.
 
@@ -372,19 +372,19 @@ Such a configuration runs a server process in the Goral daemon listening at the 
 ```json
 [
     {
-        "datetime": "", // in rfc*** format
-        "log_name": "orders",
+        "datetime": "2023-12-09T09:50:46.136945094Z", // an RFC 3339 and ISO 8601 date and time string
+        "log_name": "orders", // validated against regex ^[a-zA-Z_][a-zA-Z0-9_]*$
         "data": [["donuts", 10], ["chocolate bars", 3]], // first datarow in "orders" log defines order of column headers for a sheet (if it should be created)
     },
     {
-        "datetime": "", // in rfc*** format
+        "datetime": "2023-12-09T09:50:46.136945094Z",
         "log_name": "orders",
-        "data": [["chocolate bars", 3], ["donuts", 0]], // you should provide the same keys for all datarows which go to the same sheet, otherwise a separate sheet is created
+        "data": [["chocolate bars", 3], ["donuts", 0]], // you should provide the same keys (but the order is not important) for all datarows which go to the same sheet, otherwise a separate sheet is created
     },
     {
-        "datetime": "", // in rfc*** format
+        "datetime": "2023-12-09T09:50:46.136945094Z",
         "log_name": "campaigns",
-        "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6]], // datatypes for values are string, boolean and float (64 bits). Even if a number is an integer, it will be parsed as float.
+        "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6], ["datetime", "2023-12-11 09:19:32.827321506"]], // datatypes for values are string, ineger, boolean, float (64 bits) and datetime string (in common formats without tz).
     }
 ]
 ```
@@ -397,7 +397,7 @@ For even more interactive setup you can share a spreadsheet access with your cli
 Unlike other Goral services, this KV api is synchronous - if Goral responds successfully then sheets are created already and data is saved.
 
 For every append operation Goral uses 2 Google api method calls, so under the quota limit of 300 requests per minute, we have 5 requests per second or 2 append operations (not considering other Goral services which use the same quota). That's why it is strongly recommended to use a batched approach (say send in batches every 10 seconds or so) otherwise you can exhaust [Google api quota](https://developers.google.com/sheets/api/limits) quickly (especially when other Goral services run). [Exponential backoff algorithm](https://developers.google.com/sheets/api/limits#exponential) is *not* applicable to KV service induced requests (in contrast to other Goral services). So retries are on the client app side and you may expect http response status code `429: Too many requests` in case if you generate an excessive load. And it can impact other Goral services.
-In any case Goral put KV requests in the messages queue with capacity 1, so any concurrent request will wait until the previous one is handled.
+In any case Goral put KV requests in the messages queue with a capacity 1, so any concurrent request will wait until the previous one is handled.
 
 If there is an error while appending data, it is sent only via a default messenger of General service. Configured messenger is only used for notifications according to configured rules.
 

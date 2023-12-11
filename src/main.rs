@@ -18,7 +18,7 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-#[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "macos",))]
+#[cfg(unix)]
 pub async fn sigterm() -> tokio::io::Result<()> {
     signal::unix::signal(signal::unix::SignalKind::terminate())?
         .recv()
@@ -26,7 +26,7 @@ pub async fn sigterm() -> tokio::io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "macos",)))]
+#[cfg(not(unix))]
 pub async fn sigterm() -> tokio::io::Result<()> {
     std::future::pending::<()>().await;
     Ok(())
@@ -156,7 +156,7 @@ async fn start() -> Result<(), String> {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), String> {
     panic::set_hook(Box::new(|panic_info| {
-        let base_message = format!("\nCould you please open an issue https://github.com/maksimryndin/goral/issues with Bug label? Thank you for using {APP_NAME}!");
+        let base_message = format!("\nCould you please open an issue https://github.com/maksimryndin/goral/issues with `Bug` label? Thank you for using {APP_NAME}!");
         if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             if s.starts_with("assert:") {
                 println!(

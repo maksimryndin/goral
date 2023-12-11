@@ -9,18 +9,21 @@ use crate::configuration::APP_NAME;
 use crate::storage::{AppendableLog, Datarow};
 use crate::HttpsClient;
 use async_trait::async_trait;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::future::try_join_all;
 use hyper::{
     body::{Body, HttpBody as _},
     header, Client, Request, StatusCode, Uri,
 };
+use lazy_static::lazy_static;
+use regex::Regex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::{self, error::TrySendError};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 #[derive(Debug)]
@@ -230,6 +233,38 @@ impl HttpClient {
     }
 }
 
+fn capture_datetime(line: &str) -> Option<NaiveDateTime> {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(
+            r"(?x)
+            (?P<datetime>
+                \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s\+\d{2}:\d{2}|
+                \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}|
+                \d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}|
+                \d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\s\+\d{2}:\d{2}|
+                \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z|
+                \d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}:\d{2}\.\d+|
+                \d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}:\d{2}
+            )"
+        )
+        .expect("assert: datetime regex is properly constructed");
+    }
+    RE.captures(line).and_then(|cap| {
+        cap.name("datetime").and_then(|datetime| {
+            let captured = datetime.as_str();
+            captured
+                .parse::<DateTime<Utc>>()
+                .ok()
+                .map(|d| d.naive_utc())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y-%m-%dT%H:%M:%S%.f").ok())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y/%m/%d %H:%M:%S%.f").ok())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y-%m-%d %H:%M:%S%.f").ok())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y/%m/%d %H:%M:%S").ok())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y-%m-%d %H:%M:%S").ok())
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +276,7 @@ mod tests {
     use crate::storage::{jitter_duration, Datavalue, Storage};
     use crate::tests::TEST_HOST_ID;
     use crate::{create_log, Sender};
+    use chrono::NaiveDate;
     use chrono::Utc;
     use hyper::service::{make_service_fn, service_fn};
     use hyper::{Body, Method, Request, Response, Server, StatusCode};
@@ -248,7 +284,10 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
-    use tokio::sync::{broadcast, mpsc};
+    use tokio::sync::{
+        broadcast,
+        mpsc::{self, error::TrySendError},
+    };
 
     struct TestService {
         counter: Arc<AtomicUsize>,
@@ -530,5 +569,78 @@ mod tests {
             Uri::from_static("http://127.0.0.1:53263/health"),
         );
         assert_eq!(client.get().await, Err(format!("response body for endpoint http://127.0.0.1:53263/health is greater than limit of {} bytes", HEALTHY_REPLY.len()-1)));
+    }
+
+    #[test]
+    fn log_date_time() {
+        assert_eq!(
+            capture_datetime("INFO:2023/02/17 14:30:15 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 02, 17)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(14, 30, 15)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime("INFO:2023-02-17 14:30:15 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 02, 17)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(14, 30, 15)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime(
+                r#"[2m2023-11-02 12:29:51.552906[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime(
+                r#"[2m2023/11/02 12:29:51.552906[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime(
+                r#"[2m2023-11-02T12:29:51.552906Z[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime("INFO:2014-11-28 21:00:09 +09:00 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2014, 11, 28)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(12, 00, 09)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime("INFO:2014-11-28T21:00:09+09:00 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2014, 11, 28)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(12, 00, 09)
+                    .expect("test assert: static datetime")
+            )
+        );
     }
 }
