@@ -407,6 +407,12 @@ mod tests {
 
         tokio::time::sleep(Duration::from_secs(1)).await;
         let response = client.request(req).await.unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "correct KV request should be accepted"
+        );
+
         let body = hyper::body::aggregate(response).await.unwrap();
         let kv_response: Response = serde_json::from_reader(body.reader()).unwrap();
 
@@ -414,6 +420,30 @@ mod tests {
             kv_response.sheet_urls.len(),
             2,
             "2 sheets should be created: for `js_error` and `browser_report`"
+        );
+
+        let invalid_payload = serde_json::to_string(&json!({"rows": [
+            {
+                "log_name": "js error",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": [("trace_id", 123)]
+            }
+        ]}))
+        .unwrap();
+
+        let req = HyperRequest::builder()
+            .method(Method::POST)
+            .uri("http://localhost:49152/api/kv")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(invalid_payload))
+            .expect("request builder");
+
+        let response = client.request(req).await.unwrap();
+
+        assert_eq!(
+            response.status(),
+            400,
+            "incorrect KV request should be rejected"
         );
 
         shutdown
