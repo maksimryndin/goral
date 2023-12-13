@@ -1,6 +1,6 @@
 pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
-
+use crate::rules::{Action, Rule, RuleCondition};
 use crate::services::logs::configuration::{channel_capacity, Logs};
 use crate::services::{capture_datetime, Data, Service, TaskResult};
 use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL;
@@ -21,6 +21,7 @@ use tokio::sync::mpsc::{self};
 use tokio::task::JoinHandle;
 
 pub const LOGS_SERVICE_NAME: &str = "logs";
+const LEVEL_KEY: &str = "level";
 
 pub(crate) struct LogsService {
     shared: Shared,
@@ -150,7 +151,7 @@ impl LogsService {
                 LOGS_SERVICE_NAME.to_string(),
                 datetime,
                 vec![
-                    ("level".to_string(), level),
+                    (LEVEL_KEY.to_string(), level),
                     ("log_line".to_string(), Datavalue::Text(text)),
                 ],
                 None,
@@ -261,7 +262,7 @@ impl LogsService {
                 .as_ref()
                 .expect("assert: if messenger is set, then config is also nonempty");
             if let Err(_) = messenger.send_error(messenger_config, &message).await {
-                tracing::error!("failed to send liveness probe output via configured messenger: {:?} for service {}",  messenger_config, self.name());
+                tracing::error!("failed to send error of logs collector via configured messenger: {:?} for service {}",  messenger_config, self.name());
                 self.shared.send_notification.try_error(format!(
                     "{}. Sending via configured messenger failed.",
                     message
@@ -298,6 +299,35 @@ impl Service for LogsService {
 
     fn push_interval(&self) -> Duration {
         self.push_interval
+    }
+
+    fn get_example_rules(&self) -> Vec<Datarow> {
+        vec![
+            Rule {
+                log_name: LOGS_SERVICE_NAME.to_string(),
+                key: LEVEL_KEY.to_string(),
+                condition: RuleCondition::Contains,
+                value: Datavalue::Text("error".to_string()),
+                action: Action::Error,
+            }
+            .into(),
+            Rule {
+                log_name: LOGS_SERVICE_NAME.to_string(),
+                key: LEVEL_KEY.to_string(),
+                condition: RuleCondition::Contains,
+                value: Datavalue::Text("warn".to_string()),
+                action: Action::Warn,
+            }
+            .into(),
+            Rule {
+                log_name: LOGS_SERVICE_NAME.to_string(),
+                key: LEVEL_KEY.to_string(),
+                condition: RuleCondition::Contains,
+                value: Datavalue::Text("info".to_string()),
+                action: Action::Info,
+            }
+            .into(),
+        ]
     }
 
     async fn process_task_result_on_shutdown(

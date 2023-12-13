@@ -1,9 +1,10 @@
 pub(crate) mod collector;
 pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
+use crate::rules::{Action, Rule, RuleCondition};
 use crate::services::system::configuration::{scrape_push_rule, System};
 use crate::services::{Data, Service, TaskResult};
-use crate::storage::AppendableLog;
+use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -169,6 +170,65 @@ impl Service for SystemService {
 
     fn push_interval(&self) -> Duration {
         self.push_interval
+    }
+
+    fn get_example_rules(&self) -> Vec<Datarow> {
+        let mut rows = Vec::with_capacity(2 + self.mounts.len() + 2 * self.process_names.len());
+        rows.push(
+            Rule {
+                log_name: collector::BASIC_LOG.to_string(),
+                key: collector::MEMORY_USE.to_string(),
+                condition: RuleCondition::Greater,
+                value: Datavalue::Percent(90.),
+                action: Action::Warn,
+            }
+            .into(),
+        );
+        rows.push(
+            Rule {
+                log_name: collector::BASIC_LOG.to_string(),
+                key: collector::SWAP_USE.to_string(),
+                condition: RuleCondition::Greater,
+                value: Datavalue::Percent(90.),
+                action: Action::Warn,
+            }
+            .into(),
+        );
+        for mount in &self.mounts {
+            rows.push(
+                Rule {
+                    log_name: mount.to_string(),
+                    key: collector::DISK_USE.to_string(),
+                    condition: RuleCondition::Greater,
+                    value: Datavalue::Percent(90.),
+                    action: Action::Warn,
+                }
+                .into(),
+            );
+        }
+        for process_name in &self.process_names {
+            rows.push(
+                Rule {
+                    log_name: process_name.to_string(),
+                    key: collector::MEMORY_USE.to_string(),
+                    condition: RuleCondition::Greater,
+                    value: Datavalue::Percent(90.),
+                    action: Action::Warn,
+                }
+                .into(),
+            );
+            rows.push(
+                Rule {
+                    log_name: process_name.to_string(),
+                    key: collector::CPU.to_string(),
+                    condition: RuleCondition::Greater,
+                    value: Datavalue::Percent(90.),
+                    action: Action::Warn,
+                }
+                .into(),
+            );
+        }
+        rows
     }
 
     async fn process_task_result_on_shutdown(

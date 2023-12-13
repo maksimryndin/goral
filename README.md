@@ -137,6 +137,7 @@ messenger.url = "<messenger api url for sending messages>"
 # log_level = "info"
 service_account_credentials_path = "/path/to/service_account.json"
 messenger.url = "<messenger api url for sending messages>"
+# graceful_timeout_secs = 10
 ```
 </details>
 
@@ -280,7 +281,7 @@ spreadsheet_id = "<spreadsheet_id>"
 </details>
 
 will create a single sheet with columns `datetime`, `level`, `log_line`.
-A log line is truncated to 50 000 chars as it is a Google Sheets limit.
+A log line is truncated to 50 000 chars as it is a Google Sheets limit for a cell.
 Goral tries to extract log level and datetime from a log line. If it fails to extract a log level then `N/A` is displayed. If it fails to extract datetime, then the current system time is used.
 
 For logs collecting Goral reads its stdin. Basically it is a portable way to collect stdout of another process without a privileged access.
@@ -344,7 +345,7 @@ If there is an error while collecting system info, it is sent via a configured m
 
 ### KV Log
 
-Goral allows you to append key-value data to Google spreadsheet. Let's take an example. You provide SAAS for wholesalers and have several services, let's say "Orders" and "Marketing Campaigns". 
+Goral allows you to append key-value data to Google spreadsheet. Let's take an example. You provide a SAAS for wholesalers and have several services, let's say "Orders" and "Marketing Campaigns". 
 Your client asks you for a billing data for each of the services in a spreadsheet format at the end of the month. You turn on KV Goral service with the following configuration:
 
 <details open>
@@ -384,7 +385,7 @@ Such a configuration runs a server process in the Goral daemon listening at the 
     {
         "datetime": "2023-12-09T09:50:46.136945094Z",
         "log_name": "campaigns",
-        "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6], ["datetime", "2023-12-11 09:19:32.827321506"]], // datatypes for values are string, ineger, boolean, float (64 bits) and datetime string (in common formats without tz).
+        "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6], ["datetime", "2023-12-11 09:19:32.827321506"]], // datatypes for values are string, ineger (unsigned 64-bits), boolean, float (64 bits) and datetime string (in common formats without tz).
     }
 ]
 ```
@@ -410,7 +411,7 @@ There is also a case of fatal errors (e.g. `MissingToken error` for Google API w
 So following Erlang's idea of [supervision trees](https://adoptingerlang.org/docs/development/supervision_trees/) we recommend to run Goral as a systemd service under Linux for automatic restarts in case of panics and other issues. An example systemd configuration:
 ```
 ```
-If you plan to use Resources service then you should not containerize Goral to get the actual system data.
+If you plan to use System service then you should not containerize Goral to get the actual system data.
 Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ctrl+C) and SIGTERM signals to safely send all the data in process to the permanent spreadsheet storage.
 
 TODO logs example with fake writer

@@ -45,7 +45,7 @@ pub async fn sigterm() -> tokio::io::Result<()> {
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Path to TOML configuration file. Environment variables starting with `GORAL_`
-    /// (e.g. `GORAL__RESOURCES__ALERT_IF_FREE_DISK_SPACE_PERCENT_LESS_THAN`)
+    /// (e.g. `GORAL__GENERAL__LOG_LEVEL`)
     /// overwrite config values.
     #[arg(short, long)]
     config: PathBuf,

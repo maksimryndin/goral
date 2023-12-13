@@ -6,7 +6,9 @@ use crate::HyperConnector;
 use crate::Sender;
 use chrono::Utc;
 use google_sheets4::api::{
-    BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
+    BatchGetValuesByDataFilterRequest, BatchUpdateSpreadsheetRequest,
+    BatchUpdateSpreadsheetResponse, DataFilter, DeveloperMetadataLookup,
+    GetSpreadsheetByDataFilterRequest, GridRange, Spreadsheet,
 };
 #[cfg(not(test))]
 use google_sheets4::{api::Sheets, oauth2::authenticator::Authenticator};
@@ -15,6 +17,7 @@ use google_sheets4::{
     Error, Result as SheetsResult,
 };
 use http::response::Response;
+use serde_json::Value;
 
 #[cfg(test)]
 use crate::spreadsheet::spreadsheet::tests::TestState;
@@ -103,18 +106,83 @@ impl SpreadsheetAPI {
     }
 
     #[cfg(not(test))]
-    async fn get(&self, spreadsheet_id: &str) -> SheetsResult<(Response<Body>, Spreadsheet)> {
+    async fn get(
+        &self,
+        spreadsheet_id: &str,
+        metadata: &Metadata,
+    ) -> SheetsResult<(Response<Body>, Spreadsheet)> {
+        let filters: Vec<_> = metadata
+            .iter()
+            .map(|(k, v)| DataFilter {
+                developer_metadata_lookup: Some(DeveloperMetadataLookup {
+                    visibility: Some("PROJECT".to_string()),
+                    metadata_key: Some(k.to_string()),
+                    metadata_value: Some(v.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect();
+        let req = GetSpreadsheetByDataFilterRequest {
+            data_filters: Some(filters),
+            ..Default::default()
+        };
         self
             .hub
             .spreadsheets()
-            .get(spreadsheet_id)
+            .get_by_data_filter(req, spreadsheet_id)
             .param("fields", "sheets.properties(sheetId,title,hidden,index,tabColorStyle,sheetType,gridProperties),sheets.developerMetadata")
             .doit()
             .await
     }
 
+    #[cfg(not(test))]
+    pub(crate) async fn get_sheet_data(
+        &self,
+        spreadsheet_id: &str,
+        sheet_id: SheetId,
+    ) -> Result<Vec<Vec<Value>>, HttpResponse> {
+        let req = BatchGetValuesByDataFilterRequest {
+            data_filters: Some(vec![DataFilter {
+                grid_range: Some(GridRange {
+                    sheet_id: Some(sheet_id),
+                    start_row_index: Some(1),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }]),
+            major_dimension: Some("ROWS".to_string()),
+            value_render_option: Some("UNFORMATTED_VALUE".to_string()),
+            ..Default::default()
+        };
+
+        let result = self
+            .hub
+            .spreadsheets()
+            .values_batch_get_by_data_filter(req, spreadsheet_id)
+            .doit()
+            .await;
+        tracing::debug!("{:?}", result);
+        let response = handle_error(self, result).await.map_err(|e| {
+            tracing::error!("{:?}", e);
+            e
+        })?;
+        Ok(match response.value_ranges {
+            Some(r) => r
+                .into_iter()
+                .filter_map(|range| range.value_range.and_then(|r| r.values))
+                .flatten()
+                .collect::<Vec<Vec<Value>>>(),
+            None => vec![vec![]],
+        })
+    }
+
     #[cfg(test)]
-    async fn get(&self, spreadsheet_id: &str) -> SheetsResult<(Response<Body>, Spreadsheet)> {
+    async fn get(
+        &self,
+        spreadsheet_id: &str,
+        _metadata: &Metadata,
+    ) -> SheetsResult<(Response<Body>, Spreadsheet)> {
         let mut state = self.state.lock().await;
         state.get(spreadsheet_id).await
     }
@@ -149,16 +217,6 @@ impl SpreadsheetAPI {
         )
     }
 
-    async fn spreadsheet_meta(&self, spreadsheet_id: &str) -> Result<Spreadsheet, HttpResponse> {
-        // first get all spreadsheet sheets properties without data
-        // second for sheets in interest (by tab color) fetch headers
-        // and last row timestamp??
-        let result = self.get(spreadsheet_id).await;
-
-        tracing::debug!("{:?}", result);
-        handle_error(self, result).await
-    }
-
     fn calculate_usage(num_of_cells: i32) -> f32 {
         100.0 * (num_of_cells as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32)
     }
@@ -168,7 +226,10 @@ impl SpreadsheetAPI {
         spreadsheet_id: &str,
         metadata: &Metadata,
     ) -> Result<(Vec<Sheet>, f32, f32), HttpResponse> {
-        let response = self.spreadsheet_meta(spreadsheet_id).await.map_err(|e| {
+        let result = self.get(spreadsheet_id, metadata).await;
+
+        tracing::debug!("{:?}", result);
+        let response = handle_error(self, result).await.map_err(|e| {
             tracing::error!("{:?}", e);
             e
         })?;

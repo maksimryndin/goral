@@ -6,7 +6,8 @@ pub(crate) mod metrics;
 pub(crate) mod system;
 
 use crate::configuration::APP_NAME;
-use crate::storage::{AppendableLog, Datarow};
+use crate::rules::{Action, Rule, RuleCondition};
+use crate::storage::{AppendableLog, Datarow, Datavalue};
 use crate::HttpsClient;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -56,6 +57,18 @@ pub trait Service {
         Duration::from_secs(u64::MAX)
     }
 
+    fn get_example_rules(&self) -> Vec<Datarow> {
+        let row: Datarow = Rule {
+            log_name: "log_name (everything up to the first @ in a sheet title)".to_string(),
+            key: "key (column header)".to_string(),
+            condition: RuleCondition::Contains,
+            value: Datavalue::Text("substring".to_string()),
+            action: Action::SkipFurtherRules,
+        }
+        .into();
+        vec![row]
+    }
+
     async fn process_task_result_on_shutdown(
         &mut self,
         result: TaskResult,
@@ -99,6 +112,10 @@ pub trait Service {
         tokio::pin!(tasks);
         let mut push_interval = tokio::time::interval(self.push_interval());
         let mut accumulated_data = vec![];
+        let example_rules = self.get_example_rules();
+        let _ = log.append(example_rules).await;
+        let rules = log.get_rules().await; // TODO watch channel
+        tracing::info!("==>\n{:#?}", rules);
         loop {
             tokio::select! {
                 result = shutdown.recv() => {

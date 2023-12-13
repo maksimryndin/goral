@@ -1,5 +1,6 @@
 pub mod configuration;
 pub mod messenger;
+pub mod rules;
 pub mod services;
 pub mod spreadsheet;
 pub mod storage;

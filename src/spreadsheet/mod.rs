@@ -5,7 +5,7 @@ use google_sheets4::oauth2;
 use http::response::Response;
 use hyper::body::Body;
 pub use spreadsheet::*;
-use std::collections::HashMap;
+use std::collections::{hash_map::Iter, HashMap};
 
 #[derive(Debug)]
 pub(crate) struct Metadata(HashMap<String, String>);
@@ -31,6 +31,20 @@ impl Metadata {
             }
         }
         true
+    }
+
+    pub(crate) fn iter(&self) -> MetadataIter {
+        MetadataIter(self.0.iter())
+    }
+}
+
+pub(crate) struct MetadataIter<'a>(Iter<'a, String, String>);
+
+impl<'a> Iterator for MetadataIter<'a> {
+    type Item = (&'a String, &'a String);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
     }
 }
 

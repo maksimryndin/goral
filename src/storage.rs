@@ -1,3 +1,4 @@
+use crate::rules::{Rule, RULES_LOG_NAME};
 use crate::spreadsheet::sheet::{
     str_to_id, Header, Rows, Sheet, SheetId, TabColorRGB, UpdateSheet, VirtualSheet,
 };
@@ -424,6 +425,7 @@ pub fn create_log(storage: Arc<Storage>, spreadsheet_id: String, service: String
         spreadsheet_id,
         service,
         tab_color_rgb,
+        rules_sheet_id: None,
     }
 }
 
@@ -432,6 +434,7 @@ pub struct AppendableLog {
     service: String,
     spreadsheet_id: String,
     tab_color_rgb: TabColorRGB,
+    rules_sheet_id: Option<SheetId>,
 }
 
 impl AppendableLog {
@@ -602,10 +605,18 @@ impl AppendableLog {
 
         let timestamp = Utc::now();
 
-        datarows.into_iter().for_each(|mut datarow| {
+        for mut datarow in datarows.into_iter() {
             let sheet_id = datarow.sheet_id(&self.storage.host_id, &self.service);
 
+            if self.rules_sheet_id.is_none() && datarow.log_name == RULES_LOG_NAME {
+                self.rules_sheet_id = Some(sheet_id);
+            }
+
             if let Some((sheet, keys)) = existing_sheets.get(&sheet_id) {
+                if datarow.log_name == RULES_LOG_NAME {
+                    // we don't append for existing rules sheets
+                    continue;
+                }
                 // for existing sheets we only change updated_at
                 // so it is enough to have one update per sheet
                 let new_metadata = vec![(METADATA_UPDATED_AT, timestamp.to_rfc3339())];
@@ -676,15 +687,21 @@ impl AppendableLog {
                     .or_insert(Rows::new(sheet_id, row_count))
                     .push(datarow.into());
             }
-        });
+        }
 
-        let sheets_to_add = sheets_to_create.into_iter().map(|(_, (s, _))| s).collect();
-        let sheets_to_update = sheets_to_update.into_iter().map(|(_, u)| u).collect();
+        let sheets_to_add: Vec<VirtualSheet> =
+            sheets_to_create.into_iter().map(|(_, (s, _))| s).collect();
+        let sheets_to_update: Vec<UpdateSheet> =
+            sheets_to_update.into_iter().map(|(_, u)| u).collect();
         let data: Vec<Rows> = data_to_append.into_iter().map(|(_, rows)| rows).collect();
 
         tracing::debug!("sheets_to_update:\n{:?}", sheets_to_update);
         tracing::debug!("sheets_to_add:\n{:?}", sheets_to_add);
         tracing::debug!("data:\n{:?}", data);
+
+        if sheets_to_add.is_empty() && sheets_to_update.is_empty() {
+            return Ok(());
+        }
 
         self.storage
             .google
@@ -700,6 +717,18 @@ impl AppendableLog {
         self.storage
             .google
             .sheet_url(&self.spreadsheet_id, sheet_id)
+    }
+
+    pub(crate) async fn get_rules(&mut self) -> Vec<Rule> {
+        let data = self
+            .storage
+            .google
+            .get_sheet_data(&self.spreadsheet_id, self.rules_sheet_id.expect("assert: rules sheet id is saved at the start of the service at the first append"))
+            .await
+            .unwrap();
+        data.into_iter()
+            .filter_map(|row| Rule::try_from_values(row))
+            .collect()
     }
 }
 

@@ -22,7 +22,7 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::{self, JoinHandle};
 
 pub const METRICS_SERVICE_NAME: &str = "metrics";
-const MAX_BYTES_METRICS_OUTPUT: usize = 2_usize.pow(14); // ~16 KiB
+const MAX_BYTES_METRICS_OUTPUT: usize = 2_usize.pow(16); // ~65 KiB
 
 #[derive(Debug, Clone)]
 struct ScrapeTarget {

@@ -8,6 +8,12 @@ use sysinfo::{
     UserExt,
 };
 
+pub const BASIC_LOG: &str = "basic";
+pub const MEMORY_USE: &str = "memory_use";
+pub const SWAP_USE: &str = "swap_use";
+pub const DISK_USE: &str = "disk_use";
+pub const CPU: &str = "cpu";
+
 #[cfg(not(target_os = "linux"))]
 use sysinfo::DiskExt;
 
@@ -148,11 +154,11 @@ fn process_to_values(process: &ProcessInfo, sys: &mut System) -> Vec<(String, Da
         ),
         (format!("memory_used"), Datavalue::Size(process.memory_used)),
         (
-            format!("memory_use"),
+            MEMORY_USE.to_string(),
             Datavalue::HeatmapPercent(process.memory_use as f64),
         ),
         (
-            format!("cpu"),
+            CPU.to_string(),
             Datavalue::HeatmapPercent(process.cpu_percent as f64),
         ),
         (format!("disk_read"), Datavalue::Size(process.disk_read)),
@@ -205,7 +211,7 @@ pub(super) fn collect(
             Datavalue::Size(sys.available_memory()),
         ),
         (
-            "memory_use".to_string(),
+            MEMORY_USE.to_string(),
             Datavalue::HeatmapPercent(100.0 * sys.used_memory() as f64 / total_memory as f64),
         ),
         (
@@ -213,7 +219,7 @@ pub(super) fn collect(
             Datavalue::Size(sys.free_swap()),
         ),
         (
-            "swap_use".to_string(),
+            SWAP_USE.to_string(),
             Datavalue::HeatmapPercent(100.0 * sys.used_swap() as f64 / sys.total_swap() as f64),
         ),
         (
@@ -233,7 +239,7 @@ pub(super) fn collect(
     // 1 for basic, 5 for top_ stats, 1 for network
     let mut datarows = Vec::with_capacity(1 + mounts.len() + 5 + names.len() + 1);
     datarows.push(Datarow::new(
-        "basic".to_string(),
+        BASIC_LOG.to_string(),
         scrape_time,
         basic_values,
         None,
@@ -346,7 +352,7 @@ fn disk_stat(_: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> V
             scrape_time,
             vec![
                 (
-                    format!("disk_use"),
+                    DISK_USE.to_string(),
                     Datavalue::HeatmapPercent(stat.percent() as f64),
                 ),
                 (format!("disk_free"), Datavalue::Size(stat.free())),
@@ -384,7 +390,7 @@ fn disk_stat(sys: &mut System, mounts: &[String], scrape_time: NaiveDateTime) ->
             scrape_time,
             vec![
                 (
-                    format!("disk_use"),
+                    DISK_USE.to_string(),
                     Datavalue::HeatmapPercent(100.0 * (total - available) as f64 / total as f64),
                 ),
                 (format!("disk_free"), Datavalue::Size(available)),
