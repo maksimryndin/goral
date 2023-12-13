@@ -1,4 +1,5 @@
-use crate::storage::{Datarow, Datavalue};
+use crate::spreadsheet::datavalue::{Datarow, Datavalue};
+use crate::spreadsheet::sheet::Dropdown;
 use chrono::Utc;
 use serde_json::Value;
 use std::fmt;
@@ -24,11 +25,20 @@ pub const IS_CONDITION: &str = "is";
 pub const IS_NOT_CONDITION: &str = "is not";
 pub const CONTAINS_CONDITION: &str = "contains";
 pub const NOT_CONTAINS_CONDITION: &str = "not contains";
+pub const CONDITIONS: [&str; 6] = [
+    LESS_CONDITION,
+    GREATER_CONDITION,
+    IS_CONDITION,
+    IS_NOT_CONDITION,
+    CONTAINS_CONDITION,
+    NOT_CONTAINS_CONDITION,
+];
 
 pub const INFO_ACTION: &str = "info";
 pub const WARN_ACTION: &str = "warn";
 pub const ERROR_ACTION: &str = "error";
 pub const SKIP_ACTION: &str = "skip further rules";
+pub const ACTIONS: [&str; 4] = [INFO_ACTION, WARN_ACTION, ERROR_ACTION, SKIP_ACTION];
 
 #[derive(Debug)]
 pub(crate) enum RuleCondition {
@@ -151,6 +161,19 @@ impl Rule {
             action,
         })
     }
+}
+
+pub(crate) fn rules_dropdowns() -> Vec<Dropdown> {
+    vec![
+        Dropdown {
+            column_index: 3,
+            values: CONDITIONS.into_iter().map(|c| c.to_string()).collect(),
+        },
+        Dropdown {
+            column_index: 5,
+            values: ACTIONS.into_iter().map(|c| c.to_string()).collect(),
+        },
+    ]
 }
 
 // to add some example rules

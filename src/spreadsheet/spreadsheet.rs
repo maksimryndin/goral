@@ -178,6 +178,16 @@ impl SpreadsheetAPI {
     }
 
     #[cfg(test)]
+    pub(crate) async fn get_sheet_data(
+        &self,
+        spreadsheet_id: &str,
+        sheet_id: SheetId,
+    ) -> Result<Vec<Vec<Value>>, HttpResponse> {
+        let mut state = self.state.lock().await;
+        state.get_sheet_data(spreadsheet_id, sheet_id).await
+    }
+
+    #[cfg(test)]
     async fn get(
         &self,
         spreadsheet_id: &str,
@@ -320,8 +330,8 @@ pub(crate) mod tests {
     use google_sheets4::api::Sheet as GoogleSheet;
     use google_sheets4::api::{
         AddSheetRequest, AppendCellsRequest, BasicFilter, CreateDeveloperMetadataRequest,
-        DeveloperMetadata, GridRange, Request, SetBasicFilterRequest, UpdateCellsRequest,
-        UpdateDeveloperMetadataRequest,
+        DeveloperMetadata, GridRange, Request, SetBasicFilterRequest, SetDataValidationRequest,
+        UpdateCellsRequest, UpdateDeveloperMetadataRequest,
     };
     use hyper::{header, Body, Response as HyperResponse, StatusCode};
     use std::collections::{HashMap, HashSet};
@@ -413,6 +423,14 @@ pub(crate) mod tests {
                     spreadsheet_url: None,
                 },
             ))
+        }
+
+        pub(crate) async fn get_sheet_data(
+            &mut self,
+            spreadsheet_id: &str,
+            sheet_id: SheetId,
+        ) -> Result<Vec<Vec<Value>>, HttpResponse> {
+            Ok(vec![])
         }
 
         pub(crate) async fn update(
@@ -602,6 +620,25 @@ pub(crate) mod tests {
                         } else {
                             return Err(Self::bad_response(format!(
                                 "metadata with id {metadata_id} not found!"
+                            )));
+                        }
+                    }
+
+                    Request {
+                        set_data_validation:
+                            Some(SetDataValidationRequest {
+                                range:
+                                    Some(GridRange {
+                                        sheet_id: Some(sheet_id),
+                                        ..
+                                    }),
+                                ..
+                            }),
+                        ..
+                    } => {
+                        if !self.sheets.contains_key(&sheet_id) {
+                            return Err(Self::bad_response(format!(
+                                "sheet with id {sheet_id} not found to set data validation on!"
                             )));
                         }
                     }

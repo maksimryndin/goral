@@ -1,10 +1,11 @@
 use crate::spreadsheet::{Metadata, DEFAULT_FONT};
 use google_sheets4::api::Sheet as GoogleSheet;
 use google_sheets4::api::{
-    AddSheetRequest, AppendCellsRequest, BasicFilter, CellData, CellFormat, Color, ColorStyle,
-    CreateDeveloperMetadataRequest, DeveloperMetadata, DeveloperMetadataLocation, ExtendedValue,
-    GridProperties, GridRange, Request, RowData, SetBasicFilterRequest, SheetProperties,
-    TextFormat, UpdateCellsRequest, UpdateDeveloperMetadataRequest,
+    AddSheetRequest, AppendCellsRequest, BasicFilter, BooleanCondition, CellData, CellFormat,
+    Color, ColorStyle, ConditionValue, CreateDeveloperMetadataRequest, DataValidationRule,
+    DeveloperMetadata, DeveloperMetadataLocation, ExtendedValue, GridProperties, GridRange,
+    Request, RowData, SetBasicFilterRequest, SetDataValidationRequest, SheetProperties, TextFormat,
+    UpdateCellsRequest, UpdateDeveloperMetadataRequest,
 };
 use google_sheets4::FieldMask;
 use std::collections::hash_map::DefaultHasher;
@@ -22,6 +23,12 @@ pub(crate) enum SheetType {
     Grid,
     Chart,
     Other,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Dropdown {
+    pub(crate) values: Vec<String>,
+    pub(crate) column_index: u16,
 }
 
 impl From<String> for SheetType {
@@ -219,6 +226,7 @@ impl From<GoogleSheet> for Sheet {
 pub(crate) struct VirtualSheet {
     pub(super) sheet: Sheet,
     pub(super) headers: Vec<Header>,
+    pub(super) dropdowns: Vec<Dropdown>,
 }
 
 impl VirtualSheet {
@@ -306,6 +314,44 @@ impl VirtualSheet {
             }),
             ..Default::default()
         });
+
+        for dropdown in self.dropdowns {
+            let Dropdown {
+                values,
+                column_index,
+            } = dropdown;
+            requests.push(Request {
+                set_data_validation: Some(SetDataValidationRequest {
+                    rule: Some(DataValidationRule {
+                        condition: Some(BooleanCondition {
+                            type_: Some("ONE_OF_LIST".to_string()),
+                            values: Some(
+                                values
+                                    .into_iter()
+                                    .map(|v| ConditionValue {
+                                        user_entered_value: Some(v),
+                                        ..Default::default()
+                                    })
+                                    .collect(),
+                            ),
+                        }),
+                        show_custom_ui: Some(true),
+                        strict: Some(true),
+                        ..Default::default()
+                    }),
+                    range: Some(GridRange {
+                        sheet_id: Some(self.sheet.sheet_id),
+                        start_row_index: Some(1),
+                        start_column_index: Some(column_index as i32),
+                        end_column_index: Some(column_index as i32 + 1),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+        }
+
         for m in metadata {
             requests.push(Request {
                 create_developer_metadata: Some(CreateDeveloperMetadataRequest {
@@ -355,7 +401,16 @@ impl VirtualSheet {
             tab_color,
             metadata,
         };
-        Self { sheet, headers }
+        Self {
+            sheet,
+            headers,
+            dropdowns: vec![],
+        }
+    }
+
+    pub(crate) fn with_dropdowns(mut self, dropdowns: Vec<Dropdown>) -> Self {
+        self.dropdowns = dropdowns;
+        self
     }
 
     pub(crate) fn sheet_id(&self) -> SheetId {

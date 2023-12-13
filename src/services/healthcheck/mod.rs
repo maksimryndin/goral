@@ -7,7 +7,8 @@ use crate::services::healthcheck::configuration::{
     scrape_push_rule, Healthcheck, Liveness as LivenessConfig, LivenessType,
 };
 use crate::services::{Data, HttpClient, Service, TaskResult};
-use crate::storage::{AppendableLog, Datarow, Datavalue};
+use crate::spreadsheet::datavalue::{Datarow, Datavalue};
+use crate::storage::AppendableLog;
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

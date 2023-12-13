@@ -4,7 +4,8 @@ use crate::messenger::configuration::MessengerConfig;
 use crate::rules::{Action, Rule, RuleCondition};
 use crate::services::system::configuration::{scrape_push_rule, System};
 use crate::services::{Data, Service, TaskResult};
-use crate::storage::{AppendableLog, Datarow, Datavalue};
+use crate::spreadsheet::datavalue::{Datarow, Datavalue};
+use crate::storage::AppendableLog;
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -282,7 +283,7 @@ impl Service for SystemService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::Datavalue;
+    use crate::spreadsheet::datavalue::Datavalue;
     use crate::Notification;
     use tracing::Level;
 

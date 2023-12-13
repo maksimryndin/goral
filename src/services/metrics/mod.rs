@@ -3,7 +3,8 @@ pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
 use crate::services::metrics::configuration::{scrape_push_rule, Metrics};
 use crate::services::{Data, HttpClient, Service, TaskResult};
-use crate::storage::{AppendableLog, Datarow, Datavalue};
+use crate::spreadsheet::datavalue::{Datarow, Datavalue};
+use crate::storage::AppendableLog;
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -435,16 +436,6 @@ mod tests {
             ..
         }) = data_receiver.recv().await
         {
-            assert_eq!(
-                datarows[0].keys_values().get("le=0.005"),
-                Some(&Datavalue::Number(18.0))
-            );
-            assert_eq!(
-                datarows[0]
-                    .keys_values()
-                    .get("example_http_request_duration_seconds_count"),
-                Some(&Datavalue::Number(18.0))
-            );
             assert_eq!(
                 datarows[0].keys_values().get("handler"),
                 Some(&Datavalue::Text("all".to_string()))

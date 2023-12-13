@@ -1,10 +1,11 @@
 pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
-
+use crate::rules::RULES_LOG_NAME;
 use crate::services::kv::configuration::Kv;
 use crate::services::{capture_datetime, Service};
+use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::spreadsheet::HttpResponse;
-use crate::storage::{AppendableLog, Datarow, Datavalue};
+use crate::storage::AppendableLog;
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -34,6 +35,17 @@ fn unique_keys(data: &Vec<(String, Value)>) -> Result<(), serde_valid::validatio
         Err(serde_valid::validation::Error::Custom(
             "`data` should have unique keys".to_string(),
         ))
+    } else {
+        Ok(())
+    }
+}
+
+fn is_not_reserved_name(log_name: &String) -> Result<(), serde_valid::validation::Error> {
+    if log_name == RULES_LOG_NAME {
+        Err(serde_valid::validation::Error::Custom(format!(
+            "`log_name` cannot be a reserved name: [{}]",
+            RULES_LOG_NAME
+        )))
     } else {
         Ok(())
     }
@@ -76,6 +88,7 @@ impl Into<Datavalue> for Value {
 
 #[derive(Debug, Deserialize, Validate)]
 struct KVRow {
+    #[validate(custom(is_not_reserved_name))]
     #[validate(pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$")]
     log_name: String,
     datetime: DateTime<Utc>,
@@ -539,6 +552,21 @@ mod tests {
         let data = json!({"rows": [
             {
                 "log_name": "js error",
+                "datetime": "2023-12-09T09:50:46.136945094Z",
+                "data": [("trace_id", 123)]
+            }
+        ]});
+
+        let r: Request = serde_json::from_value(data).unwrap();
+        r.validate().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "reserved name")]
+    fn kv_reserved_log_name() {
+        let data = json!({"rows": [
+            {
+                "log_name": RULES_LOG_NAME,
                 "datetime": "2023-12-09T09:50:46.136945094Z",
                 "data": [("trace_id", 123)]
             }
