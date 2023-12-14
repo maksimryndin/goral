@@ -246,7 +246,6 @@ impl HealthcheckService {
                 ("is_alive".to_string(), Datavalue::Bool(is_alive)),
                 ("output".to_string(), Datavalue::Text(text)),
             ],
-            None,
         )
     }
 

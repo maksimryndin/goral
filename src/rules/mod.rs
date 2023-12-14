@@ -205,7 +205,6 @@ impl Into<Datarow> for Rule {
                     Datavalue::Text(action.to_string()),
                 ),
             ],
-            None,
         )
     }
 }

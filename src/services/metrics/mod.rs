@@ -194,9 +194,6 @@ impl MetricsService {
             .into_iter()
             .map(|((metric_name, _, timestamp), samples)| {
                 let values = Self::samples_to_datavalues(samples);
-                let note = docs
-                    .get(&metric_name)
-                    .expect("assert: all metrics are in docs by their basenames");
                 let log_name = if let Some(prefix) = identifier.as_ref() {
                     // Prmotheus metric name cannot contain `/` so we use it as a delimiter
                     // see https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
@@ -204,12 +201,7 @@ impl MetricsService {
                 } else {
                     metric_name
                 };
-                Datarow::new(
-                    log_name,
-                    timestamp.naive_utc(),
-                    values,
-                    Some(note.to_string()),
-                )
+                Datarow::new(log_name, timestamp.naive_utc(), values)
             })
             .collect())
     }

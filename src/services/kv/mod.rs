@@ -103,7 +103,6 @@ impl Into<Datarow> for KVRow {
             self.log_name,
             self.datetime.naive_utc(),
             self.data.into_iter().map(|(k, v)| (k, v.into())).collect(),
-            None,
         )
     }
 }

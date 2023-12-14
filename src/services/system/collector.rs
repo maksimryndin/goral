@@ -242,7 +242,6 @@ pub(super) fn collect(
         BASIC_LOG.to_string(),
         scrape_time,
         basic_values,
-        None,
     ));
 
     let mut disk_stat = disk_stat(sys, mounts, scrape_time);
@@ -253,35 +252,30 @@ pub(super) fn collect(
         "top_cpu".to_string(),
         scrape_time,
         process_to_values(top_cpu, &mut sys),
-        None,
     ));
     let top_memory = top_memory_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_memory".to_string(),
         scrape_time,
         process_to_values(top_memory, &mut sys),
-        None,
     ));
     let top_read = top_disk_read_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_disk_read".to_string(),
         scrape_time,
         process_to_values(top_read, &mut sys),
-        None,
     ));
     let top_write = top_disk_write_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_disk_write".to_string(),
         scrape_time,
         process_to_values(top_write, &mut sys),
-        None,
     ));
     if let Some(top_open_files) = top_open_files_process(&mut processes_infos) {
         datarows.push(Datarow::new(
             "top_open_files".to_string(),
             scrape_time,
             process_to_values(top_open_files, &mut sys),
-            None,
         ));
     }
 
@@ -291,7 +285,6 @@ pub(super) fn collect(
                 name.clone(),
                 scrape_time,
                 process_to_values(p, &mut sys),
-                None,
             ));
         } else {
             tracing::warn!("process containing `{name}` in its name is not found to collect process statistics");
@@ -328,7 +321,6 @@ pub(super) fn collect(
         "network".to_string(),
         scrape_time,
         network_values,
-        None,
     ));
     Ok(datarows)
 }
@@ -357,7 +349,6 @@ fn disk_stat(_: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> V
                 ),
                 (format!("disk_free"), Datavalue::Size(stat.free())),
             ],
-            None,
         ));
     }
     datarows
@@ -395,7 +386,6 @@ fn disk_stat(sys: &mut System, mounts: &[String], scrape_time: NaiveDateTime) ->
                 ),
                 (format!("disk_free"), Datavalue::Size(available)),
             ],
-            None,
         ));
     }
     datarows

@@ -52,7 +52,6 @@ pub struct Datarow {
     timestamp: NaiveDateTime,
     data: Vec<(String, Datavalue)>,
     sheet_id: Option<SheetId>,
-    note: Option<String>,
 }
 
 impl Datarow {
@@ -60,14 +59,12 @@ impl Datarow {
         log_name: String,
         timestamp: NaiveDateTime,
         data: Vec<(String, Datavalue)>,
-        note: Option<String>,
     ) -> Self {
         Self {
             log_name,
             timestamp,
             data,
             sheet_id: None,
-            note,
         }
     }
 

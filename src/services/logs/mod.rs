@@ -155,7 +155,6 @@ impl LogsService {
                     (LEVEL_KEY.to_string(), level),
                     ("log_line".to_string(), Datavalue::Text(text)),
                 ],
-                None,
             )
         })
     }
