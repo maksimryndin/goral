@@ -366,6 +366,10 @@ impl Service for HealthcheckService {
         self.push_interval
     }
 
+    fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
     async fn process_task_result_on_shutdown(
         &mut self,
         result: TaskResult,

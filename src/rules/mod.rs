@@ -1,7 +1,8 @@
-use crate::spreadsheet::datavalue::{Datarow, Datavalue};
-use crate::spreadsheet::sheet::Dropdown;
+use crate::spreadsheet::datavalue::{Datarow, Datavalue, NOT_AVAILABLE};
+use crate::spreadsheet::sheet::{Dropdown, SheetId};
 use chrono::Utc;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fmt;
 
 pub const RULES_LOG_NAME: &str = "rules";
@@ -39,6 +40,19 @@ pub const WARN_ACTION: &str = "warn";
 pub const ERROR_ACTION: &str = "error";
 pub const SKIP_ACTION: &str = "skip further rules";
 pub const ACTIONS: [&str; 4] = [INFO_ACTION, WARN_ACTION, ERROR_ACTION, SKIP_ACTION];
+
+pub(crate) fn rules_dropdowns() -> Vec<Dropdown> {
+    vec![
+        Dropdown {
+            column_index: 3,
+            values: CONDITIONS.into_iter().map(|c| c.to_string()).collect(),
+        },
+        Dropdown {
+            column_index: 5,
+            values: ACTIONS.into_iter().map(|c| c.to_string()).collect(),
+        },
+    ]
+}
 
 #[derive(Debug)]
 pub(crate) enum RuleCondition {
@@ -80,7 +94,7 @@ impl<'a> TryFrom<&'a str> for RuleCondition {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Action {
     Info,
     Warn,
@@ -115,12 +129,46 @@ impl<'a> TryFrom<&'a str> for Action {
 }
 
 #[derive(Debug)]
-pub(crate) struct Rule {
+pub struct Rule {
     pub(crate) log_name: String,
     pub(crate) key: String,
     pub(crate) condition: RuleCondition,
     pub(crate) value: Datavalue,
     pub(crate) action: Action,
+}
+
+impl fmt::Display for Rule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Datavalue::*;
+        match &self.value {
+            Number(v) => write!(
+                f,
+                "Rule `if {}:{} value {} {} then {}`",
+                self.log_name, self.key, self.condition, v, self.action
+            ),
+            Integer(v) => write!(
+                f,
+                "Rule `if {}:{} value {} {} then {}`",
+                self.log_name, self.key, self.condition, v, self.action
+            ),
+            Text(v) => write!(
+                f,
+                "Rule `if {}:{} value {} {} then {}`",
+                self.log_name, self.key, self.condition, v, self.action
+            ),
+            Bool(v) => write!(
+                f,
+                "Rule `if {}:{} value {} {} then {}`",
+                self.log_name, self.key, self.condition, v, self.action
+            ),
+            NotAvailable => write!(
+                f,
+                "Rule `if {}:{} value {} {} then {}`",
+                self.log_name, self.key, self.condition, NOT_AVAILABLE, self.action
+            ),
+            _ => panic!("assert: rule can be formatted for supported datavalues"),
+        }
+    }
 }
 
 impl Rule {
@@ -142,11 +190,21 @@ impl Rule {
             RuleCondition::IsNot if value.is_u64() => Datavalue::Integer(value.as_u64()?),
             RuleCondition::Less if value.is_number() => Datavalue::Number(value.as_f64()?),
             RuleCondition::Greater if value.is_number() => Datavalue::Number(value.as_f64()?),
+            RuleCondition::Is if value.is_string() && value.as_str()? == NOT_AVAILABLE => {
+                Datavalue::NotAvailable
+            }
+            RuleCondition::IsNot if value.is_string() && value.as_str()? == NOT_AVAILABLE => {
+                Datavalue::NotAvailable
+            }
             RuleCondition::Contains if value.is_string() => {
                 Datavalue::Text(value.as_str()?.to_string())
             }
             RuleCondition::NotContains if value.is_string() => {
                 Datavalue::Text(value.as_str()?.to_string())
+            }
+            RuleCondition::Is | RuleCondition::IsNot if value.is_number() => {
+                tracing::warn!("`{}` and `{}` conditions are not valid when the `{}` is a float; the rule for `{}`->`{}` is skipped.", IS_CONDITION, IS_NOT_CONDITION, RULE_VALUE_COLUMN_HEADER, log_name, key);
+                return None;
             }
             _ => {
                 return None;
@@ -161,19 +219,85 @@ impl Rule {
             action,
         })
     }
-}
 
-pub(crate) fn rules_dropdowns() -> Vec<Dropdown> {
-    vec![
-        Dropdown {
-            column_index: 3,
-            values: CONDITIONS.into_iter().map(|c| c.to_string()).collect(),
-        },
-        Dropdown {
-            column_index: 5,
-            values: ACTIONS.into_iter().map(|c| c.to_string()).collect(),
-        },
-    ]
+    pub(crate) fn apply(&self, candidate: &RuleApplicant) -> RuleOutput {
+        use RuleCondition::*;
+
+        if candidate.log_name != self.log_name {
+            return RuleOutput::Process(None);
+        }
+        let candidate_value = match candidate.data.get(&self.key) {
+            Some(cv) => cv,
+            None => {
+                return RuleOutput::Process(None);
+            }
+        };
+
+        let message = match (candidate_value, &self.condition, &self.value) {
+            (Datavalue::Number(c), Less, Datavalue::Number(v)) if c < v => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Number(c), Less, Datavalue::Integer(v)) if c < &(*v as f64) => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Integer(c), Less, Datavalue::Number(v)) if &(*c as f64) < v => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Number(c), Greater, Datavalue::Number(v)) if c > v => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Number(c), Greater, Datavalue::Integer(v)) if c > &(*v as f64) => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Integer(c), Greater, Datavalue::Number(v)) if &(*c as f64) > v => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Integer(c), Is, Datavalue::Integer(v)) if c == v => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Integer(c), IsNot, Datavalue::Integer(v)) if c != v => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Bool(c), Is, Datavalue::Bool(v)) if c == v => format!("{self} triggered"),
+            (Datavalue::Bool(c), IsNot, Datavalue::Bool(v)) if c != v => {
+                format!("{self} triggered")
+            }
+            (Datavalue::NotAvailable, Is, Datavalue::NotAvailable) => format!("{self} triggered"),
+            (Datavalue::Number(c), IsNot, Datavalue::NotAvailable) => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Integer(c), IsNot, Datavalue::NotAvailable) => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Text(c), IsNot, Datavalue::NotAvailable) => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Bool(c), IsNot, Datavalue::NotAvailable) => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Text(c), Contains, Datavalue::Text(v)) if c.contains(v) => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Text(c), NotContains, Datavalue::Text(v)) if !c.contains(v) => {
+                format!("{self} triggered for value {c}")
+            }
+            _ => {
+                return RuleOutput::Process(None);
+            }
+        };
+
+        let triggered = Triggered {
+            message,
+            action: self.action.clone(),
+            sheet_id: candidate.sheet_id,
+        };
+        // rule triggered
+        if self.action == Action::SkipFurtherRules {
+            RuleOutput::SkipFurtherRules
+        } else {
+            RuleOutput::Process(Some(triggered))
+        }
+    }
 }
 
 // to add some example rules
@@ -207,4 +331,24 @@ impl Into<Datarow> for Rule {
             ],
         )
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct RuleApplicant {
+    pub(crate) log_name: String,
+    pub(crate) data: HashMap<String, Datavalue>,
+    pub(crate) sheet_id: SheetId,
+}
+
+#[derive(Debug)]
+pub(crate) enum RuleOutput {
+    Process(Option<Triggered>),
+    SkipFurtherRules,
+}
+
+#[derive(Debug)]
+pub struct Triggered {
+    pub(crate) message: String,
+    pub(crate) action: Action,
+    pub(crate) sheet_id: SheetId,
 }

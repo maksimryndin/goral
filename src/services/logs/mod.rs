@@ -319,15 +319,11 @@ impl Service for LogsService {
                 action: Action::Warn,
             }
             .into(),
-            Rule {
-                log_name: LOGS_SERVICE_NAME.to_string(),
-                key: LEVEL_KEY.to_string(),
-                condition: RuleCondition::Contains,
-                value: Datavalue::Text("info".to_string()),
-                action: Action::Info,
-            }
-            .into(),
         ]
+    }
+
+    fn shared(&self) -> &Shared {
+        &self.shared
     }
 
     async fn process_task_result_on_shutdown(

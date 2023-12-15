@@ -327,6 +327,10 @@ impl Service for MetricsService {
         self.push_interval
     }
 
+    fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
     async fn process_task_result(&mut self, result: TaskResult, _: &AppendableLog) -> Data {
         let TaskResult { id, result } = result;
         match result {

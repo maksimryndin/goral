@@ -86,6 +86,10 @@ impl Service for GeneralService {
         ""
     }
 
+    fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
     async fn run(&mut self, _: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         tracing::info!("running with log level {}", self.log_level);
         let collect = self.collect_notifications();

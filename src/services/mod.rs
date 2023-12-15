@@ -6,10 +6,10 @@ pub(crate) mod metrics;
 pub(crate) mod system;
 
 use crate::configuration::APP_NAME;
-use crate::rules::{Action, Rule, RuleCondition};
+use crate::rules::{Action, Rule, RuleCondition, RuleOutput, Triggered};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::HttpsClient;
+use crate::{BoxedMessenger, HttpsClient, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::future::try_join_all;
@@ -25,15 +25,58 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{
+    self,
+    error::{TryRecvError, TrySendError},
+};
 use tokio::task::JoinHandle;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Data {
     Empty,
     Single(Datarow),
     Many(Vec<Datarow>),
     Message(String),
+}
+
+impl Data {
+    pub(crate) fn into_iter(self) -> DataIntoIter {
+        match self {
+            Data::Empty | Data::Message(_) => DataIntoIter {
+                next: None,
+                many: vec![],
+                is_single: true,
+            },
+            Data::Single(row) => DataIntoIter {
+                next: Some(row),
+                many: vec![],
+                is_single: true,
+            },
+            Data::Many(rows) => DataIntoIter {
+                next: None,
+                many: rows,
+                is_single: false,
+            },
+        }
+    }
+}
+
+pub struct DataIntoIter {
+    next: Option<Datarow>,
+    many: Vec<Datarow>,
+    is_single: bool,
+}
+
+impl Iterator for DataIntoIter {
+    type Item = Datarow;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_single {
+            self.next.take()
+        } else {
+            self.many.pop()
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -42,20 +85,117 @@ pub struct TaskResult {
     result: Result<Data, Data>,
 }
 
+// TODO perhaps rayon with par_iter
+fn process_rules(
+    is_shutdown: Arc<AtomicBool>,
+    mut applicant_receiver: mpsc::Receiver<Data>,
+    mut rules_receiver: mpsc::Receiver<Vec<Rule>>,
+    output_sender: mpsc::Sender<Triggered>,
+    service_name: String,
+) {
+    tracing::info!(
+        "started rules processing thread for service {}",
+        service_name
+    );
+
+    let mut rules = rules_receiver
+        .try_recv()
+        .expect("assert: rules are provided at service initialization");
+    while let Some(data) = applicant_receiver.blocking_recv() {
+        for row in data.into_iter() {
+            let applicant = row.into();
+            for rule in &rules {
+                match rule.apply(&applicant) {
+                    RuleOutput::SkipFurtherRules => {
+                        break;
+                    }
+                    RuleOutput::Process(Some(triggered)) => {
+                        match output_sender.try_send(triggered) {
+                            Err(TrySendError::Full(triggered)) => {
+                                let msg = format!(
+                                    "rules output messages queue is full for service {}",
+                                    service_name
+                                );
+                                tracing::error!(
+                                    "{}. Cannot send rules application output: {:#?}",
+                                    msg,
+                                    triggered
+                                );
+                            }
+                            Err(TrySendError::Closed(triggered)) => {
+                                if is_shutdown.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                let msg = format!(
+                                    "rules output messages queue has been unexpectedly closed for service {}",
+                                    service_name
+                                );
+                                tracing::error!(
+                                    "{}: cannot send rules application output: {:#?}",
+                                    msg,
+                                    triggered
+                                );
+                                panic!("assert: rules output messages queue shouldn't be closed before shutdown signal");
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        match rules_receiver.try_recv() {
+            Err(TryRecvError::Disconnected) => {
+                if is_shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+                panic!("assert: rules updates messages queue shouldn't be closed before shutdown signal");
+            }
+            Err(TryRecvError::Empty) => {
+                continue;
+            }
+            Ok(new_rules) => {
+                rules = new_rules;
+            }
+        }
+    }
+    tracing::info!(
+        "exiting rules processing thread for service {}",
+        service_name
+    );
+}
+
+async fn rules_notifications(
+    messenger: Arc<BoxedMessenger>,
+    mut output_receiver: mpsc::Receiver<Triggered>,
+) {
+    while let Some(triggered) = output_receiver.recv().await {
+        // TODO send via service messenger
+        tracing::info!("==> {:#?}", triggered);
+    }
+}
+
 #[async_trait]
-pub trait Service {
+pub trait Service: Send + Sync {
     fn name(&self) -> &str;
 
     fn spreadsheet_id(&self) -> &str;
 
     fn channel_capacity(&self) -> usize {
-        // Default for General and KV services
+        // Default for General and KV services where the channel is not actually used
         1
     }
 
     fn push_interval(&self) -> Duration {
         // Default for General and KV services
         Duration::from_secs(u64::MAX)
+    }
+
+    fn rules_update_interval(&self) -> Duration {
+        Duration::from_secs(10)
     }
 
     fn get_example_rules(&self) -> Vec<Datarow> {
@@ -69,6 +209,8 @@ pub trait Service {
         .into();
         vec![row]
     }
+
+    fn shared(&self) -> &Shared;
 
     async fn process_task_result_on_shutdown(
         &mut self,
@@ -92,6 +234,124 @@ pub trait Service {
         vec![]
     }
 
+    async fn send_for_rule_processing(
+        &self,
+        log: &AppendableLog,
+        data: &mut Data,
+        applicant_tx: &mut mpsc::Sender<Data>,
+    ) {
+        if self.shared().messenger.is_none() {
+            return;
+        }
+        let service_name = self.name();
+        let host_id = log.host_id();
+        match data {
+            Data::Empty | Data::Message(_) => {}
+            Data::Single(ref mut datarow) => {
+                datarow.sheet_id(host_id, service_name);
+            }
+            Data::Many(ref mut datarows) => {
+                datarows.iter_mut().for_each(|d| {
+                    d.sheet_id(host_id, service_name);
+                });
+            }
+        }
+        match applicant_tx.try_send(data.clone()) {
+            Err(TrySendError::Full(_)) => {
+                let msg = format!(
+                    "rules applicants messages queue is full for service {}",
+                    self.name()
+                );
+                tracing::error!("{}. Cannot send data rows for rules application", msg);
+                self.shared().send_notification.try_error(msg);
+            }
+            Err(TrySendError::Closed(_)) => {
+                let msg = format!(
+                    "rules applicants messages queue has been unexpectedly closed for service {}",
+                    self.name()
+                );
+                tracing::error!("{}: cannot send data rows for rules application", msg);
+                self.shared().send_notification.fatal(msg).await;
+                panic!("assert: rules applicants messages queue shouldn't be closed before shutdown signal");
+            }
+            _ => {}
+        }
+    }
+
+    async fn send_updated_rules(
+        &self,
+        log: &AppendableLog,
+        rules_tx: &mut mpsc::Sender<Vec<Rule>>,
+    ) {
+        if self.shared().messenger.is_none() {
+            return;
+        }
+        let rules = log.get_rules().await;
+        match rules_tx.try_send(rules) {
+            Err(TrySendError::Full(_)) => {
+                let msg = format!(
+                    "rules updates messages queue is full for service {}",
+                    self.name()
+                );
+                tracing::error!("{}. Cannot send rules update", msg);
+                self.shared().send_notification.try_error(msg);
+            }
+            Err(TrySendError::Closed(_)) => {
+                let msg = format!(
+                    "rules updates messages queue has been unexpectedly closed for service {}",
+                    self.name()
+                );
+                tracing::error!("{}: cannot send rules update", msg);
+                self.shared().send_notification.fatal(msg).await;
+                panic!("assert: rules updates messages queue shouldn't be closed before shutdown signal");
+            }
+            _ => {}
+        }
+    }
+
+    async fn start_rules_thread(
+        &self,
+        is_shutdown: Arc<AtomicBool>,
+        log: &mut AppendableLog,
+    ) -> (
+        mpsc::Receiver<Triggered>,
+        mpsc::Sender<Vec<Rule>>,
+        mpsc::Sender<Data>,
+    ) {
+        if self.shared().messenger.is_none() {
+            let (applicant_tx, _) = mpsc::channel(1);
+            let (_, output_receiver) = mpsc::channel(1);
+            let (rules_tx, _) = mpsc::channel(1);
+            return (output_receiver, rules_tx, applicant_tx);
+        }
+        //  channel to collect rule applicants for rules processing
+        let (applicant_tx, applicant_receiver) = mpsc::channel(2 * self.channel_capacity());
+        //  channel to collect rule output triggers
+        let (output_tx, output_receiver) = mpsc::channel(2 * self.channel_capacity());
+        let (rules_tx, rules_receiver) = mpsc::channel(10);
+        let example_rules = self.get_example_rules();
+        let _ = log.append(example_rules).await;
+        let rules = log.get_rules().await;
+        rules_tx
+            .send(rules)
+            .await
+            .expect("assert: can send rules at initialization");
+        let service_name = self.name().to_string();
+        std::thread::Builder::new()
+            .name(format!("rules-processor-{}", self.name()).into())
+            .spawn(move || {
+                process_rules(
+                    is_shutdown,
+                    applicant_receiver,
+                    rules_receiver,
+                    output_tx,
+                    service_name,
+                );
+            })
+            .expect("assert: can spawn rule processing thread");
+        (output_receiver, rules_tx, applicant_tx)
+    }
+
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         log.healthcheck()
             .await
@@ -109,13 +369,19 @@ pub trait Service {
         //  channel to collect results
         let (tx, mut data_receiver) = mpsc::channel(2 * self.channel_capacity());
         let is_shutdown = Arc::new(AtomicBool::new(false));
-        let tasks = try_join_all(self.spawn_tasks(is_shutdown.clone(), tx).await);
+        let (output_receiver, mut rules_tx, mut applicant_tx) =
+            self.start_rules_thread(is_shutdown.clone(), &mut log).await;
+        let mut tasks = self.spawn_tasks(is_shutdown.clone(), tx).await;
+        if let Some(messenger) = self.shared().messenger.clone() {
+            tasks.push(tokio::spawn(async move {
+                rules_notifications(messenger, output_receiver).await
+            }));
+        }
+        let tasks = try_join_all(tasks);
         tokio::pin!(tasks);
         let mut push_interval = tokio::time::interval(self.push_interval());
+        let mut rules_update_interval = tokio::time::interval(self.rules_update_interval());
         let mut accumulated_data = vec![];
-        let example_rules = self.get_example_rules();
-        let _ = log.append(example_rules).await;
-        let rules = log.get_rules().await; // TODO watch channel
         loop {
             tokio::select! {
                 result = shutdown.recv() => {
@@ -152,9 +418,13 @@ pub trait Service {
                     accumulated_data.extend(example_rules);
                     let _ = log.append(accumulated_data).await;
                     accumulated_data = vec![];
+                },
+                _ = rules_update_interval.tick() => {
+                    self.send_updated_rules(&log, &mut rules_tx).await;
                 }
                 Some(task_result) = data_receiver.recv() => {
-                    let data = self.process_task_result(task_result, &log).await;
+                    let mut data = self.process_task_result(task_result, &log).await;
+                    self.send_for_rule_processing(&log, &mut data, &mut applicant_tx).await;
                     match data {
                         Data::Empty | Data::Message(_) => {},
                         Data::Single(datarow) => {accumulated_data.push(datarow);}

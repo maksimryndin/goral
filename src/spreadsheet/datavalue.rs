@@ -1,3 +1,4 @@
+use crate::rules::RuleApplicant;
 use crate::spreadsheet::sheet::{str_to_id, Header, SheetId};
 use crate::spreadsheet::{DEFAULT_FONT, DEFAULT_FONT_TEXT};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -14,6 +15,7 @@ const THOUSAND: u64 = 10_u64.pow(3);
 const MILLION: u64 = 10_u64.pow(6);
 const BILLION: u64 = 10_u64.pow(9);
 const TRILLION: u64 = 10_u64.pow(12);
+pub(crate) const NOT_AVAILABLE: &str = "N/A";
 
 const fn size_pattern(size: u64) -> &'static str {
     if size >= TRILLION {
@@ -46,7 +48,7 @@ pub(crate) enum Datavalue {
     NotAvailable,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Datarow {
     log_name: String,
     timestamp: NaiveDateTime,
@@ -362,7 +364,7 @@ impl Into<RowData> for Datarow {
                     ),
                     Datavalue::NotAvailable => (
                         ExtendedValue {
-                            string_value: Some("N/A".to_string()),
+                            string_value: Some(NOT_AVAILABLE.to_string()),
                             ..Default::default()
                         },
                         CellFormat {
@@ -383,6 +385,50 @@ impl Into<RowData> for Datarow {
             })
             .collect();
         RowData { values: Some(row) }
+    }
+}
+
+impl Into<RuleApplicant> for Datarow {
+    fn into(self) -> RuleApplicant {
+        use Datavalue::*;
+        let Datarow {
+            log_name,
+            timestamp,
+            data,
+            sheet_id,
+        } = self;
+        let sheet_id = sheet_id.expect(
+            "assert: sheet id should be initialized before the rule applicant transformation",
+        );
+        // convert datavalues into types supported by rules with O(1) access
+        let data = data
+            .into_iter()
+            .chain(
+                [(
+                    DATETIME_COLUMN_NAME.to_string(),
+                    Datavalue::Datetime(timestamp),
+                )]
+                .into_iter(),
+            )
+            .map(|(k, v)| {
+                let v = match v {
+                    Text(t) | RedText(t) | OrangeText(t) | GreenText(t) => Text(t),
+                    Number(n) => Number(n),
+                    Integer(i) | IntegerID(i) => Integer(i),
+                    Percent(p) | HeatmapPercent(p) => Number(p / 100.0),
+                    Datetime(d) => Number(convert_datetime_to_spreadsheet_double(d)),
+                    Bool(b) => Bool(b),
+                    Size(s) => Integer(s),
+                    NotAvailable => NotAvailable,
+                };
+                (k, v)
+            })
+            .collect();
+        RuleApplicant {
+            log_name,
+            data,
+            sheet_id,
+        }
     }
 }
 

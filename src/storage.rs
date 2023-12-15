@@ -341,7 +341,8 @@ impl AppendableLog {
             .sheet_url(&self.spreadsheet_id, sheet_id)
     }
 
-    pub(crate) async fn get_rules(&mut self) -> Vec<Rule> {
+    // TODO add timeout for fetch
+    pub(crate) async fn get_rules(&self) -> Vec<Rule> {
         let data = self
             .storage
             .google

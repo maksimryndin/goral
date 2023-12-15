@@ -232,6 +232,10 @@ impl Service for SystemService {
         rows
     }
 
+    fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
     async fn process_task_result_on_shutdown(
         &mut self,
         result: TaskResult,

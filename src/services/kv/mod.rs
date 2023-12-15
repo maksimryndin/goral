@@ -288,6 +288,10 @@ impl Service for KvService {
         self.spreadsheet_id.as_str()
     }
 
+    fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         log.healthcheck()
             .await
