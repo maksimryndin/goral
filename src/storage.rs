@@ -341,6 +341,12 @@ impl AppendableLog {
             .sheet_url(&self.spreadsheet_id, sheet_id)
     }
 
+    pub(crate) fn spreadsheet_baseurl(&self) -> String {
+        self.storage
+            .google
+            .spreadsheet_baseurl(&self.spreadsheet_id)
+    }
+
     // TODO add timeout for fetch
     pub(crate) async fn get_rules(&self) -> Vec<Rule> {
         let data = self
@@ -459,7 +465,6 @@ mod tests {
                     (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key12"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name2".to_string(),
@@ -468,7 +473,6 @@ mod tests {
                     (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key22"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
         ];
 
@@ -518,7 +522,6 @@ mod tests {
                     (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key23"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name1".to_string(),
@@ -527,7 +530,6 @@ mod tests {
                     (format!("key12"), Datavalue::Size(400_u64)),
                     (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name2".to_string(),
@@ -536,7 +538,6 @@ mod tests {
                     (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key22"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name3".to_string(),
@@ -545,7 +546,6 @@ mod tests {
                     (format!("key31"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key32"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
         ];
 
@@ -650,7 +650,6 @@ mod tests {
                     (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key12"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name2".to_string(),
@@ -659,7 +658,6 @@ mod tests {
                     (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key22"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
         ];
 
@@ -704,7 +702,6 @@ mod tests {
                     (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key12"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name2".to_string(),
@@ -713,7 +710,6 @@ mod tests {
                     (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key22"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
         ];
 
@@ -766,7 +762,6 @@ mod tests {
                     (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key12"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name2".to_string(),
@@ -775,7 +770,6 @@ mod tests {
                     (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key22"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
         ];
 
@@ -833,7 +827,6 @@ mod tests {
                     (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key12"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name2".to_string(),
@@ -842,7 +835,6 @@ mod tests {
                     (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key22"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
         ];
 
@@ -900,7 +892,6 @@ mod tests {
                     (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key12"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
             Datarow::new(
                 "log_name2".to_string(),
@@ -909,7 +900,6 @@ mod tests {
                     (format!("key21"), Datavalue::HeatmapPercent(3_f64)),
                     (format!("key22"), Datavalue::Size(400_u64)),
                 ],
-                None,
             ),
         ];
 

@@ -6,10 +6,11 @@ pub(crate) mod metrics;
 pub(crate) mod system;
 
 use crate::configuration::APP_NAME;
+use crate::messenger::configuration::MessengerConfig;
 use crate::rules::{Action, Rule, RuleCondition, RuleOutput, Triggered};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{BoxedMessenger, HttpsClient, Shared};
+use crate::{BoxedMessenger, HttpsClient, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::future::try_join_all;
@@ -25,11 +26,9 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::{
-    self,
-    error::{TryRecvError, TrySendError},
-};
+use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::task::JoinHandle;
+use tracing::Level;
 
 #[derive(Debug, Clone)]
 pub enum Data {
@@ -88,9 +87,9 @@ pub struct TaskResult {
 // TODO perhaps rayon with par_iter
 fn process_rules(
     is_shutdown: Arc<AtomicBool>,
-    mut applicant_receiver: mpsc::Receiver<Data>,
-    mut rules_receiver: mpsc::Receiver<Vec<Rule>>,
-    output_sender: mpsc::Sender<Triggered>,
+    send_notification: Sender,
+    mut input_rx: mpsc::Receiver<RulePayload>,
+    output_tx: mpsc::Sender<Triggered>,
     service_name: String,
 ) {
     tracing::info!(
@@ -98,67 +97,64 @@ fn process_rules(
         service_name
     );
 
-    let mut rules = rules_receiver
+    let RulePayload::Rules(mut rules) = input_rx
         .try_recv()
-        .expect("assert: rules are provided at service initialization");
-    while let Some(data) = applicant_receiver.blocking_recv() {
-        for row in data.into_iter() {
-            let applicant = row.into();
-            for rule in &rules {
-                match rule.apply(&applicant) {
-                    RuleOutput::SkipFurtherRules => {
-                        break;
-                    }
-                    RuleOutput::Process(Some(triggered)) => {
-                        match output_sender.try_send(triggered) {
-                            Err(TrySendError::Full(triggered)) => {
-                                let msg = format!(
-                                    "rules output messages queue is full for service {}",
-                                    service_name
-                                );
-                                tracing::error!(
-                                    "{}. Cannot send rules application output: {:#?}",
-                                    msg,
-                                    triggered
-                                );
-                            }
-                            Err(TrySendError::Closed(triggered)) => {
-                                if is_shutdown.load(Ordering::Relaxed) {
-                                    return;
-                                }
-                                let msg = format!(
-                                    "rules output messages queue has been unexpectedly closed for service {}",
-                                    service_name
-                                );
-                                tracing::error!(
-                                    "{}: cannot send rules application output: {:#?}",
-                                    msg,
-                                    triggered
-                                );
-                                panic!("assert: rules output messages queue shouldn't be closed before shutdown signal");
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {
-                        continue;
-                    }
-                }
-            }
-        }
-
-        match rules_receiver.try_recv() {
-            Err(TryRecvError::Disconnected) => {
-                if is_shutdown.load(Ordering::Relaxed) {
-                    return;
-                }
-                panic!("assert: rules updates messages queue shouldn't be closed before shutdown signal");
-            }
-            Err(TryRecvError::Empty) => {
+        .expect("assert: rules are provided at service initialization")
+    else {
+        panic!("assert: rules are provided at service initialization as a first message");
+    };
+    while let Some(payload) = input_rx.blocking_recv() {
+        match payload {
+            RulePayload::Rules(updated_rules) => {
+                rules = updated_rules;
                 continue;
             }
-            Ok(new_rules) => {
-                rules = new_rules;
+            RulePayload::Data(data) => {
+                for row in data.into_iter() {
+                    let applicant = row.into();
+                    for rule in &rules {
+                        match rule.apply(&applicant) {
+                            RuleOutput::SkipFurtherRules => {
+                                break;
+                            }
+                            RuleOutput::Process(Some(triggered)) => {
+                                match output_tx.try_send(triggered) {
+                                    Err(TrySendError::Full(triggered)) => {
+                                        let msg = format!(
+                                            "rules output messages queue is full for service {}",
+                                            service_name
+                                        );
+                                        tracing::error!(
+                                            "{}. Cannot send rules application output: {:#?}",
+                                            msg,
+                                            triggered
+                                        );
+                                        send_notification.try_error(msg);
+                                    }
+                                    Err(TrySendError::Closed(triggered)) => {
+                                        if is_shutdown.load(Ordering::Relaxed) {
+                                            return;
+                                        }
+                                        let msg = format!(
+                                            "rules output messages queue has been unexpectedly closed for service {}",
+                                            service_name
+                                        );
+                                        tracing::error!(
+                                            "{}: cannot send rules application output: {:#?}",
+                                            msg,
+                                            triggered
+                                        );
+                                        panic!("assert: rules output messages queue shouldn't be closed before shutdown signal");
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {
+                                continue;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -170,12 +166,42 @@ fn process_rules(
 
 async fn rules_notifications(
     messenger: Arc<BoxedMessenger>,
+    messenger_config: MessengerConfig,
+    send_notification: Sender,
     mut output_receiver: mpsc::Receiver<Triggered>,
+    base_url: String,
 ) {
     while let Some(triggered) = output_receiver.recv().await {
-        // TODO send via service messenger
-        tracing::info!("==> {:#?}", triggered);
+        use Action::*;
+        let level = match triggered.action {
+            Info => Level::INFO,
+            Warn => Level::WARN,
+            Error => Level::ERROR,
+            SkipFurtherRules => panic!("assert: `skip further rules` action shouldn't be sent"),
+        };
+        let message = format!(
+            "```{}```[spreadsheet]({}{}) may be created a bit later",
+            triggered.message, base_url, triggered.sheet_id
+        );
+        if let Err(_) = messenger
+            .send_by_level(&messenger_config, &message, level)
+            .await
+        {
+            tracing::error!(
+                "failed to send triggered rule via configured messenger: {:?}",
+                messenger_config
+            );
+            send_notification.try_error(format!(
+                "{}. Sending via configured messenger failed.",
+                message
+            ));
+        }
     }
+}
+
+pub enum RulePayload {
+    Rules(Vec<Rule>),
+    Data(Data),
 }
 
 #[async_trait]
@@ -185,7 +211,7 @@ pub trait Service: Send + Sync {
     fn spreadsheet_id(&self) -> &str;
 
     fn channel_capacity(&self) -> usize {
-        // Default for General and KV services where the channel is not actually used
+        // Default for General service where the channel is not actually used
         1
     }
 
@@ -211,6 +237,10 @@ pub trait Service: Send + Sync {
     }
 
     fn shared(&self) -> &Shared;
+
+    fn messenger_config(&self) -> Option<MessengerConfig> {
+        None
+    }
 
     async fn process_task_result_on_shutdown(
         &mut self,
@@ -238,7 +268,7 @@ pub trait Service: Send + Sync {
         &self,
         log: &AppendableLog,
         data: &mut Data,
-        applicant_tx: &mut mpsc::Sender<Data>,
+        input_tx: &mut mpsc::Sender<RulePayload>,
     ) {
         if self.shared().messenger.is_none() {
             return;
@@ -256,10 +286,10 @@ pub trait Service: Send + Sync {
                 });
             }
         }
-        match applicant_tx.try_send(data.clone()) {
+        match input_tx.try_send(RulePayload::Data(data.clone())) {
             Err(TrySendError::Full(_)) => {
                 let msg = format!(
-                    "rules applicants messages queue is full for service {}",
+                    "rules input messages queue is full for service {}",
                     self.name()
                 );
                 tracing::error!("{}. Cannot send data rows for rules application", msg);
@@ -267,12 +297,14 @@ pub trait Service: Send + Sync {
             }
             Err(TrySendError::Closed(_)) => {
                 let msg = format!(
-                    "rules applicants messages queue has been unexpectedly closed for service {}",
+                    "rules input messages queue has been unexpectedly closed for service {}",
                     self.name()
                 );
                 tracing::error!("{}: cannot send data rows for rules application", msg);
                 self.shared().send_notification.fatal(msg).await;
-                panic!("assert: rules applicants messages queue shouldn't be closed before shutdown signal");
+                panic!(
+                    "assert: rules input messages queue shouldn't be closed before shutdown signal"
+                );
             }
             _ => {}
         }
@@ -281,16 +313,16 @@ pub trait Service: Send + Sync {
     async fn send_updated_rules(
         &self,
         log: &AppendableLog,
-        rules_tx: &mut mpsc::Sender<Vec<Rule>>,
+        input_tx: &mut mpsc::Sender<RulePayload>,
     ) {
         if self.shared().messenger.is_none() {
             return;
         }
         let rules = log.get_rules().await;
-        match rules_tx.try_send(rules) {
+        match input_tx.try_send(RulePayload::Rules(rules)) {
             Err(TrySendError::Full(_)) => {
                 let msg = format!(
-                    "rules updates messages queue is full for service {}",
+                    "rules input messages queue is full for service {}",
                     self.name()
                 );
                 tracing::error!("{}. Cannot send rules update", msg);
@@ -298,12 +330,14 @@ pub trait Service: Send + Sync {
             }
             Err(TrySendError::Closed(_)) => {
                 let msg = format!(
-                    "rules updates messages queue has been unexpectedly closed for service {}",
+                    "rules input messages queue has been unexpectedly closed for service {}",
                     self.name()
                 );
                 tracing::error!("{}: cannot send rules update", msg);
                 self.shared().send_notification.fatal(msg).await;
-                panic!("assert: rules updates messages queue shouldn't be closed before shutdown signal");
+                panic!(
+                    "assert: rules input messages queue shouldn't be closed before shutdown signal"
+                );
             }
             _ => {}
         }
@@ -313,43 +347,38 @@ pub trait Service: Send + Sync {
         &self,
         is_shutdown: Arc<AtomicBool>,
         log: &mut AppendableLog,
-    ) -> (
-        mpsc::Receiver<Triggered>,
-        mpsc::Sender<Vec<Rule>>,
-        mpsc::Sender<Data>,
-    ) {
+    ) -> (mpsc::Sender<RulePayload>, mpsc::Receiver<Triggered>) {
         if self.shared().messenger.is_none() {
-            let (applicant_tx, _) = mpsc::channel(1);
-            let (_, output_receiver) = mpsc::channel(1);
-            let (rules_tx, _) = mpsc::channel(1);
-            return (output_receiver, rules_tx, applicant_tx);
+            let (input_tx, _) = mpsc::channel(1);
+            let (_, output_rx) = mpsc::channel(1);
+            return (input_tx, output_rx);
         }
-        //  channel to collect rule applicants for rules processing
-        let (applicant_tx, applicant_receiver) = mpsc::channel(2 * self.channel_capacity());
+        //  channel to collect rule applicants and rules updates for rules processing
+        let (input_tx, input_rx) = mpsc::channel(2 * self.channel_capacity());
         //  channel to collect rule output triggers
-        let (output_tx, output_receiver) = mpsc::channel(2 * self.channel_capacity());
-        let (rules_tx, rules_receiver) = mpsc::channel(10);
+        let (output_tx, output_rx) = mpsc::channel(2 * self.channel_capacity());
         let example_rules = self.get_example_rules();
         let _ = log.append(example_rules).await;
         let rules = log.get_rules().await;
-        rules_tx
-            .send(rules)
+        input_tx
+            .send(RulePayload::Rules(rules))
             .await
             .expect("assert: can send rules at initialization");
         let service_name = self.name().to_string();
+        let send_notification = self.shared().send_notification.clone();
         std::thread::Builder::new()
             .name(format!("rules-processor-{}", self.name()).into())
             .spawn(move || {
                 process_rules(
                     is_shutdown,
-                    applicant_receiver,
-                    rules_receiver,
+                    send_notification,
+                    input_rx,
                     output_tx,
                     service_name,
                 );
             })
             .expect("assert: can spawn rule processing thread");
-        (output_receiver, rules_tx, applicant_tx)
+        (input_tx, output_rx)
     }
 
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
@@ -369,12 +398,24 @@ pub trait Service: Send + Sync {
         //  channel to collect results
         let (tx, mut data_receiver) = mpsc::channel(2 * self.channel_capacity());
         let is_shutdown = Arc::new(AtomicBool::new(false));
-        let (output_receiver, mut rules_tx, mut applicant_tx) =
+        let (mut rules_input, rules_output) =
             self.start_rules_thread(is_shutdown.clone(), &mut log).await;
         let mut tasks = self.spawn_tasks(is_shutdown.clone(), tx).await;
         if let Some(messenger) = self.shared().messenger.clone() {
+            let base_url = log.spreadsheet_baseurl();
+            let messenger_config = self
+                .messenger_config()
+                .expect("assert: if messenger is set for service, it has a config");
+            let send_notification = self.shared().send_notification.clone();
             tasks.push(tokio::spawn(async move {
-                rules_notifications(messenger, output_receiver).await
+                rules_notifications(
+                    messenger,
+                    messenger_config,
+                    send_notification,
+                    rules_output,
+                    base_url,
+                )
+                .await
             }));
         }
         let tasks = try_join_all(tasks);
@@ -420,11 +461,11 @@ pub trait Service: Send + Sync {
                     accumulated_data = vec![];
                 },
                 _ = rules_update_interval.tick() => {
-                    self.send_updated_rules(&log, &mut rules_tx).await;
+                    self.send_updated_rules(&log, &mut rules_input).await;
                 }
                 Some(task_result) = data_receiver.recv() => {
                     let mut data = self.process_task_result(task_result, &log).await;
-                    self.send_for_rule_processing(&log, &mut data, &mut applicant_tx).await;
+                    self.send_for_rule_processing(&log, &mut data, &mut rules_input).await;
                     match data {
                         Data::Empty | Data::Message(_) => {},
                         Data::Single(datarow) => {accumulated_data.push(datarow);}
@@ -581,6 +622,7 @@ mod tests {
 
     struct TestService {
         counter: Arc<AtomicUsize>,
+        shared: Shared,
     }
 
     const APPEND_DURATION_MS: u64 = 100;
@@ -603,6 +645,10 @@ mod tests {
 
         fn push_interval(&self) -> Duration {
             Duration::from_millis(50)
+        }
+
+        fn shared(&self) -> &Shared {
+            &self.shared
         }
 
         async fn process_task_result(&mut self, result: TaskResult, _log: &AppendableLog) -> Data {
@@ -629,7 +675,6 @@ mod tests {
                                         (format!("key11"), Datavalue::HeatmapPercent(3_f64)),
                                         (format!("key12"), Datavalue::Size(400_u64)),
                                     ],
-                                    None,
                                 ),
                             ));
 
@@ -679,8 +724,12 @@ mod tests {
         let (shutdown, rx) = broadcast::channel(1);
 
         let counter = data_counter.clone();
+        let shared = Shared {
+            messenger: None,
+            send_notification: tx.clone(),
+        };
         let service = tokio::spawn(async move {
-            let mut service = TestService { counter };
+            let mut service = TestService { counter, shared };
             service.run(log, rx).await;
         });
         tokio::spawn(async move {

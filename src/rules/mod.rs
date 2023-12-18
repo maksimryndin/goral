@@ -196,13 +196,14 @@ impl Rule {
             RuleCondition::IsNot if value.is_string() && value.as_str()? == NOT_AVAILABLE => {
                 Datavalue::NotAvailable
             }
-            RuleCondition::Contains if value.is_string() => {
+            RuleCondition::Contains if value.is_string() && value.as_str()? != NOT_AVAILABLE => {
                 Datavalue::Text(value.as_str()?.to_string())
             }
-            RuleCondition::NotContains if value.is_string() => {
+            RuleCondition::NotContains if value.is_string() && value.as_str()? != NOT_AVAILABLE => {
                 Datavalue::Text(value.as_str()?.to_string())
             }
             RuleCondition::Is | RuleCondition::IsNot if value.is_number() => {
+                // TODO send notification??
                 tracing::warn!("`{}` and `{}` conditions are not valid when the `{}` is a float; the rule for `{}`->`{}` is skipped.", IS_CONDITION, IS_NOT_CONDITION, RULE_VALUE_COLUMN_HEADER, log_name, key);
                 return None;
             }
@@ -351,4 +352,554 @@ pub struct Triggered {
     pub(crate) message: String,
     pub(crate) action: Action,
     pub(crate) sheet_id: SheetId,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::TEST_HOST_ID;
+    use serde_json::json;
+
+    #[test]
+    fn rules_deserialization() {
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(LESS_CONDITION),
+            json!("log_name1"),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `less` cannot be a condition for a text value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(GREATER_CONDITION),
+            json!("log_name1"),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `greater` cannot be a condition for a text value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(LESS_CONDITION),
+            json!(NOT_AVAILABLE),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `less` cannot be a condition for a N/A value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(GREATER_CONDITION),
+            json!(NOT_AVAILABLE),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `greater` cannot be a condition for a N/A value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(LESS_CONDITION),
+            json!(true),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `less` cannot be a condition for a bool value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(GREATER_CONDITION),
+            json!(true),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `greater` cannot be a condition for a bool value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_CONDITION),
+            json!("log_name1"),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `is` cannot be a condition for a text value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_CONDITION),
+            json!(1.0),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `is` cannot be a condition for a float value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_NOT_CONDITION),
+            json!("log_name1"),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `is not` cannot be a condition for a text value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_NOT_CONDITION),
+            json!(1.0),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `is not` cannot be a condition for a float value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(CONTAINS_CONDITION),
+            json!(1.0),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `contains` cannot be a condition for a float value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(CONTAINS_CONDITION),
+            json!(1),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `contains` cannot be a condition for a integer value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(CONTAINS_CONDITION),
+            json!(true),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `contains` cannot be a condition for a bool value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(CONTAINS_CONDITION),
+            json!(NOT_AVAILABLE),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: `contains` cannot be a condition for a N/A value"
+        );
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_CONDITION),
+            json!(-2),
+            json!(INFO_ACTION),
+        ]);
+        assert!(
+            rule.is_none(),
+            "test assert: negative integers are not supported"
+        );
+    }
+
+    #[test]
+    fn rules_application() {
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_NOT_CONDITION),
+            json!(NOT_AVAILABLE),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Text("some text".to_string()))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(LESS_CONDITION),
+            json!(-9),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Number(-10.0))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(LESS_CONDITION),
+            json!(9.0),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Number(8.0))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(GREATER_CONDITION),
+            json!(9.0),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Number(10.0))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(LESS_CONDITION),
+            json!(9),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Number(8.0))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(GREATER_CONDITION),
+            json!(9),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Number(10.0))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(LESS_CONDITION),
+            json!(9.0),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Size(8))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(GREATER_CONDITION),
+            json!(9.0),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Size(10))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(LESS_CONDITION),
+            json!(0.9),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Percent(80.0))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(GREATER_CONDITION),
+            json!(0.9),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Percent(100.0))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_CONDITION),
+            json!(true),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Bool(true))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_CONDITION),
+            json!(10),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::IntegerID(10))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_CONDITION),
+            json!(10),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::IntegerID(10))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(IS_NOT_CONDITION),
+            json!(10),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::IntegerID(11))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(CONTAINS_CONDITION),
+            json!("substring"),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![(
+                "key".to_string(),
+                Datavalue::Text("34substring".to_string()),
+            )],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(vec![
+            json!(0.0),
+            json!("log_name1"),
+            json!("key"),
+            json!(NOT_CONTAINS_CONDITION),
+            json!("substring"),
+            json!(INFO_ACTION),
+        ]);
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![(
+                "key".to_string(),
+                Datavalue::Text("34sub2string".to_string()),
+            )],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+    }
 }

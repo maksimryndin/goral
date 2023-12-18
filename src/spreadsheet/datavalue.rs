@@ -487,7 +487,6 @@ mod tests {
                 (format!("disk_use"), Datavalue::HeatmapPercent(3_f64)),
                 (format!("disk_free"), Datavalue::Size(400_u64)),
             ],
-            None,
         );
         assert_eq!(895475598, datarow.sheet_id("host1", "system"));
     }
@@ -505,7 +504,6 @@ mod tests {
                 (format!("disk_use"), Datavalue::HeatmapPercent(3_f64)),
                 (format!("disk_free"), Datavalue::Size(400_u64)),
             ],
-            None,
         );
         assert_eq!(
             datarow.headers()[0],

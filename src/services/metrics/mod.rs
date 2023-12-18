@@ -331,6 +331,10 @@ impl Service for MetricsService {
         &self.shared
     }
 
+    fn messenger_config(&self) -> Option<MessengerConfig> {
+        self.messenger_config.clone()
+    }
+
     async fn process_task_result(&mut self, result: TaskResult, _: &AppendableLog) -> Data {
         let TaskResult { id, result } = result;
         match result {

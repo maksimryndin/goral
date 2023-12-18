@@ -117,7 +117,7 @@ async fn start() -> Result<(), String> {
 
     let goral = try_join_all(tasks);
     tokio::pin!(goral);
-    welcome(tx.clone(), project_id).await;
+    welcome(tx.clone(), project_id, args.id.to_string()).await;
     tracing::info!("{APP_NAME} started with pid {}", process::id());
 
     tokio::select! {

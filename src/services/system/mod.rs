@@ -236,6 +236,10 @@ impl Service for SystemService {
         &self.shared
     }
 
+    fn messenger_config(&self) -> Option<MessengerConfig> {
+        self.messenger_config.clone()
+    }
+
     async fn process_task_result_on_shutdown(
         &mut self,
         result: TaskResult,

@@ -6,12 +6,16 @@ use crate::HyperConnector;
 use crate::Sender;
 use chrono::Utc;
 use google_sheets4::api::{
-    BatchGetValuesByDataFilterRequest, BatchUpdateSpreadsheetRequest,
-    BatchUpdateSpreadsheetResponse, DataFilter, DeveloperMetadataLookup,
-    GetSpreadsheetByDataFilterRequest, GridRange, Spreadsheet,
+    BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
 };
 #[cfg(not(test))]
-use google_sheets4::{api::Sheets, oauth2::authenticator::Authenticator};
+use google_sheets4::{
+    api::{
+        BatchGetValuesByDataFilterRequest, DataFilter, DeveloperMetadataLookup,
+        GetSpreadsheetByDataFilterRequest, GridRange, Sheets,
+    },
+    oauth2::authenticator::Authenticator,
+};
 use google_sheets4::{
     hyper::{self, Body},
     Error, Result as SheetsResult,
@@ -227,6 +231,13 @@ impl SpreadsheetAPI {
         )
     }
 
+    pub(crate) fn spreadsheet_baseurl(&self, spreadsheet_id: &str) -> String {
+        format!(
+            "https://docs.google.com/spreadsheets/d/{}#gid=",
+            spreadsheet_id
+        )
+    }
+
     fn calculate_usage(num_of_cells: i32) -> f32 {
         100.0 * (num_of_cells as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32)
     }
@@ -427,8 +438,8 @@ pub(crate) mod tests {
 
         pub(crate) async fn get_sheet_data(
             &mut self,
-            spreadsheet_id: &str,
-            sheet_id: SheetId,
+            _spreadsheet_id: &str,
+            _sheet_id: SheetId,
         ) -> Result<Vec<Vec<Value>>, HttpResponse> {
             Ok(vec![])
         }

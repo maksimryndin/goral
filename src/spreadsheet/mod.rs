@@ -34,6 +34,7 @@ impl Metadata {
         true
     }
 
+    #[cfg(not(test))]
     pub(crate) fn iter(&self) -> MetadataIter {
         MetadataIter(self.0.iter())
     }

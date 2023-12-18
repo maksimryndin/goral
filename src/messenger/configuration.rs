@@ -27,7 +27,7 @@ fn messenger_implementation_host_rule(
     Ok(())
 }
 
-#[derive(Deserialize, Validate, PartialEq)]
+#[derive(Deserialize, Clone, Validate, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum MessengerImplementation {
     Telegram { chat_id: String },
@@ -51,7 +51,7 @@ impl Debug for MessengerImplementation {
     }
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Clone, Validate)]
 #[rule(messenger_implementation_host_rule(implementation, url))]
 #[serde(deny_unknown_fields)]
 pub struct MessengerConfig {

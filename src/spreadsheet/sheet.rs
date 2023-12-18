@@ -115,6 +115,7 @@ pub(crate) struct Sheet {
     pub(super) sheet_id: SheetId,
     pub(super) title: String,
     pub(super) hidden: bool,
+    #[allow(unused)]
     pub(super) index: u8,
     pub(super) sheet_type: SheetType,
     // for Grid sheets - we use the same type (i32) as an upstream libs

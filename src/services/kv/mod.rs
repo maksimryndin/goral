@@ -2,13 +2,14 @@ pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
 use crate::rules::RULES_LOG_NAME;
 use crate::services::kv::configuration::Kv;
-use crate::services::{capture_datetime, Service};
+use crate::services::{capture_datetime, rules_notifications, Data, Service};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::spreadsheet::HttpResponse;
 use crate::storage::AppendableLog;
 use crate::{Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
+use futures::future::try_join_all;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{
     body::Buf, header, Body, Method, Request as HyperRequest, Response as HyperResponse, Server,
@@ -288,8 +289,17 @@ impl Service for KvService {
         self.spreadsheet_id.as_str()
     }
 
+    fn channel_capacity(&self) -> usize {
+        // Use3d for rules processing messages queue
+        100
+    }
+
     fn shared(&self) -> &Shared {
         &self.shared
+    }
+
+    fn messenger_config(&self) -> Option<MessengerConfig> {
+        self.messenger_config.clone()
     }
 
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
@@ -302,11 +312,39 @@ impl Service for KvService {
             self.spreadsheet_id(),
         );
         let (tx, mut data_receiver) = mpsc::channel(1);
+        let mut tasks = vec![];
+        let is_shutdown = Arc::new(AtomicBool::new(false));
+
+        let (mut rules_input, rules_output) =
+            self.start_rules_thread(is_shutdown.clone(), &mut log).await;
+        if let Some(messenger) = self.shared().messenger.clone() {
+            let base_url = log.spreadsheet_baseurl();
+            let messenger_config = self
+                .messenger_config()
+                .expect("assert: if messenger is set for service, it has a config");
+            let send_notification = self.shared().send_notification.clone();
+            tasks.push(tokio::spawn(async move {
+                rules_notifications(
+                    messenger,
+                    messenger_config,
+                    send_notification,
+                    rules_output,
+                    base_url,
+                )
+                .await
+            }));
+        }
+        let mut rules_update_interval = tokio::time::interval(self.rules_update_interval());
+
         let server = self.start_server(shutdown.resubscribe(), tx).await;
-        tokio::pin!(server);
+        tasks.push(server);
+        let tasks = try_join_all(tasks);
+        tokio::pin!(tasks);
+
         loop {
             tokio::select! {
                 result = shutdown.recv() => {
+                    is_shutdown.store(true, Ordering::Release);
                     data_receiver.close(); // stop tasks
                     let graceful_shutdown_timeout = match result {
                         Err(_) => panic!("assert: shutdown signal sender should be dropped after all service listeneres"),
@@ -332,15 +370,21 @@ impl Service for KvService {
                     }
                     return;
                 },
+                _ = rules_update_interval.tick() => {
+                    self.send_updated_rules(&log, &mut rules_input).await;
+                }
                 Some(append_request) = data_receiver.recv() => {
                     let AppendRequest{datarows, reply_to} = append_request;
+                    let mut data = Data::Many(datarows);
+                    self.send_for_rule_processing(&log, &mut data, &mut rules_input).await;
+                    let Data::Many(datarows) = data else {panic!("assert: packing/unpacking of KV data")};
                     let res = log.append_no_retry(datarows).await;
                     if let Err(_) = reply_to.send(res) {
                         tracing::warn!("client of the kv server dropped connection");
                     }
                 }
-                res = &mut server => {
-                    res.unwrap(); // propagate panics from spawned server
+                res = &mut tasks => {
+                    res.unwrap(); // propagate panics from spawned tasks
                 }
             }
         }
