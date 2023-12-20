@@ -221,7 +221,7 @@ pub trait Service: Send + Sync {
     }
 
     fn rules_update_interval(&self) -> Duration {
-        Duration::from_secs(10)
+        Duration::from_secs(15)
     }
 
     fn get_example_rules(&self) -> Vec<Datarow> {
@@ -241,6 +241,8 @@ pub trait Service: Send + Sync {
     fn messenger_config(&self) -> Option<MessengerConfig> {
         None
     }
+
+    fn truncate_at(&self) -> f32;
 
     async fn process_task_result_on_shutdown(
         &mut self,
@@ -651,6 +653,10 @@ mod tests {
             &self.shared
         }
 
+        fn truncate_at(&self) -> f32 {
+            100.0
+        }
+
         async fn process_task_result(&mut self, result: TaskResult, _log: &AppendableLog) -> Data {
             let TaskResult { result, .. } = result;
             result.expect("test assert: ok result is sent")
@@ -715,11 +721,6 @@ mod tests {
             sheets_api,
             tx.clone(),
         ));
-        let log = create_log(
-            storage.clone(),
-            "spreadsheet1".to_string(),
-            GENERAL_SERVICE_NAME.to_string(),
-        );
 
         let (shutdown, rx) = broadcast::channel(1);
 
@@ -728,8 +729,14 @@ mod tests {
             messenger: None,
             send_notification: tx.clone(),
         };
+        let mut service = TestService { counter, shared };
+        let log = create_log(
+            storage.clone(),
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+            service.truncate_at(),
+        );
         let service = tokio::spawn(async move {
-            let mut service = TestService { counter, shared };
             service.run(log, rx).await;
         });
         tokio::spawn(async move {
@@ -744,7 +751,7 @@ mod tests {
 
         service.await.unwrap();
 
-        let (all_sheets, _, _) = storage
+        let all_sheets = storage
             .google()
             .sheets_filtered_by_metadata("spreadsheet1", &Metadata::new(vec![]))
             .await

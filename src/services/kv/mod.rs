@@ -138,6 +138,7 @@ pub(crate) struct KvService {
     spreadsheet_id: String,
     messenger_config: Option<MessengerConfig>,
     port: u16,
+    truncate_at: f32,
 }
 
 impl KvService {
@@ -147,6 +148,7 @@ impl KvService {
             spreadsheet_id: config.spreadsheet_id,
             port: config.port,
             messenger_config: config.messenger,
+            truncate_at: config.autotruncate_at_usage_percent,
         }
     }
 
@@ -302,6 +304,10 @@ impl Service for KvService {
         self.messenger_config.clone()
     }
 
+    fn truncate_at(&self) -> f32 {
+        self.truncate_at
+    }
+
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         log.healthcheck()
             .await
@@ -425,6 +431,7 @@ mod tests {
             storage.clone(),
             "spreadsheet1".to_string(),
             KV_SERVICE_NAME.to_string(),
+            100.0,
         );
 
         let (shutdown, rx) = broadcast::channel(1);
@@ -512,7 +519,7 @@ mod tests {
 
         service.await.unwrap();
 
-        let (all_sheets, _, _) = storage
+        let all_sheets = storage
             .google()
             .sheets_filtered_by_metadata("spreadsheet1", &Metadata::new(vec![]))
             .await

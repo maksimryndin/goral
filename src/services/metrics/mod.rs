@@ -47,6 +47,7 @@ pub(crate) struct MetricsService {
     push_interval: Duration,
     targets: Vec<ScrapeTarget>,
     channel_capacity: usize,
+    truncate_at: f32,
 }
 
 impl MetricsService {
@@ -81,6 +82,7 @@ impl MetricsService {
                 })
                 .collect(),
             channel_capacity,
+            truncate_at: config.autotruncate_at_usage_percent,
         }
     }
 
@@ -333,6 +335,10 @@ impl Service for MetricsService {
 
     fn messenger_config(&self) -> Option<MessengerConfig> {
         self.messenger_config.clone()
+    }
+
+    fn truncate_at(&self) -> f32 {
+        self.truncate_at
     }
 
     async fn process_task_result(&mut self, result: TaskResult, _: &AppendableLog) -> Data {

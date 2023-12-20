@@ -32,6 +32,7 @@ pub(crate) struct LogsService {
     filter_if_contains: Vec<String>,
     drop_if_contains: Vec<String>,
     messenger_config: Option<MessengerConfig>,
+    truncate_at: f32,
 }
 
 impl LogsService {
@@ -45,6 +46,7 @@ impl LogsService {
             drop_if_contains: config.drop_if_contains.unwrap_or(vec![]),
             channel_capacity,
             messenger_config: config.messenger,
+            truncate_at: config.autotruncate_at_usage_percent,
         }
     }
 
@@ -328,6 +330,10 @@ impl Service for LogsService {
 
     fn messenger_config(&self) -> Option<MessengerConfig> {
         self.messenger_config.clone()
+    }
+
+    fn truncate_at(&self) -> f32 {
+        self.truncate_at
     }
 
     async fn process_task_result_on_shutdown(

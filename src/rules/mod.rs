@@ -236,19 +236,19 @@ impl Rule {
 
         let message = match (candidate_value, &self.condition, &self.value) {
             (Datavalue::Number(c), Less, Datavalue::Number(v)) if c < v => {
-                format!("{self} triggered for value {c}")
+                format!("{self} triggered for value {c:.4}")
             }
             (Datavalue::Number(c), Less, Datavalue::Integer(v)) if c < &(*v as f64) => {
-                format!("{self} triggered for value {c}")
+                format!("{self} triggered for value {c:.4}")
             }
             (Datavalue::Integer(c), Less, Datavalue::Number(v)) if &(*c as f64) < v => {
                 format!("{self} triggered for value {c}")
             }
             (Datavalue::Number(c), Greater, Datavalue::Number(v)) if c > v => {
-                format!("{self} triggered for value {c}")
+                format!("{self} triggered for value {c:.4}")
             }
             (Datavalue::Number(c), Greater, Datavalue::Integer(v)) if c > &(*v as f64) => {
-                format!("{self} triggered for value {c}")
+                format!("{self} triggered for value {c:.4}")
             }
             (Datavalue::Integer(c), Greater, Datavalue::Number(v)) if &(*c as f64) > v => {
                 format!("{self} triggered for value {c}")
@@ -265,7 +265,7 @@ impl Rule {
             }
             (Datavalue::NotAvailable, Is, Datavalue::NotAvailable) => format!("{self} triggered"),
             (Datavalue::Number(c), IsNot, Datavalue::NotAvailable) => {
-                format!("{self} triggered for value {c}")
+                format!("{self} triggered for value {c:.4}")
             }
             (Datavalue::Integer(c), IsNot, Datavalue::NotAvailable) => {
                 format!("{self} triggered for value {c}")

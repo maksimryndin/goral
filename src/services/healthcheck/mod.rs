@@ -135,6 +135,7 @@ pub(crate) struct HealthcheckService {
     push_interval: Duration,
     channel_capacity: usize,
     liveness_previous_state: Vec<Option<bool>>,
+    truncate_at: f32,
 }
 
 impl HealthcheckService {
@@ -150,6 +151,7 @@ impl HealthcheckService {
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
             channel_capacity,
             liveness_previous_state,
+            truncate_at: config.autotruncate_at_usage_percent,
         }
     }
 
@@ -372,6 +374,10 @@ impl Service for HealthcheckService {
 
     fn messenger_config(&self) -> Option<MessengerConfig> {
         self.messenger_config.clone()
+    }
+
+    fn truncate_at(&self) -> f32 {
+        self.truncate_at
     }
 
     async fn process_task_result_on_shutdown(

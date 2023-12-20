@@ -2,10 +2,11 @@ use crate::spreadsheet::{Metadata, DEFAULT_FONT};
 use google_sheets4::api::Sheet as GoogleSheet;
 use google_sheets4::api::{
     AddSheetRequest, AppendCellsRequest, BasicFilter, BooleanCondition, CellData, CellFormat,
-    Color, ColorStyle, ConditionValue, CreateDeveloperMetadataRequest, DataValidationRule,
-    DeveloperMetadata, DeveloperMetadataLocation, ExtendedValue, GridProperties, GridRange,
-    Request, RowData, SetBasicFilterRequest, SetDataValidationRequest, SheetProperties, TextFormat,
-    UpdateCellsRequest, UpdateDeveloperMetadataRequest,
+    Color, ColorStyle, ConditionValue, CreateDeveloperMetadataRequest, DataFilter,
+    DataValidationRule, DeveloperMetadata, DeveloperMetadataLocation, DeveloperMetadataLookup,
+    ExtendedValue, GridProperties, GridRange, Request, RowData, SetBasicFilterRequest,
+    SetDataValidationRequest, SheetProperties, TextFormat, UpdateCellsRequest,
+    UpdateDeveloperMetadataRequest,
 };
 use google_sheets4::FieldMask;
 use std::collections::hash_map::DefaultHasher;
@@ -18,7 +19,7 @@ use std::str::FromStr;
 pub(crate) type SheetId = i32;
 pub(crate) type TabColorRGB = (f32, f32, f32);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SheetType {
     Grid,
     Chart,
@@ -127,20 +128,6 @@ pub(crate) struct Sheet {
 }
 
 impl Sheet {
-    pub(crate) fn number_of_cells(&self) -> Option<i32> {
-        if self.sheet_type == SheetType::Grid {
-            Some(
-                self.row_count
-                    .expect("assert: grid sheet contains row count")
-                    * self
-                        .column_count
-                        .expect("assert: grid sheet contains column count"),
-            )
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn meta_value(&self, key: &str) -> Option<&String> {
         self.metadata.get(key)
     }
@@ -149,8 +136,16 @@ impl Sheet {
         self.sheet_id
     }
 
+    pub(crate) fn sheet_type(&self) -> SheetType {
+        self.sheet_type.clone()
+    }
+
     pub(crate) fn row_count(&self) -> Option<i32> {
         self.row_count
+    }
+
+    pub(crate) fn column_count(&self) -> Option<i32> {
+        self.column_count
     }
 }
 
@@ -457,12 +452,18 @@ impl UpdateSheet {
             requests.push(Request {
                 update_developer_metadata: Some(UpdateDeveloperMetadataRequest {
                     developer_metadata: Some(DeveloperMetadata {
-                        metadata_id: Some(generate_metadata_id(&k, sheet_id)),
                         metadata_value: Some(v),
                         ..Default::default()
                     }),
+                    data_filters: Some(vec![DataFilter {
+                        developer_metadata_lookup: Some(DeveloperMetadataLookup {
+                            metadata_id: Some(generate_metadata_id(&k, sheet_id)),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }]),
                     fields: Some(
-                        FieldMask::from_str("metadataId,metadataValue")
+                        FieldMask::from_str("metadataValue")
                             .expect("assert: field mask can be constructed from static str"),
                     ),
                     ..Default::default()

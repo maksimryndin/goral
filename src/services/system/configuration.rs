@@ -62,6 +62,10 @@ fn process_names() -> Vec<String> {
     vec![APP_NAME.to_lowercase()]
 }
 
+fn autotruncate_at_usage_percent() -> f32 {
+    20.0
+}
+
 #[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
 #[rule(scrape_timeout_interval_rule(scrape_interval_secs, scrape_timeout_ms))]
@@ -84,6 +88,10 @@ pub(crate) struct System {
     pub(crate) mounts: Vec<String>,
     #[serde(default = "process_names")]
     pub(crate) process_names: Vec<String>,
+    #[serde(default = "autotruncate_at_usage_percent")]
+    #[validate(minimum = 0.0)]
+    #[validate(maximum = 100.0)]
+    pub(crate) autotruncate_at_usage_percent: f32,
 }
 
 #[cfg(test)]
@@ -192,6 +200,28 @@ mod tests {
         let config = r#"
         messenger.url = "https://api.telegram.org/bot123/sendMessage"
         spreadsheet_id = "123"
+        "#;
+
+        let _: System = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "autotruncate_at_usage_percent")]
+    fn truncate_percent_cannot_be_less_than_minimum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        autotruncate_at_usage_percent = -10
+        "#;
+
+        let _: System = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "autotruncate_at_usage_percent")]
+    fn truncate_percent_cannot_be_greater_than_maximum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        autotruncate_at_usage_percent = 109
         "#;
 
         let _: System = build_config(config).unwrap();

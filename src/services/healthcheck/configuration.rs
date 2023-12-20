@@ -141,6 +141,10 @@ impl Display for LivenessType {
     }
 }
 
+fn autotruncate_at_usage_percent() -> f32 {
+    10.0
+}
+
 #[derive(Debug, Deserialize, Validate)]
 #[rule(liveness_rule(endpoint, command, typ))]
 #[rule(timeout_period_rule(period_secs, timeout_ms))]
@@ -178,6 +182,10 @@ pub(crate) struct Healthcheck {
     #[validate(minimum = 10)]
     #[serde(default = "push_interval_secs")]
     pub(crate) push_interval_secs: u16,
+    #[validate(minimum = 0.0)]
+    #[validate(maximum = 100.0)]
+    #[serde(default = "autotruncate_at_usage_percent")]
+    pub(crate) autotruncate_at_usage_percent: f32,
 }
 
 #[cfg(test)]
@@ -490,6 +498,34 @@ mod tests {
         type = "Grpc"
         endpoint = "http://[::1]:50051"
         name = "john@mail.org"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "autotruncate_at_usage_percent")]
+    fn truncate_percent_cannot_be_less_than_minimum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        autotruncate_at_usage_percent = -10
+        [[liveness]]
+        type = "Http"
+        endpoint = "http://127.0.0.1:9898"
+        "#;
+
+        let _: Healthcheck = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "autotruncate_at_usage_percent")]
+    fn truncate_percent_cannot_be_greater_than_maximum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        autotruncate_at_usage_percent = 109
+        [[liveness]]
+        type = "Http"
+        endpoint = "http://127.0.0.1:9898"
         "#;
 
         let _: Healthcheck = build_config(config).unwrap();

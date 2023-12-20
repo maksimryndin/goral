@@ -6,7 +6,7 @@ use crate::HyperConnector;
 use crate::Sender;
 use chrono::Utc;
 use google_sheets4::api::{
-    BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
+    BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Request, Spreadsheet,
 };
 #[cfg(not(test))]
 use google_sheets4::{
@@ -27,7 +27,7 @@ use serde_json::Value;
 use crate::spreadsheet::spreadsheet::tests::TestState;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en
-const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
+pub(crate) const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
 pub(crate) const GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL: usize = 50_000;
 
 async fn handle_error<T>(
@@ -238,15 +238,11 @@ impl SpreadsheetAPI {
         )
     }
 
-    fn calculate_usage(num_of_cells: i32) -> f32 {
-        100.0 * (num_of_cells as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32)
-    }
-
     pub(crate) async fn sheets_filtered_by_metadata(
         &self,
         spreadsheet_id: &str,
         metadata: &Metadata,
-    ) -> Result<(Vec<Sheet>, f32, f32), HttpResponse> {
+    ) -> Result<Vec<Sheet>, HttpResponse> {
         let result = self.get(spreadsheet_id, metadata).await;
 
         tracing::debug!("{:?}", result);
@@ -255,40 +251,29 @@ impl SpreadsheetAPI {
             e
         })?;
 
-        let mut total_cells: i32 = 0;
-        let mut filtered_cells: i32 = 0;
         let sheets: Vec<Sheet> = response
             .sheets
             .expect("assert: spreadsheet should contain sheets property even if no sheets")
             .into_iter()
             .map(|s| s.into())
-            .map(|s: Sheet| {
-                total_cells += s.number_of_cells().unwrap_or(0);
-                s
-            })
             .filter(|s: &Sheet| s.metadata.contains(metadata))
-            .map(|s: Sheet| {
-                filtered_cells += s.number_of_cells().unwrap_or(0);
-                s
-            })
             .collect();
 
-        Ok((
-            sheets,
-            Self::calculate_usage(total_cells),
-            Self::calculate_usage(filtered_cells),
-        ))
+        Ok(sheets)
     }
 
     async fn _crud_sheets(
         &self,
         spreadsheet_id: &str,
+        mut truncate: Vec<Request>,
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
     ) -> Result<BatchUpdateSpreadsheetResponse, HttpResponse> {
         // TODO calculate capacity properly
-        let mut requests = Vec::with_capacity(sheets.len() * 5 + data.len() + updates.len());
+        let mut requests =
+            Vec::with_capacity(truncate.len() + sheets.len() * 5 + data.len() + updates.len());
+        requests.append(&mut truncate);
 
         for update in updates.into_iter() {
             requests.append(&mut update.into_api_requests());
@@ -320,11 +305,12 @@ impl SpreadsheetAPI {
     pub(crate) async fn crud_sheets(
         &self,
         spreadsheet_id: &str,
+        truncate: Vec<Request>,
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
     ) -> Result<(), HttpResponse> {
-        self._crud_sheets(spreadsheet_id, updates, sheets, data)
+        self._crud_sheets(spreadsheet_id, truncate, updates, sheets, data)
             .await
             .map_err(|e| {
                 tracing::error!("{:?}", e);
@@ -614,16 +600,18 @@ pub(crate) mod tests {
                     Request {
                         update_developer_metadata:
                             Some(UpdateDeveloperMetadataRequest {
-                                developer_metadata:
-                                    Some(DeveloperMetadata {
-                                        metadata_id: Some(metadata_id),
-                                        metadata_value,
-                                        ..
-                                    }),
+                                developer_metadata: Some(DeveloperMetadata { metadata_value, .. }),
+                                data_filters: Some(data_filters),
                                 ..
                             }),
                         ..
                     } => {
+                        let metadata_id = data_filters[0]
+                            .developer_metadata_lookup
+                            .as_ref()
+                            .unwrap()
+                            .metadata_id
+                            .unwrap();
                         if let Some((sheet_id, index)) = self.metadata.get(&metadata_id) {
                             let sheet = self.sheets.get_mut(&sheet_id).unwrap();
                             let metadatas = sheet.developer_metadata.as_mut().unwrap();

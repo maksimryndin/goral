@@ -29,6 +29,7 @@ pub(crate) struct SystemService {
     process_names: Vec<String>,
     channel_capacity: usize,
     messenger_config: Option<MessengerConfig>,
+    truncate_at: f32,
 }
 
 impl SystemService {
@@ -49,6 +50,7 @@ impl SystemService {
             process_names: config.process_names,
             channel_capacity,
             messenger_config: config.messenger,
+            truncate_at: config.autotruncate_at_usage_percent,
         }
     }
 
@@ -238,6 +240,10 @@ impl Service for SystemService {
 
     fn messenger_config(&self) -> Option<MessengerConfig> {
         self.messenger_config.clone()
+    }
+
+    fn truncate_at(&self) -> f32 {
+        self.truncate_at
     }
 
     async fn process_task_result_on_shutdown(

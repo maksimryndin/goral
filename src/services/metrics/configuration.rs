@@ -90,6 +90,10 @@ pub(crate) struct Target {
     pub(crate) name: Option<String>,
 }
 
+fn autotruncate_at_usage_percent() -> f32 {
+    20.0
+}
+
 #[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
 #[rule(scrape_timeout_interval_rule(scrape_interval_secs, scrape_timeout_ms))]
@@ -112,6 +116,10 @@ pub(crate) struct Metrics {
     #[validate(custom(target_names))]
     #[validate(min_items = 1)]
     pub(crate) target: Vec<Target>,
+    #[validate(minimum = 0.0)]
+    #[validate(maximum = 100.0)]
+    #[serde(default = "autotruncate_at_usage_percent")]
+    pub(crate) autotruncate_at_usage_percent: f32,
 }
 
 #[cfg(test)]
@@ -307,6 +315,32 @@ mod tests {
         [[target]]
         endpoint = "http://127.0.0.1:9898/metrics"
         name = "john@mail.org"
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "autotruncate_at_usage_percent")]
+    fn truncate_percent_cannot_be_less_than_minimum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        autotruncate_at_usage_percent = -10
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
+        "#;
+
+        let _: Metrics = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "autotruncate_at_usage_percent")]
+    fn truncate_percent_cannot_be_greater_than_maximum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        autotruncate_at_usage_percent = 109
+        [[target]]
+        endpoint = "http://127.0.0.1:9898/metrics"
         "#;
 
         let _: Metrics = build_config(config).unwrap();

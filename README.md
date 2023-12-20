@@ -115,6 +115,9 @@ Sheet managed by Goral has title `<parameter to collect data on>@<host_id>@<serv
 For all configurations below commented lines (starting with #) are optional and example values are their defaults.
 Every service has a messenger configuration (see [Setup](#setup)). It is recommended to have several messengers and different chats/channels for each messenger and take into account their rate limits when configuring a service.
 
+Every service (except General) has an `autotruncate_at_usage_percent` configuration - the limit of the usage share by a service. Any Google spreadsheet can contain at most 10_000_000 cells so if a services takes more than `autotruncate_at_usage_percent` of 10_000_000 cells, Goral will truncate old data by removing the same named sheets under a service.
+When providing your own limits, do remember to have a sum of limits no more than 100 for all services related to the same spreadsheet. Default settings assume conservatively that you write all the data to the same spreadsheet. Also if a spreadsheet includes other sheets not managed by Goral, take into account their usage.
+
 ### General
 
 General service is responsible for reserved communication channel and important notifications about Goral itself. Its configuration
@@ -167,6 +170,7 @@ endpoint = "http://127.0.0.1:9898"
 spreadsheet_id = "<spreadsheet_id>"
 # messenger.url = "<messenger api url for sending messages>"
 # push_interval_secs = 30
+# autotruncate_at_usage_percent = 10
 [[healthcheck.liveness]]
 # name = "http://127.0.0.1:9898" # by default the endpoint itself is used as a name
 # initial_delay_secs = 0
@@ -237,6 +241,7 @@ spreadsheet_id = "<spreadsheet_id>"
 # push_interval_secs = 30
 # scrape_interval_secs = 10
 # scrape_timeout_ms = 3000
+# autotruncate_at_usage_percent = 20
 [[target]]
 endpoint = "<prometheus metrics endpoint1>"
 name = "app1"
@@ -275,6 +280,7 @@ spreadsheet_id = "<spreadsheet_id>"
 spreadsheet_id = "<spreadsheet_id>"
 # messenger.url = "<messenger api url for sending messages>"
 # push_interval_secs = 5
+# autotruncate_at_usage_percent = 30
 # filter_if_contains = []
 # drop_if_contains = []
 ```
@@ -319,6 +325,7 @@ spreadsheet_id = "<spreadsheet_id>"
 [system]
 spreadsheet_id = "<spreadsheet_id>"
 # push_interval_secs = 20
+# autotruncate_at_usage_percent = 20
 # scrape_interval_secs = 10
 # scrape_timeout_ms = 3000
 # messenger.url = "<messenger api url for sending messages>"
@@ -365,6 +372,7 @@ port = <"port from the range 49152-65535">
 [kv]
 spreadsheet_id = "<spreadsheet_id>"
 port = <"port from the range 49152-65535">
+# autotruncate_at_usage_percent = 100
 # messenger.url = "<messenger api url for sending messages>"
 ```
 </details>
@@ -401,6 +409,8 @@ For every append operation Goral uses 2 Google api method calls, so under the qu
 In any case Goral put KV requests in the messages queue with a capacity 1, so any concurrent request will wait until the previous one is handled.
 
 If there is an error while appending data, it is sent only via a default messenger of General service. Configured messenger is only used for notifications according to configured rules.
+
+*Note*: for KV service the autotruncation mechanism is turned off by default (`autotruncate_at_usage_percent = 100`). It means that you should either set that value to some percent below 100 or clean up old data manually.
 
 ## Recommended deployment
 

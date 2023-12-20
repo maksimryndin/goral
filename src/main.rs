@@ -110,6 +110,7 @@ async fn start() -> Result<(), String> {
                 storage,
                 service.spreadsheet_id().to_string(),
                 service.name().to_string(),
+                service.truncate_at(),
             );
             service.run(log, shutdown_receiver).await
         }));

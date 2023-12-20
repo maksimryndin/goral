@@ -30,6 +30,10 @@ fn logs_push_interval_secs() -> u16 {
     5
 }
 
+fn autotruncate_at_usage_percent() -> f32 {
+    30.0
+}
+
 #[derive(Debug, Deserialize, Validate)]
 #[rule(if_contains(filter_if_contains, drop_if_contains))]
 #[serde(deny_unknown_fields)]
@@ -46,6 +50,10 @@ pub(crate) struct Logs {
     pub(crate) filter_if_contains: Option<Vec<String>>,
     #[validate(min_items = 1)]
     pub(crate) drop_if_contains: Option<Vec<String>>,
+    #[validate(minimum = 0.0)]
+    #[validate(maximum = 100.0)]
+    #[serde(default = "autotruncate_at_usage_percent")]
+    pub(crate) autotruncate_at_usage_percent: f32,
 }
 
 #[cfg(test)]
@@ -132,6 +140,28 @@ mod tests {
         spreadsheet_id = "123"
         filter_if_contains = ["pine"]
         drop_if_contains = ["apple", "pine"]
+        "#;
+
+        let _: Logs = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "autotruncate_at_usage_percent")]
+    fn truncate_percent_cannot_be_less_than_minimum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        autotruncate_at_usage_percent = -10
+        "#;
+
+        let _: Logs = build_config(config).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "autotruncate_at_usage_percent")]
+    fn truncate_percent_cannot_be_greater_than_maximum() {
+        let config = r#"
+        spreadsheet_id = "123"
+        autotruncate_at_usage_percent = 109
         "#;
 
         let _: Logs = build_config(config).unwrap();

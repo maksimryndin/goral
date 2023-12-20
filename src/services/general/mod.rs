@@ -90,6 +90,10 @@ impl Service for GeneralService {
         &self.shared
     }
 
+    fn truncate_at(&self) -> f32 {
+        100.0
+    }
+
     async fn run(&mut self, _: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         tracing::info!("running with log level {}", self.log_level);
         let collect = self.collect_notifications();
@@ -151,6 +155,7 @@ mod tests {
             storage.clone(),
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            100.0,
         );
 
         let (shutdown, rx) = broadcast::channel(1);

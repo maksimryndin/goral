@@ -1,9 +1,13 @@
 use crate::rules::{rules_dropdowns, Rule, RULES_LOG_NAME};
 use crate::spreadsheet::datavalue::Datarow;
-use crate::spreadsheet::sheet::{Rows, Sheet, SheetId, TabColorRGB, UpdateSheet, VirtualSheet};
+use crate::spreadsheet::sheet::{
+    Rows, Sheet, SheetId, SheetType, TabColorRGB, UpdateSheet, VirtualSheet,
+};
+use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS;
 use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
 use crate::{get_service_tab_color, Sender, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, Utc};
+use google_sheets4::api::{DeleteRangeRequest, DeleteSheetRequest, GridRange, Request};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,7 +41,12 @@ impl Storage {
     }
 }
 
-pub fn create_log(storage: Arc<Storage>, spreadsheet_id: String, service: String) -> AppendableLog {
+pub fn create_log(
+    storage: Arc<Storage>,
+    spreadsheet_id: String,
+    service: String,
+    truncate_at: f32,
+) -> AppendableLog {
     let tab_color_rgb = get_service_tab_color(&service);
     AppendableLog {
         storage,
@@ -45,6 +54,7 @@ pub fn create_log(storage: Arc<Storage>, spreadsheet_id: String, service: String
         service,
         tab_color_rgb,
         rules_sheet_id: None,
+        truncate_at,
     }
 }
 
@@ -54,6 +64,15 @@ pub struct AppendableLog {
     spreadsheet_id: String,
     tab_color_rgb: TabColorRGB,
     rules_sheet_id: Option<SheetId>,
+    truncate_at: f32,
+}
+
+#[derive(Debug)]
+struct SheetUsage {
+    sheet_id: SheetId,
+    row_count: i32,
+    column_count: i32,
+    updated_at: DateTime<Utc>,
 }
 
 impl AppendableLog {
@@ -63,14 +82,11 @@ impl AppendableLog {
             (METADATA_SERVICE_KEY, self.service.to_string()),
         ]);
 
-        let (existing_service_sheets, _total_usage, _service_usage) = self
+        let existing_service_sheets = self
             .storage
             .google
             .sheets_filtered_by_metadata(&self.spreadsheet_id, &basic_metadata)
             .await?;
-
-        // TODO check usage and prepare deletion requests for Sheets and Obsolete metadata
-        //self.storage.send_notification.warn(format!())
 
         Ok(existing_service_sheets
             .into_iter()
@@ -121,12 +137,11 @@ impl AppendableLog {
         retry_limit: Option<Duration>,
         timeout: Option<Duration>,
     ) -> Result<(), HttpResponse> {
-        let rows_count = datarows.len();
-        tracing::info!(
-            "appending to log {} rows for service {}",
-            rows_count,
-            self.service
-        );
+        let rows_count = datarows
+            .iter()
+            .filter(|d| d.log_name() != RULES_LOG_NAME)
+            .count();
+        tracing::info!("appending {} rows for service {}", rows_count, self.service);
         let result = self
             ._core_append(datarows, retry_limit, timeout)
             .await
@@ -139,11 +154,6 @@ impl AppendableLog {
                 self.storage.send_notification.try_error(message);
                 e
             });
-        tracing::info!(
-            "appended to log {} rows for service {}",
-            rows_count,
-            self.service
-        );
         result
     }
 
@@ -216,6 +226,8 @@ impl AppendableLog {
         };
 
         tracing::debug!("existing sheets:\n{:?}", existing_sheets);
+
+        let truncate_requests = Self::prepare_truncate_requests(&existing_sheets, self.truncate_at);
 
         // Check for sheet type to be grid
         let mut sheets_to_create: HashMap<SheetId, (VirtualSheet, Vec<String>)> = HashMap::new();
@@ -316,7 +328,9 @@ impl AppendableLog {
         let sheets_to_update: Vec<UpdateSheet> =
             sheets_to_update.into_iter().map(|(_, u)| u).collect();
         let data: Vec<Rows> = data_to_append.into_iter().map(|(_, rows)| rows).collect();
+        let rows_count = data.len();
 
+        tracing::debug!("truncate_requests:\n{:?}", truncate_requests);
         tracing::debug!("sheets_to_update:\n{:?}", sheets_to_update);
         tracing::debug!("sheets_to_add:\n{:?}", sheets_to_add);
         tracing::debug!("data:\n{:?}", data);
@@ -327,8 +341,116 @@ impl AppendableLog {
 
         self.storage
             .google
-            .crud_sheets(&self.spreadsheet_id, sheets_to_update, sheets_to_add, data)
-            .await
+            .crud_sheets(
+                &self.spreadsheet_id,
+                truncate_requests,
+                sheets_to_update,
+                sheets_to_add,
+                data,
+            )
+            .await?;
+
+        tracing::info!(
+            "appended to log {} rows for service {}",
+            rows_count,
+            self.service
+        );
+        Ok(())
+    }
+
+    fn prepare_truncate_requests(
+        existing_service_sheets: &HashMap<SheetId, (Sheet, Vec<String>)>,
+        limit: f32,
+    ) -> Vec<Request> {
+        let cells_used_by_service: i32 = existing_service_sheets
+            .values()
+            .filter_map(|(s, _)| {
+                (s.sheet_type() == SheetType::Grid).then(|| {
+                    s.row_count().expect("assert: grid sheet has rows")
+                        * s.column_count().expect("assert: grid sheet has columns")
+                })
+            })
+            .sum();
+        let usage =
+            100.0 * (cells_used_by_service as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32);
+        if usage < limit {
+            return vec![];
+        }
+        let cells_to_delete = cells_used_by_service as f32 * 0.1;
+
+        let usages = existing_service_sheets
+            .values()
+            .filter(|(s, _)| s.sheet_type() == SheetType::Grid)
+            .fold(HashMap::new(), |mut state, (s, _)| {
+                let log_name = s
+                    .meta_value(METADATA_LOG_NAME)
+                    .expect("assert: service sheet has `name` metadata");
+                // rules sheets are not included
+                if log_name == RULES_LOG_NAME {
+                    return state;
+                }
+                let sheet_usage = SheetUsage {
+                    sheet_id: s.sheet_id(),
+                    row_count: s.row_count().expect("assert: grid sheet has rows"),
+                    column_count: s.column_count().expect("assert: grid sheet has columns"),
+                    updated_at: DateTime::parse_from_rfc3339(
+                        s.meta_value(METADATA_UPDATED_AT)
+                            .expect("assert: service sheet has `updated_at` metadata"),
+                    )
+                    .expect("assert: `updated_at` metadata is serialized to rfc3339")
+                    .into(),
+                };
+                let sheet_cells = sheet_usage.row_count * sheet_usage.column_count;
+                let stat = state.entry(log_name).or_insert((0, 0.0, vec![]));
+                stat.0 += sheet_cells;
+                stat.1 = stat.0 as f32 / cells_used_by_service as f32; // share of usage by the log name
+                stat.2.push(sheet_usage);
+                state
+            });
+
+        tracing::debug!("usages:\n{:#?}", usages);
+        usages
+            .into_iter()
+            .map(|(_, (_, log_cells_usage, mut sheets))| {
+                let mut cells_to_delete_for_log = (log_cells_usage * cells_to_delete) as i32;
+                sheets.sort_unstable_by_key(|s| s.updated_at);
+                let mut requests = Vec::with_capacity(sheets.len());
+                for sheet in sheets {
+                    if cells_to_delete_for_log <= 0 {
+                        break;
+                    }
+                    let cells = sheet.row_count * sheet.column_count;
+                    if cells < cells_to_delete_for_log {
+                        // remove the whole sheet
+                        requests.push(Request {
+                            delete_sheet: Some(DeleteSheetRequest {
+                                sheet_id: Some(sheet.sheet_id),
+                            }),
+                            ..Default::default()
+                        });
+                        cells_to_delete_for_log -= cells;
+                    } else {
+                        // remove some rows
+                        let rows = cells_to_delete_for_log / sheet.column_count;
+                        requests.push(Request {
+                            delete_range: Some(DeleteRangeRequest {
+                                range: Some(GridRange {
+                                    sheet_id: Some(sheet.sheet_id),
+                                    start_row_index: Some(1),
+                                    end_row_index: Some(rows),
+                                    ..Default::default()
+                                }),
+                                shift_dimension: Some("ROWS".to_string()),
+                            }),
+                            ..Default::default()
+                        });
+                        cells_to_delete_for_log = 0;
+                    }
+                }
+                requests
+            })
+            .flatten()
+            .collect()
     }
 
     pub(crate) fn host_id(&self) -> &str {
@@ -449,6 +571,7 @@ mod tests {
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            100.0,
         );
 
         let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
@@ -479,7 +602,7 @@ mod tests {
         log.append(datarows).await.unwrap();
 
         // for the sheet order we rely on the indexing
-        let (all_sheets, _, _) = log
+        let all_sheets = log
             .storage
             .google
             .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
@@ -550,7 +673,7 @@ mod tests {
         ];
 
         log.append(datarows).await.unwrap();
-        let (all_sheets, _, _) = log
+        let all_sheets = log
             .storage
             .google
             .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
@@ -634,6 +757,7 @@ mod tests {
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            100.0,
         );
 
         let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
@@ -686,6 +810,7 @@ mod tests {
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            100.0,
         );
 
         let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
@@ -746,6 +871,7 @@ mod tests {
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            100.0,
         );
 
         let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
@@ -811,6 +937,7 @@ mod tests {
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            100.0,
         );
 
         let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
@@ -876,6 +1003,7 @@ mod tests {
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            100.0,
         );
 
         let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
@@ -912,5 +1040,85 @@ mod tests {
 
         log.append_no_retry(datarows).await.unwrap();
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn truncation_flow() {
+        let (tx, _) = mpsc::channel(1);
+        let tx = Sender::new(tx);
+        let sheets_api = SpreadsheetAPI::new(tx.clone(), TestState::new(vec![], None, None));
+        let storage = Arc::new(Storage::new(
+            TEST_HOST_ID.to_string(),
+            sheets_api,
+            tx.clone(),
+        ));
+        let mut log = create_log(
+            storage,
+            "spreadsheet1".to_string(),
+            GENERAL_SERVICE_NAME.to_string(),
+            0.0001,
+        );
+
+        let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
+            .expect("test assert: static date")
+            .and_hms_opt(0, 0, 0)
+            .expect("test assert: static time");
+
+        // TODO add many datarows but below the limit
+        // after the append
+        // check sheets are created and have rows
+        // then add datarows to exceed the limit (log_name1 should change keys for new sheet creation)
+        // then check that no rules sheet is offended
+        // other sheets are diminished proportionately
+        let datarows = vec![
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![(format!("key11"), Datavalue::Size(400_u64))],
+            ),
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![(format!("key21"), Datavalue::Size(400_u64))],
+            ),
+            Datarow::new(
+                RULES_LOG_NAME.to_string(),
+                timestamp,
+                vec![(format!("key21"), Datavalue::Size(400_u64))],
+            ),
+        ];
+
+        log.append(datarows).await.unwrap();
+
+        // for the sheet order we rely on the indexing
+        let all_sheets = log
+            .storage
+            .google
+            .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
+            .await
+            .unwrap();
+        assert_eq!(
+            all_sheets.len(),
+            3,
+            "`some sheet` already exists, `log_name1` and `log_name2` sheets have been created"
+        );
+        assert!(
+            all_sheets[1].title().contains("log_name1")
+                || all_sheets[2].title().contains("log_name1")
+        );
+        assert_eq!(
+            all_sheets[1].row_count(),
+            Some(2),
+            "`log_name..` contains header row and one row of data"
+        );
+        assert!(
+            all_sheets[1].title().contains("log_name2")
+                || all_sheets[2].title().contains("log_name2")
+        );
+        assert_eq!(
+            all_sheets[2].row_count(),
+            Some(2),
+            "`log_name..` contains header row and one row of data"
+        );
     }
 }
