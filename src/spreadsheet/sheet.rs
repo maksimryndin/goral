@@ -3,10 +3,10 @@ use google_sheets4::api::Sheet as GoogleSheet;
 use google_sheets4::api::{
     AddSheetRequest, AppendCellsRequest, BasicFilter, BooleanCondition, CellData, CellFormat,
     Color, ColorStyle, ConditionValue, CreateDeveloperMetadataRequest, DataFilter,
-    DataValidationRule, DeveloperMetadata, DeveloperMetadataLocation, DeveloperMetadataLookup,
-    ExtendedValue, GridProperties, GridRange, Request, RowData, SetBasicFilterRequest,
-    SetDataValidationRequest, SheetProperties, TextFormat, UpdateCellsRequest,
-    UpdateDeveloperMetadataRequest,
+    DataValidationRule, DeleteRangeRequest, DeleteSheetRequest, DeveloperMetadata,
+    DeveloperMetadataLocation, DeveloperMetadataLookup, ExtendedValue, GridProperties, GridRange,
+    Request, RowData, SetBasicFilterRequest, SetDataValidationRequest, SheetProperties, TextFormat,
+    UpdateCellsRequest, UpdateDeveloperMetadataRequest,
 };
 use google_sheets4::FieldMask;
 use std::collections::hash_map::DefaultHasher;
@@ -472,6 +472,45 @@ impl UpdateSheet {
             })
         }
         requests
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum CleanupSheet {
+    Delete { sheet_id: SheetId },
+    Truncate { sheet_id: SheetId, rows: i32 },
+}
+
+impl CleanupSheet {
+    pub(crate) fn delete(sheet_id: SheetId) -> Self {
+        Self::Delete { sheet_id }
+    }
+
+    pub(crate) fn truncate(sheet_id: SheetId, rows: i32) -> Self {
+        Self::Truncate { sheet_id, rows }
+    }
+
+    pub(super) fn into_api_request(self) -> Request {
+        match self {
+            CleanupSheet::Delete { sheet_id } => Request {
+                delete_sheet: Some(DeleteSheetRequest {
+                    sheet_id: Some(sheet_id),
+                }),
+                ..Default::default()
+            },
+            CleanupSheet::Truncate { sheet_id, rows } => Request {
+                delete_range: Some(DeleteRangeRequest {
+                    range: Some(GridRange {
+                        sheet_id: Some(sheet_id),
+                        start_row_index: Some(1),
+                        end_row_index: Some(rows),
+                        ..Default::default()
+                    }),
+                    shift_dimension: Some("ROWS".to_string()),
+                }),
+                ..Default::default()
+            },
+        }
     }
 }
 

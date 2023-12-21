@@ -1,4 +1,4 @@
-use crate::spreadsheet::sheet::{Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
+use crate::spreadsheet::sheet::{CleanupSheet, Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
 use crate::spreadsheet::{HttpResponse, Metadata};
 
 #[cfg(not(test))]
@@ -6,7 +6,7 @@ use crate::HyperConnector;
 use crate::Sender;
 use chrono::Utc;
 use google_sheets4::api::{
-    BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Request, Spreadsheet,
+    BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
 };
 #[cfg(not(test))]
 use google_sheets4::{
@@ -265,15 +265,18 @@ impl SpreadsheetAPI {
     async fn _crud_sheets(
         &self,
         spreadsheet_id: &str,
-        mut truncate: Vec<Request>,
+        truncates: Vec<CleanupSheet>,
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
     ) -> Result<BatchUpdateSpreadsheetResponse, HttpResponse> {
-        // TODO calculate capacity properly
-        let mut requests =
-            Vec::with_capacity(truncate.len() + sheets.len() * 5 + data.len() + updates.len());
-        requests.append(&mut truncate);
+        // capacity for actual usage
+        let mut requests = Vec::with_capacity(
+            truncates.len() + sheets.len() * 10 + data.len() * 2 + updates.len(),
+        );
+        for truncate in truncates.into_iter() {
+            requests.push(truncate.into_api_request());
+        }
 
         for update in updates.into_iter() {
             requests.append(&mut update.into_api_requests());
@@ -305,12 +308,12 @@ impl SpreadsheetAPI {
     pub(crate) async fn crud_sheets(
         &self,
         spreadsheet_id: &str,
-        truncate: Vec<Request>,
+        truncates: Vec<CleanupSheet>,
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
     ) -> Result<(), HttpResponse> {
-        self._crud_sheets(spreadsheet_id, truncate, updates, sheets, data)
+        self._crud_sheets(spreadsheet_id, truncates, updates, sheets, data)
             .await
             .map_err(|e| {
                 tracing::error!("{:?}", e);

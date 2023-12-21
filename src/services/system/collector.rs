@@ -336,6 +336,7 @@ fn disk_stat(_: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> V
                     "mount `{mount}` is not found to collect disk statistics: {}",
                     e
                 );
+                // TODO send notification warn
                 continue;
             }
         };
@@ -373,6 +374,7 @@ fn disk_stat(sys: &mut System, mounts: &[String], scrape_time: NaiveDateTime) ->
             Some(stat) => stat,
             None => {
                 tracing::warn!("mount `{mount}` is not found to collect disk statistics");
+                // TODO send notification warn
                 continue;
             }
         };

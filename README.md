@@ -15,6 +15,7 @@ Observability toolkit for small projects. Easy-to-use and compatible with indust
     - [Logs](#logs)
     - [System](#system)
     - [KV Log](#kv-log)
+- [Rules](#rules)
 - [Recommended deployment](#recommended-deployment)
 
 ## Overview
@@ -31,7 +32,8 @@ So Goral provides the following features being deployed next to your app(s):
 * You can observe several instances of the same app or different apps on the same host with a single Goral daemon (except logs as logs are collected via stdin of Goral - see [below](#logs))
 * You can configure different messengers and/or channels for every [service](#services) to get notifications on errors, liveness updates, system resources overlimit etc
 * All the data collected is stored in Google Sheet with an automatic quota and limits checks and automatic data rotation - old data is deleted with a preliminary notification via configured messenger (see below). That way you don't have to buy a separate storage or overload your app VPS with Prometheus etc. Just a lean process next to your brilliant one which just sends app data in batches to Google Sheets for your ease of use. Google Sheets allow you to build your own diagrams over the metrics and analyse them, analyse liveness statistics and calculate uptime etc. By default Goral builds some charts for you.
-* You can configure different spreadsheets for every service
+* You can configure different spreadsheets and messengers for every service
+* You can configure [rules](#rules) for notifications by messenger for any data.
 
 ### System requirements
 
@@ -115,8 +117,10 @@ Sheet managed by Goral has title `<parameter to collect data on>@<host_id>@<serv
 For all configurations below commented lines (starting with #) are optional and example values are their defaults.
 Every service has a messenger configuration (see [Setup](#setup)). It is recommended to have several messengers and different chats/channels for each messenger and take into account their rate limits when configuring a service.
 
-Every service (except General) has an `autotruncate_at_usage_percent` configuration - the limit of the usage share by a service. Any Google spreadsheet can contain at most 10_000_000 cells so if a services takes more than `autotruncate_at_usage_percent` of 10_000_000 cells, Goral will truncate old data by removing the same named sheets under a service.
-When providing your own limits, do remember to have a sum of limits no more than 100 for all services related to the same spreadsheet. Default settings assume conservatively that you write all the data to the same spreadsheet. Also if a spreadsheet includes other sheets not managed by Goral, take into account their usage.
+Every service (except General) has an `autotruncate_at_usage_percent` configuration - the limit of the usage share by a service. Any Google spreadsheet can contain at most 10_000_000 cells so if a services takes more than `autotruncate_at_usage_percent` of 10_000_000 cells, Goral will truncate old data by either removing old rows or removing the same named sheets under a service.
+For every service the cleanup will truncate the surplus (actual usage - limit) and 10% of the limit.
+
+When providing your own limits, do remember to have a sum of limits no more than 100% for all services related to the same spreadsheet. Default settings assume conservatively that you write all the data to the same spreadsheet. Also if a spreadsheet includes other sheets not managed by Goral, take into account their usage.
 
 ### General
 
@@ -402,7 +406,7 @@ Appending to the log is *not idempotent*, i.e. if you retry the same request two
 
 Goral KV service responds with an array of urls of sheets for each datarow respectively.
 Goral accepts every batch and creates corresponding sheets in the configured spreadsheet for "Orders" and "Marketing Campaigns". And the end of the month you have all the billing data neatly collected.
-For even more interactive setup you can share a spreadsheet access with your client (for him/her see all the process online) and configure a messenger for alerts and notifications (see the section "Rules") by adding your client to the chat.
+For even more interactive setup you can share a spreadsheet access with your client (for him/her see all the process online) and configure a messenger for alerts and notifications (see the section [Rules](#rules)) by adding your client to the chat.
 Unlike other Goral services, this KV api is synchronous - if Goral responds successfully then sheets are created already and data is saved.
 
 For every append operation Goral uses 2 Google api method calls, so under the quota limit of 300 requests per minute, we have 5 requests per second or 2 append operations (not considering other Goral services which use the same quota). That's why it is strongly recommended to use a batched approach (say send in batches every 10 seconds or so) otherwise you can exhaust [Google api quota](https://developers.google.com/sheets/api/limits) quickly (especially when other Goral services run). [Exponential backoff algorithm](https://developers.google.com/sheets/api/limits#exponential) is *not* applicable to KV service induced requests (in contrast to other Goral services). So retries are on the client app side and you may expect http response status code `429: Too many requests` in case if you generate an excessive load. And it can impact other Goral services.
@@ -411,6 +415,15 @@ In any case Goral put KV requests in the messages queue with a capacity 1, so an
 If there is an error while appending data, it is sent only via a default messenger of General service. Configured messenger is only used for notifications according to configured rules.
 
 *Note*: for KV service the autotruncation mechanism is turned off by default (`autotruncate_at_usage_percent = 100`). It means that you should either set that value to some percent below 100 or clean up old data manually.
+
+Another notable use case is to log console errors from the frontend - catch JS exceptions, accumulate them in some batch at your backend and send the batch to Goral KV service.
+
+## Rules
+
+Every service automatically creates a rules sheet (for some services reasonable defaults are provided) which allows you to set notifications (via configured messengers) on the data as it is collected.
+Datetime for rules is optional and is set only for default rules. You choose a log name (everything up to the first @ in a sheet title) and a key (a column header of a sheet), select a condition which is checked, and action: either send info/warn/error message or skip the rules match from any further rules processing.
+
+Rules are fetched from a rules sheet by every Goral service dynamically every 15 seconds.
 
 ## Recommended deployment
 

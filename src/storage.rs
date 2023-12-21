@@ -1,13 +1,12 @@
 use crate::rules::{rules_dropdowns, Rule, RULES_LOG_NAME};
 use crate::spreadsheet::datavalue::Datarow;
 use crate::spreadsheet::sheet::{
-    Rows, Sheet, SheetId, SheetType, TabColorRGB, UpdateSheet, VirtualSheet,
+    CleanupSheet, Rows, Sheet, SheetId, SheetType, TabColorRGB, UpdateSheet, VirtualSheet,
 };
 use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS;
 use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
 use crate::{get_service_tab_color, Sender, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, Utc};
-use google_sheets4::api::{DeleteRangeRequest, DeleteSheetRequest, GridRange, Request};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -361,7 +360,7 @@ impl AppendableLog {
     fn prepare_truncate_requests(
         existing_service_sheets: &HashMap<SheetId, (Sheet, Vec<String>)>,
         limit: f32,
-    ) -> Vec<Request> {
+    ) -> Vec<CleanupSheet> {
         let cells_used_by_service: i32 = existing_service_sheets
             .values()
             .filter_map(|(s, _)| {
@@ -425,28 +424,15 @@ impl AppendableLog {
                     let cells = sheet.row_count * sheet.column_count;
                     if cells <= cells_to_delete_for_log {
                         // remove the whole sheet
-                        requests.push(Request {
-                            delete_sheet: Some(DeleteSheetRequest {
-                                sheet_id: Some(sheet.sheet_id),
-                            }),
-                            ..Default::default()
-                        });
+                        requests.push(CleanupSheet::delete(sheet.sheet_id));
                         cells_to_delete_for_log -= cells;
                     } else {
                         // remove some rows
                         let rows = cells_to_delete_for_log / sheet.column_count;
-                        requests.push(Request {
-                            delete_range: Some(DeleteRangeRequest {
-                                range: Some(GridRange {
-                                    sheet_id: Some(sheet.sheet_id),
-                                    start_row_index: Some(1),
-                                    end_row_index: Some(sheet.row_count.min(rows + 1)),
-                                    ..Default::default()
-                                }),
-                                shift_dimension: Some("ROWS".to_string()),
-                            }),
-                            ..Default::default()
-                        });
+                        requests.push(CleanupSheet::truncate(
+                            sheet.sheet_id,
+                            sheet.row_count.min(rows + 1),
+                        ));
                         cells_to_delete_for_log = 0;
                     }
                 }
@@ -1069,13 +1055,6 @@ mod tests {
             .and_hms_opt(0, 0, 0)
             .expect("test assert: static time");
 
-        // total cells - 10 000 000
-        // TODO add many datarows but below the limit
-        // after the append
-        // check sheets are created and have rows
-        // then add datarows to exceed the limit (log_name1 should change keys for new sheet creation)
-        // then check that no rules sheet is offended
-        // other sheets are diminished proportionately
         let mut datarows = Vec::with_capacity(999);
         for _ in 0..248 {
             datarows.push(Datarow::new(
