@@ -327,8 +327,9 @@ pub(crate) mod tests {
     use google_sheets4::api::Sheet as GoogleSheet;
     use google_sheets4::api::{
         AddSheetRequest, AppendCellsRequest, BasicFilter, CreateDeveloperMetadataRequest,
-        DeveloperMetadata, GridRange, Request, SetBasicFilterRequest, SetDataValidationRequest,
-        UpdateCellsRequest, UpdateDeveloperMetadataRequest,
+        DeleteRangeRequest, DeleteSheetRequest, DeveloperMetadata, GridRange, Request,
+        SetBasicFilterRequest, SetDataValidationRequest, UpdateCellsRequest,
+        UpdateDeveloperMetadataRequest,
     };
     use hyper::{header, Body, Response as HyperResponse, StatusCode};
     use std::collections::{HashMap, HashSet};
@@ -638,6 +639,57 @@ pub(crate) mod tests {
                         if !self.sheets.contains_key(&sheet_id) {
                             return Err(Self::bad_response(format!(
                                 "sheet with id {sheet_id} not found to set data validation on!"
+                            )));
+                        }
+                    }
+
+                    Request {
+                        delete_range:
+                            Some(DeleteRangeRequest {
+                                range:
+                                    Some(GridRange {
+                                        sheet_id: Some(sheet_id),
+                                        start_row_index: Some(1),
+                                        end_row_index: Some(rows),
+                                        ..
+                                    }),
+                                shift_dimension: Some(dimension),
+                            }),
+                        ..
+                    } => {
+                        assert_eq!(dimension, "ROWS");
+                        if let Some(sheet) = self.sheets.get_mut(&sheet_id) {
+                            let grid_properties = sheet
+                                .properties
+                                .as_mut()
+                                .expect("assert: goral creates sheets with properties")
+                                .grid_properties
+                                .as_mut()
+                                .expect("assert: goral creates grid sheets with grid_properties");
+                            if let Some(row_count) = grid_properties.row_count {
+                                grid_properties.row_count = Some(row_count - rows);
+                            } else {
+                                return Err(Self::bad_response(format!(
+                                    "cannot delete cells from a non-grid sheet!"
+                                )));
+                            }
+                        } else {
+                            return Err(Self::bad_response(format!(
+                                "sheet with id {sheet_id} not found to delete cells from!"
+                            )));
+                        }
+                    }
+
+                    Request {
+                        delete_sheet:
+                            Some(DeleteSheetRequest {
+                                sheet_id: Some(sheet_id),
+                            }),
+                        ..
+                    } => {
+                        if self.sheets.remove(&sheet_id).is_none() {
+                            return Err(Self::bad_response(format!(
+                                "sheet with id {sheet_id} not found to delete!"
                             )));
                         }
                     }

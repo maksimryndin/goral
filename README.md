@@ -393,7 +393,7 @@ Such a configuration runs a server process in the Goral daemon listening at the 
     {
         "datetime": "2023-12-09T09:50:46.136945094Z",
         "log_name": "campaigns",
-        "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6], ["datetime", "2023-12-11 09:19:32.827321506"]], // datatypes for values are string, ineger (unsigned 64-bits), boolean, float (64 bits) and datetime string (in common formats without tz).
+        "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6], ["datetime", "2023-12-11 09:19:32.827321506"]], // datatypes for values are string, integer (unsigned 64-bits), boolean, float (64 bits) and datetime string (in common formats without tz).
     }
 ]
 ```

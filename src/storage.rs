@@ -373,10 +373,13 @@ impl AppendableLog {
             .sum();
         let usage =
             100.0 * (cells_used_by_service as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32);
+
         if usage < limit {
             return vec![];
         }
-        let cells_to_delete = cells_used_by_service as f32 * 0.1;
+        // remove surplus and 10% of the limit
+        let cells_to_delete =
+            (usage - 0.9 * limit) * GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32 / 100.0;
 
         let usages = existing_service_sheets
             .values()
@@ -420,7 +423,7 @@ impl AppendableLog {
                         break;
                     }
                     let cells = sheet.row_count * sheet.column_count;
-                    if cells < cells_to_delete_for_log {
+                    if cells <= cells_to_delete_for_log {
                         // remove the whole sheet
                         requests.push(Request {
                             delete_sheet: Some(DeleteSheetRequest {
@@ -437,7 +440,7 @@ impl AppendableLog {
                                 range: Some(GridRange {
                                     sheet_id: Some(sheet.sheet_id),
                                     start_row_index: Some(1),
-                                    end_row_index: Some(rows),
+                                    end_row_index: Some(sheet.row_count.min(rows + 1)),
                                     ..Default::default()
                                 }),
                                 shift_dimension: Some("ROWS".to_string()),
@@ -1052,11 +1055,13 @@ mod tests {
             sheets_api,
             tx.clone(),
         ));
+        // for simplicity we create logs with one key to easily
+        // make assertions on rows count (only two columns - timestamp and key)
         let mut log = create_log(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
-            0.0001,
+            0.01, // 0.01% of 10 000 000 cells means 1000 cells or 500 rows
         );
 
         let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
@@ -1064,33 +1069,34 @@ mod tests {
             .and_hms_opt(0, 0, 0)
             .expect("test assert: static time");
 
+        // total cells - 10 000 000
         // TODO add many datarows but below the limit
         // after the append
         // check sheets are created and have rows
         // then add datarows to exceed the limit (log_name1 should change keys for new sheet creation)
         // then check that no rules sheet is offended
         // other sheets are diminished proportionately
-        let datarows = vec![
-            Datarow::new(
+        let mut datarows = Vec::with_capacity(999);
+        for _ in 0..248 {
+            datarows.push(Datarow::new(
                 "log_name1".to_string(),
                 timestamp,
                 vec![(format!("key11"), Datavalue::Size(400_u64))],
-            ),
-            Datarow::new(
+            ));
+            datarows.push(Datarow::new(
                 "log_name2".to_string(),
                 timestamp,
                 vec![(format!("key21"), Datavalue::Size(400_u64))],
-            ),
-            Datarow::new(
-                RULES_LOG_NAME.to_string(),
-                timestamp,
-                vec![(format!("key21"), Datavalue::Size(400_u64))],
-            ),
-        ];
+            ));
+        } // 996 cells of log_name1 and log_name2 including headers
+        datarows.push(Datarow::new(
+            RULES_LOG_NAME.to_string(),
+            timestamp,
+            vec![(format!("key21"), Datavalue::Size(400_u64))],
+        )); // 2 rows of rules (including header row) or 4 cells
 
         log.append(datarows).await.unwrap();
 
-        // for the sheet order we rely on the indexing
         let all_sheets = log
             .storage
             .google
@@ -1100,25 +1106,157 @@ mod tests {
         assert_eq!(
             all_sheets.len(),
             3,
-            "`some sheet` already exists, `log_name1` and `log_name2` sheets have been created"
+            "`log_name1`, `log_name2`, `{}` sheets have been created",
+            RULES_LOG_NAME
         );
-        assert!(
-            all_sheets[1].title().contains("log_name1")
-                || all_sheets[2].title().contains("log_name1")
-        );
+        for i in 0..3 {
+            if all_sheets[i].title().contains("log_name1")
+                || all_sheets[i].title().contains("log_name2")
+            {
+                assert_eq!(
+                    all_sheets[i].row_count(),
+                    Some(249),
+                    "`log_name..` contains header row and 248 rows of data"
+                );
+            } else {
+                assert_eq!(
+                    all_sheets[i].row_count(),
+                    Some(2),
+                    "`{}` contains header row and 1 row of data",
+                    RULES_LOG_NAME
+                );
+            }
+        }
+
+        // we have 1000 cells used
+        // now add datarows above the limit
+        // for log_name1 the key has changed - new sheet will be created
+
+        let mut datarows = Vec::with_capacity(10);
+        for _ in 0..5 {
+            datarows.push(Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![(format!("key12"), Datavalue::Size(400_u64))],
+            ));
+            datarows.push(Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![(format!("key21"), Datavalue::Size(400_u64))],
+            ));
+        } // 11 new rows (log_name1 - new sheet to be created with headers), 22 cells
+
+        log.append(datarows).await.unwrap();
+
+        // 10% of the limit (100 cells or 50 rows per service, or 25 rows per `log_name..` sheet) should be removed
+
+        let all_sheets = log
+            .storage
+            .google
+            .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
+            .await
+            .unwrap();
         assert_eq!(
-            all_sheets[1].row_count(),
-            Some(2),
-            "`log_name..` contains header row and one row of data"
+            all_sheets.len(),
+            4,
+            "`log_name1` with another key has been created"
         );
-        assert!(
-            all_sheets[1].title().contains("log_name2")
-                || all_sheets[2].title().contains("log_name2")
-        );
+
+        for i in 0..3 {
+            if all_sheets[i].title().contains("log_name2") {
+                assert_eq!(
+                    all_sheets[i].row_count(),
+                    Some(249 - 25 + 5),
+                    "`log_name2` contains header row and 228 rows of data"
+                );
+            } else if all_sheets[i].title().contains("log_name1") {
+                assert!(
+                    all_sheets[i].row_count() == Some(249 - 25)
+                        || all_sheets[i].row_count() == Some(6),
+                    "`log_name1` sheets contain header row and 223 or 5 rows of data"
+                );
+            } else {
+                assert_eq!(
+                    all_sheets[i].row_count(),
+                    Some(2),
+                    "`{}` contains header row and 1 row of data",
+                    RULES_LOG_NAME
+                );
+            }
+        }
+
+        // now we have
+        // log_name1 - 1 sheet with 224 rows, 2 columns, 448 cells, 2 sheet with 6 rows, 2 columns, 12 cells
+        // log_name2 - 229 rows, 2 columns, 458 cells
+        // rules - 2 rows, 2 columns, 4 cells
+        // total 448 + 12 + 458 + 4 = 922 cells
+
+        // let's add log_name1 with 500 * 2 == 1000 cells.
+        let datarows = vec![
+            Datarow::new(
+                "log_name1".to_string(),
+                timestamp,
+                vec![(format!("key12"), Datavalue::Size(400_u64))],
+            );
+            500
+        ];
+        log.append(datarows).await.unwrap();
+
+        // in this case we have 1922 cells.
+        // we remove surplus (922 cells) and 10% of the limit (100 cells)
+        // as row counts (and cells counts) of log_name2 and log_name1 are roughly equal
+        // log_name1  448 + 12 + 1000 = 1460 cells
+        // log_name2 458 cells
+        // then both sheets should be removed
+        // 1022 * 1460/(1460+458) = 777 cells to remove from log_name1 or 388 rows
+        // so the old log_name1 with 224 rows is deleted completely
+        // and 165 rows should be removed from the new log_name1
+        // 244 cells to remove from log_name2 or 122 rows
+
+        let datarows = vec![
+            Datarow::new(
+                "log_name2".to_string(),
+                timestamp,
+                vec![(format!("key21"), Datavalue::Size(400_u64))],
+            );
+            2
+        ];
+        log.append(datarows).await.unwrap(); // we made an append
+
+        let all_sheets = log
+            .storage
+            .google
+            .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
+            .await
+            .unwrap();
+
         assert_eq!(
-            all_sheets[2].row_count(),
-            Some(2),
-            "`log_name..` contains header row and one row of data"
+            all_sheets.len(),
+            3,
+            "`log_name1` with another key, `log_name2`, `rules` should remain"
         );
+
+        for i in 0..3 {
+            if all_sheets[i].title().contains("log_name1") {
+                assert_eq!(
+                    all_sheets[i].row_count(),
+                    Some(6 + 500 - 165),
+                    "`log_name1` contains header row and 340 rows of data"
+                );
+            } else if all_sheets[i].title().contains("log_name2") {
+                assert_eq!(
+                    all_sheets[i].row_count(),
+                    Some(229 + 2 - 122),
+                    "`log_name2` contains header row and 108 rows of data"
+                );
+            } else {
+                assert_eq!(
+                    all_sheets[i].row_count(),
+                    Some(2),
+                    "`{}` contains header row and 1 row of data",
+                    RULES_LOG_NAME
+                );
+            }
+        }
     }
 }
