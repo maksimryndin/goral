@@ -5,10 +5,13 @@ pub mod services;
 pub mod spreadsheet;
 pub mod storage;
 use crate::messenger::configuration::MessengerConfig;
+use chrono::{DateTime, NaiveDateTime, Utc};
 pub use configuration::*;
 use google_sheets4::hyper_rustls::HttpsConnector;
 use hyper::{client::connect::HttpConnector, Client};
+use lazy_static::lazy_static;
 pub use messenger::*;
+use regex::Regex;
 use services::general::{GeneralService, GENERAL_SERVICE_NAME};
 use services::healthcheck::{HealthcheckService, HEALTHCHECK_SERVICE_NAME};
 use services::kv::{KvService, KV_SERVICE_NAME};
@@ -369,7 +372,114 @@ pub async fn welcome(send_notification: Sender, project_id: String, host_id: Str
     send_notification.info(msg).await;
 }
 
+fn capture_datetime(line: &str) -> Option<NaiveDateTime> {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(
+            r"(?x)
+            (?P<datetime>
+                \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s\+\d{2}:\d{2}|
+                \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}|
+                \d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}|
+                \d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\s\+\d{2}:\d{2}|
+                \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z|
+                \d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}:\d{2}\.\d+|
+                \d{4}[-/]\d{2}[-/]\d{2}\s\d{2}:\d{2}:\d{2}
+            )"
+        )
+        .expect("assert: datetime regex is properly constructed");
+    }
+    RE.captures(line).and_then(|cap| {
+        cap.name("datetime").and_then(|datetime| {
+            let captured = datetime.as_str();
+            captured
+                .parse::<DateTime<Utc>>()
+                .ok()
+                .map(|d| d.naive_utc())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y-%m-%dT%H:%M:%S%.f").ok())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y/%m/%d %H:%M:%S%.f").ok())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y-%m-%d %H:%M:%S%.f").ok())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y/%m/%d %H:%M:%S").ok())
+                .or_else(|| NaiveDateTime::parse_from_str(captured, "%Y-%m-%d %H:%M:%S").ok())
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     pub(crate) const TEST_HOST_ID: &str = "testhost";
+    use chrono::NaiveDate;
+
+    #[test]
+    fn log_date_time() {
+        assert_eq!(
+            capture_datetime("INFO:2023/02/17 14:30:15 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 02, 17)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(14, 30, 15)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime("INFO:2023-02-17 14:30:15 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 02, 17)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(14, 30, 15)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime(
+                r#"[2m2023-11-02 12:29:51.552906[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime(
+                r#"[2m2023/11/02 12:29:51.552906[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime(
+                r#"[2m2023-11-02T12:29:51.552906Z[0m [32m INFO[0m [2mgoral::services::healthcheck[0m[2m:[0m starting check for Http(http://127.0.0.1:9898/)"#
+            ),
+            Some(
+                NaiveDate::from_ymd_opt(2023, 11, 02)
+                    .expect("test assert: static datetime")
+                    .and_hms_micro_opt(12, 29, 51, 552906)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime("INFO:2014-11-28 21:00:09 +09:00 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2014, 11, 28)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(12, 00, 09)
+                    .expect("test assert: static datetime")
+            )
+        );
+        assert_eq!(
+            capture_datetime("INFO:2014-11-28T21:00:09+09:00 This is an info message."),
+            Some(
+                NaiveDate::from_ymd_opt(2014, 11, 28)
+                    .expect("test assert: static datetime")
+                    .and_hms_opt(12, 00, 09)
+                    .expect("test assert: static datetime")
+            )
+        );
+    }
 }

@@ -1,8 +1,9 @@
 pub(crate) mod configuration;
 
 use crate::messenger::configuration::MessengerConfig;
+use crate::services::http_client::HttpClient;
 use crate::services::metrics::configuration::{scrape_push_rule, Metrics};
-use crate::services::{Data, HttpClient, Service, TaskResult};
+use crate::services::{Data, Service, TaskResult};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
 use crate::{MessengerApi, Notification, Sender, Shared};
@@ -372,7 +373,7 @@ impl Service for MetricsService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::tests::run_server;
+    use crate::services::http_client::tests::run_server;
 
     #[tokio::test]
     async fn single_metrics_scrape() {
