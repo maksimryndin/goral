@@ -112,7 +112,7 @@ messenger.url = "https://discord.com/api/webhooks/<webhook_id>/<webhook_token>"
 
 ## Services
 
-Sheet managed by Goral has title `<parameter to collect data on>@<host_id>@<service> <creation datetime>`. You can change the title, column names and other elements of the sheet but be aware that Goral will continue to append data in the same order as when the sheet was created by Goral if the form of the data hasn't changed (either `<parameter to collect data on>` or its keys). Creation datetimes for sheets always differ by some amount of seconds (jittered) even those sheets were created at the same time - in order to prevent conflicts in sheet titles.
+A sheet managed by Goral has a title `<parameter to collect data on>@<host_id>@<service> <creation datetime>`. You can change the title, column names and other elements of the sheet but be aware that Goral will continue to append data in the same order as when the sheet was created by Goral if the form of the data hasn't changed (either `<parameter to collect data on>` or its keys). Creation datetimes for sheets always differ by some amount of seconds (jittered) even those sheets were created at the same time - in order to prevent conflicts in sheet titles.
 
 For all configurations below commented lines (starting with #) are optional and example values are their defaults.
 Every service has a messenger configuration (see [Setup](#setup)). It is recommended to have several messengers and different chats/channels for each messenger and take into account their rate limits when configuring a service.

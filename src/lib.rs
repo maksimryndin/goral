@@ -4,6 +4,7 @@ pub mod rules;
 pub mod services;
 pub mod spreadsheet;
 pub mod storage;
+use crate::messenger::configuration::MessengerConfig;
 pub use configuration::*;
 use google_sheets4::hyper_rustls::HttpsConnector;
 use hyper::{client::connect::HttpConnector, Client};
@@ -23,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 pub use storage::*;
 use sysinfo::{System, SystemExt};
-use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender as TokioSender};
+use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender as TokioSender};
 use tracing::Level;
 
 pub(crate) type HyperConnector = HttpsConnector<HttpConnector>;
@@ -201,27 +202,40 @@ impl Notification {
     }
 }
 
-#[derive(Clone)]
-pub struct Sender(TokioSender<Notification>);
+#[derive(Debug, Clone)]
+pub struct Sender {
+    tx: TokioSender<Notification>,
+    service: &'static str,
+}
 
 impl Sender {
-    pub fn new(sender: TokioSender<Notification>) -> Self {
-        Self(sender)
+    pub fn new(tx: TokioSender<Notification>, service: &'static str) -> Self {
+        Self { tx, service }
     }
 
     pub async fn send(&self, notification: Notification) {
-        if let Err(_) = self.0.send(notification).await {
-            panic!("failed to send notification - general service doesn't accept notifications");
+        if let Err(_) = self.tx.send(notification).await {
+            panic!(
+                "failed to send notification - `{}` service doesn't accept notifications",
+                self.service
+            );
         }
     }
 
     pub fn send_nonblock(&self, notification: Notification) {
-        match self.0.try_send(notification) {
+        match self.tx.try_send(notification) {
             Err(TrySendError::Closed(_)) => {
-                panic!("failed to send notification - general service doesn't accept notifications")
+                panic!(
+                    "failed to send notification - `{}` service doesn't accept notifications",
+                    self.service
+                )
             }
             Err(TrySendError::Full(n)) => {
-                tracing::error!("failed to send notification {:?} - general service notifications queue is full", n);
+                tracing::error!(
+                    "failed to send notification {:?} - `{}` service notifications queue is full",
+                    n,
+                    self.service
+                );
             }
             Ok(_) => (),
         }
@@ -265,6 +279,34 @@ impl Sender {
         // restart quickly because restart doesn't help for recovery
         // user is required to fix a problem
         tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+pub(crate) fn setup_messenger_channel(service: &'static str) -> (Sender, Receiver<Notification>) {
+    let (tx, rx) = mpsc::channel(60); // 60 simultaneous messages is enough for any rate limiting messenger
+    let tx = Sender::new(tx, service);
+    (tx, rx)
+}
+
+pub fn setup_general_messenger_channel() -> (Sender, Receiver<Notification>) {
+    setup_messenger_channel(GENERAL_SERVICE_NAME)
+}
+
+#[derive(Debug)]
+pub(crate) struct MessengerApi {
+    pub(crate) config: MessengerConfig,
+    pub(crate) message_tx: Sender,
+    pub(crate) message_rx: Option<Receiver<Notification>>,
+}
+
+impl MessengerApi {
+    fn new(config: MessengerConfig, service: &'static str) -> Self {
+        let (message_tx, message_rx) = setup_messenger_channel(service);
+        Self {
+            config,
+            message_tx,
+            message_rx: Some(message_rx),
+        }
     }
 }
 

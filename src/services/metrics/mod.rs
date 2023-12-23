@@ -5,7 +5,7 @@ use crate::services::metrics::configuration::{scrape_push_rule, Metrics};
 use crate::services::{Data, HttpClient, Service, TaskResult};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{Sender, Shared};
+use crate::{MessengerApi, Notification, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
@@ -42,7 +42,7 @@ impl ScrapeTarget {
 
 pub(crate) struct MetricsService {
     shared: Shared,
-    messenger_config: Option<MessengerConfig>,
+    messenger: Option<MessengerApi>,
     spreadsheet_id: String,
     push_interval: Duration,
     targets: Vec<ScrapeTarget>,
@@ -51,7 +51,7 @@ pub(crate) struct MetricsService {
 }
 
 impl MetricsService {
-    pub(crate) fn new(shared: Shared, config: Metrics) -> MetricsService {
+    pub(crate) fn new(shared: Shared, mut config: Metrics) -> MetricsService {
         let channel_capacity = scrape_push_rule(
             &config.target,
             &config.push_interval_secs,
@@ -59,9 +59,14 @@ impl MetricsService {
             &config.scrape_timeout_ms,
         )
         .expect("assert: push/scrate ratio is validated at configuration");
+        let messenger = if let Some(messenger_config) = config.messenger.take() {
+            Some(MessengerApi::new(messenger_config, METRICS_SERVICE_NAME))
+        } else {
+            None
+        };
         Self {
             shared,
-            messenger_config: config.messenger,
+            messenger,
             spreadsheet_id: config.spreadsheet_id,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
             targets: config
@@ -278,42 +283,11 @@ impl MetricsService {
             }
         }
     }
-
-    async fn send_error(&self, endpoint: &Uri, message: &str) {
-        let message = format!(
-            "`{}` while scraping metrics for endpoint `{}`",
-            message, endpoint
-        );
-        if let Some(messenger) = self.shared.messenger.as_ref() {
-            let messenger_config = self
-                .messenger_config
-                .as_ref()
-                .expect("assert: if messenger is set, then config is also nonempty");
-            if let Err(_) = messenger.send_error(messenger_config, &message).await {
-                tracing::error!("failed to send liveness probe output via configured messenger: {:?} for service {}",  messenger_config, self.name());
-                self.shared.send_notification.try_error(format!(
-                    "{}. Sending via configured messenger failed.",
-                    message
-                ));
-            }
-        } else {
-            tracing::error!(
-                "Messenger is not configured for {}. Error: {}",
-                self.name(),
-                message,
-            );
-            self.shared.send_notification.try_error(format!(
-                "{}\nMessenger is not configured for {}",
-                message,
-                self.name(),
-            ));
-        }
-    }
 }
 
 #[async_trait]
 impl Service for MetricsService {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         METRICS_SERVICE_NAME
     }
 
@@ -333,8 +307,16 @@ impl Service for MetricsService {
         &self.shared
     }
 
-    fn messenger_config(&self) -> Option<MessengerConfig> {
-        self.messenger_config.clone()
+    fn messenger(&self) -> Option<Sender> {
+        self.messenger.as_ref().map(|m| m.message_tx.clone())
+    }
+
+    fn messenger_config(&self) -> Option<&MessengerConfig> {
+        self.messenger.as_ref().map(|m| &m.config)
+    }
+
+    fn take_messenger_rx(&mut self) -> Option<mpsc::Receiver<Notification>> {
+        self.messenger.as_mut().and_then(|m| m.message_rx.take())
     }
 
     fn truncate_at(&self) -> f32 {
@@ -347,7 +329,11 @@ impl Service for MetricsService {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
                 tracing::error!("{}", msg);
-                self.send_error(&self.targets[id].url, &msg).await;
+                self.send_error(format!(
+                    "`{}` while scraping metrics for endpoint `{}`",
+                    self.targets[id].url, msg
+                ))
+                .await;
                 Data::Empty
             }
             _ => panic!("assert: metrics result contains either multiple datarows or error text"),
@@ -396,7 +382,7 @@ mod tests {
 
         const NUM_OF_SCRAPES: usize = 1;
         let (send_notification, mut notifications_receiver) = mpsc::channel(1);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, METRICS_SERVICE_NAME);
         let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_SCRAPES);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 
@@ -462,7 +448,7 @@ mod tests {
 
         const NUM_OF_SCRAPES: usize = 1;
         let (send_notification, mut notifications_receiver) = mpsc::channel(1);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, METRICS_SERVICE_NAME);
         let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_SCRAPES);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 

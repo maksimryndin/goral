@@ -1,15 +1,14 @@
 pub(crate) mod configuration;
 
-use crate::messenger::configuration::MessengerConfig;
-
 use crate::configuration::APP_NAME;
+use crate::messenger::configuration::MessengerConfig;
 use crate::services::healthcheck::configuration::{
     scrape_push_rule, Healthcheck, Liveness as LivenessConfig, LivenessType,
 };
 use crate::services::{Data, HttpClient, Service, TaskResult};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{Sender, Shared};
+use crate::{MessengerApi, Notification, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
@@ -131,7 +130,7 @@ pub(crate) struct HealthcheckService {
     shared: Shared,
     spreadsheet_id: String,
     liveness: Vec<Liveness>,
-    messenger_config: Option<MessengerConfig>,
+    messenger: Option<MessengerApi>,
     push_interval: Duration,
     channel_capacity: usize,
     liveness_previous_state: Vec<Option<bool>>,
@@ -139,15 +138,23 @@ pub(crate) struct HealthcheckService {
 }
 
 impl HealthcheckService {
-    pub(crate) fn new(shared: Shared, config: Healthcheck) -> HealthcheckService {
+    pub(crate) fn new(shared: Shared, mut config: Healthcheck) -> HealthcheckService {
         let channel_capacity = scrape_push_rule(&config.liveness, &config.push_interval_secs)
             .expect("assert: push/scrate ratio is validated at configuration");
         let liveness_previous_state = vec![None; config.liveness.len()];
+        let messenger = if let Some(messenger_config) = config.messenger.take() {
+            Some(MessengerApi::new(
+                messenger_config,
+                HEALTHCHECK_SERVICE_NAME,
+            ))
+        } else {
+            None
+        };
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
             liveness: config.liveness.into_iter().map(|l| l.into()).collect(),
-            messenger_config: config.messenger,
+            messenger,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
             channel_capacity,
             liveness_previous_state,
@@ -312,47 +319,15 @@ impl HealthcheckService {
                 "Liveness probe for `{:?}` failed with an output at the [spreadsheet]({}), the sheet may be created a bit later",
                 liveness, log.sheet_url(datarow.sheet_id(log.host_id(), self.name()))))
         };
-        if let Some(messenger) = self.shared.messenger.as_ref() {
-            let messenger_config = self
-                .messenger_config
-                .as_ref()
-                .expect("assert: if messenger is set, then config is also nonempty");
-            if let Err(_) = messenger
-                .send_by_level(messenger_config, &message, level)
-                .await
-            {
-                tracing::error!("failed to send liveness probe output via configured messenger: {:?} for service {}",  messenger_config, self.name());
-                self.shared.send_notification.try_error(format!(
-                    "{}. Sending via configured messenger failed.",
-                    message
-                ));
-            }
-        } else {
-            if is_alive {
-                tracing::warn!(
-                    "{}. Messenger is not configured for {}.",
-                    message,
-                    self.name()
-                );
-            } else {
-                tracing::error!(
-                    "{}. Messenger is not configured for {}.",
-                    message,
-                    self.name()
-                );
-                self.shared.send_notification.try_error(format!(
-                    "{}\nMessenger is not configured for {}",
-                    message,
-                    self.name(),
-                ));
-            }
+        if let Some(messenger) = self.messenger() {
+            messenger.send_nonblock(Notification::new(message, level));
         }
     }
 }
 
 #[async_trait]
 impl Service for HealthcheckService {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         HEALTHCHECK_SERVICE_NAME
     }
 
@@ -372,8 +347,16 @@ impl Service for HealthcheckService {
         &self.shared
     }
 
-    fn messenger_config(&self) -> Option<MessengerConfig> {
-        self.messenger_config.clone()
+    fn messenger(&self) -> Option<Sender> {
+        self.messenger.as_ref().map(|m| m.message_tx.clone())
+    }
+
+    fn messenger_config(&self) -> Option<&MessengerConfig> {
+        self.messenger.as_ref().map(|m| &m.config)
+    }
+
+    fn take_messenger_rx(&mut self) -> Option<mpsc::Receiver<Notification>> {
+        self.messenger.as_mut().and_then(|m| m.message_rx.take())
     }
 
     fn truncate_at(&self) -> f32 {
@@ -508,7 +491,7 @@ mod tests {
 
         const NUM_OF_PROBES: usize = 1;
         let (send_notification, mut notifications_receiver) = mpsc::channel(1);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, HEALTHCHECK_SERVICE_NAME);
         let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_PROBES);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 
@@ -516,7 +499,7 @@ mod tests {
             name: Some("test_check".to_string()),
             initial_delay: Duration::from_secs(0),
             period: Duration::from_secs(1),
-            timeout: Duration::from_millis(50),
+            timeout: Duration::from_millis(100),
             probe: Probe::Http(Uri::from_static("http://127.0.0.1:53254/health")),
         };
 
@@ -567,7 +550,7 @@ mod tests {
 
         const NUM_OF_PROBES: usize = 2;
         let (send_notification, mut notifications_receiver) = mpsc::channel(NUM_OF_PROBES);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, HEALTHCHECK_SERVICE_NAME);
         let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_PROBES);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 
@@ -642,7 +625,7 @@ mod tests {
 
         const NUM_OF_PROBES: usize = 1;
         let (send_notification, mut notifications_receiver) = mpsc::channel(1);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, HEALTHCHECK_SERVICE_NAME);
         let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_PROBES);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 

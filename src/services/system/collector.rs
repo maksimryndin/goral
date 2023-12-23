@@ -1,4 +1,5 @@
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
+use crate::{Notification, Sender};
 use chrono::NaiveDateTime;
 use std::path::Path;
 use std::thread;
@@ -7,6 +8,7 @@ use sysinfo::{
     CpuExt, NetworkExt, Pid, PidExt, Process as SysinfoProcess, ProcessExt, System, SystemExt, Uid,
     UserExt,
 };
+use tracing::Level;
 
 pub const BASIC_LOG: &str = "basic";
 pub const MEMORY_USE: &str = "memory_use";
@@ -181,6 +183,7 @@ pub(super) fn collect(
     mounts: &[String],
     names: &[String],
     scrape_time: NaiveDateTime,
+    messenger: &Sender,
 ) -> Result<Vec<Datarow>, String> {
     sys.refresh_users_list();
     sys.refresh_memory();
@@ -244,7 +247,7 @@ pub(super) fn collect(
         basic_values,
     ));
 
-    let mut disk_stat = disk_stat(sys, mounts, scrape_time);
+    let mut disk_stat = disk_stat(sys, mounts, scrape_time, &messenger);
     datarows.append(&mut disk_stat);
 
     let top_cpu = top_cpu_process(&mut processes_infos);
@@ -287,7 +290,9 @@ pub(super) fn collect(
                 process_to_values(p, &mut sys),
             ));
         } else {
-            tracing::warn!("process containing `{name}` in its name is not found to collect process statistics");
+            let message = format!("process containing `{name}` in its name is not found to collect process statistics");
+            tracing::warn!("{}", message);
+            messenger.send_nonblock(Notification::new(message, Level::WARN));
         }
     }
 
@@ -326,17 +331,21 @@ pub(super) fn collect(
 }
 
 #[cfg(target_os = "linux")]
-fn disk_stat(_: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> Vec<Datarow> {
+fn disk_stat(
+    _: &mut System,
+    mounts: &[String],
+    scrape_time: NaiveDateTime,
+    messenger: &Sender,
+) -> Vec<Datarow> {
     let mut datarows = Vec::with_capacity(mounts.len());
     for mount in mounts {
         let stat = match psutil::disk::disk_usage(mount) {
             Ok(s) => s,
             Err(e) => {
-                tracing::warn!(
-                    "mount `{mount}` is not found to collect disk statistics: {}",
-                    e
-                );
-                // TODO send notification warn
+                let message =
+                    format!("mount `{mount}` is not found to collect disk statistics: `{e}`");
+                tracing::warn!("{}", message);
+                messenger.send_nonblock(Notification::new(message, Level::WARN));
                 continue;
             }
         };
@@ -356,7 +365,12 @@ fn disk_stat(_: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> V
 }
 
 #[cfg(not(target_os = "linux"))]
-fn disk_stat(sys: &mut System, mounts: &[String], scrape_time: NaiveDateTime) -> Vec<Datarow> {
+fn disk_stat(
+    sys: &mut System,
+    mounts: &[String],
+    scrape_time: NaiveDateTime,
+    messenger: &Sender,
+) -> Vec<Datarow> {
     let mut datarows = Vec::with_capacity(mounts.len());
     sys.refresh_disks_list();
     let mut mounts_stat: std::collections::HashMap<String, (u64, u64)> = sys
@@ -373,8 +387,9 @@ fn disk_stat(sys: &mut System, mounts: &[String], scrape_time: NaiveDateTime) ->
         let (available, total) = match mounts_stat.remove(mount) {
             Some(stat) => stat,
             None => {
-                tracing::warn!("mount `{mount}` is not found to collect disk statistics");
-                // TODO send notification warn
+                let message = format!("mount `{mount}` is not found to collect disk statistics");
+                tracing::warn!("{}", message);
+                messenger.send_nonblock(Notification::new(message, Level::WARN));
                 continue;
             }
         };

@@ -4,8 +4,10 @@ use clap::Parser;
 use futures::future::try_join_all;
 use goral::configuration::{Configuration, APP_NAME};
 use goral::spreadsheet::{get_google_auth, SpreadsheetAPI};
-use goral::storage::{create_log, Storage};
-use goral::{collect_messengers, collect_services, welcome, Sender, Shared};
+use goral::storage::{AppendableLog, Storage};
+use goral::{
+    collect_messengers, collect_services, setup_general_messenger_channel, welcome, Shared,
+};
 use std::fmt::Debug;
 use std::panic;
 use std::path::PathBuf;
@@ -13,7 +15,7 @@ use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -91,8 +93,7 @@ async fn start() -> Result<(), String> {
     let graceful_shutdown_timeout = config.general.graceful_timeout_secs;
     let (project_id, auth) =
         get_google_auth(&config.general.service_account_credentials_path).await;
-    let (tx, rx) = mpsc::channel(5 * 10); // 5 services (except General) can generate 10 simultaneous messages
-    let tx = Sender::new(tx);
+    let (tx, rx) = setup_general_messenger_channel();
     let sheets_api = SpreadsheetAPI::new(auth, tx.clone());
     let storage = Arc::new(Storage::new(args.id.to_string(), sheets_api, tx.clone()));
     let shared = Shared::new(tx.clone());
@@ -105,11 +106,13 @@ async fn start() -> Result<(), String> {
     while let Some(mut service) = services.pop() {
         let storage = storage.clone();
         let shutdown_receiver = shutdown.subscribe();
+        let messenger = service.messenger();
         tasks.push(tokio::spawn(async move {
-            let log = create_log(
+            let log = AppendableLog::new(
                 storage,
                 service.spreadsheet_id().to_string(),
                 service.name().to_string(),
+                messenger,
                 service.truncate_at(),
             );
             service.run(log, shutdown_receiver).await

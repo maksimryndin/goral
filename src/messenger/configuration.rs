@@ -30,8 +30,8 @@ fn messenger_implementation_host_rule(
 #[derive(Deserialize, Clone, Validate, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum MessengerImplementation {
-    Telegram { chat_id: String },
     Slack { token: String, channel: String },
+    Telegram { chat_id: String },
     Discord,
 }
 

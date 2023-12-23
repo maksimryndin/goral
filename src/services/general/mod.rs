@@ -78,7 +78,7 @@ impl GeneralService {
 
 #[async_trait]
 impl Service for GeneralService {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         GENERAL_SERVICE_NAME
     }
 
@@ -129,7 +129,7 @@ mod tests {
     use crate::spreadsheet::tests::TestState;
     use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;
-    use crate::{create_log, Sender, Shared};
+    use crate::{Sender, Shared};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -141,7 +141,7 @@ mod tests {
         const NUMBER_OF_MESSAGES: usize = 10;
 
         let (send_notification, notifications_receiver) = mpsc::channel(NUMBER_OF_MESSAGES);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             send_notification.clone(),
             TestState::new(vec![], None, None),
@@ -151,10 +151,11 @@ mod tests {
             sheets_api,
             send_notification.clone(),
         ));
-        let log = create_log(
+        let log = AppendableLog::new(
             storage.clone(),
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(send_notification.clone()),
             100.0,
         );
 

@@ -1,9 +1,11 @@
 use crate::spreadsheet::datavalue::{Datarow, Datavalue, NOT_AVAILABLE};
 use crate::spreadsheet::sheet::{Dropdown, SheetId};
+use crate::{Notification, Sender};
 use chrono::Utc;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
+use tracing::Level;
 
 pub const RULES_LOG_NAME: &str = "rules";
 
@@ -172,7 +174,7 @@ impl fmt::Display for Rule {
 }
 
 impl Rule {
-    pub(crate) fn try_from_values(row: Vec<Value>) -> Option<Self> {
+    pub(crate) fn try_from_values(row: Vec<Value>, messenger: Option<&Sender>) -> Option<Self> {
         if row.len() != 6 {
             // Rule fields + timestamp which is first
             return None;
@@ -203,8 +205,11 @@ impl Rule {
                 Datavalue::Text(value.as_str()?.to_string())
             }
             RuleCondition::Is | RuleCondition::IsNot if value.is_number() => {
-                // TODO send notification??
-                tracing::warn!("`{}` and `{}` conditions are not valid when the `{}` is a float; the rule for `{}`->`{}` is skipped.", IS_CONDITION, IS_NOT_CONDITION, RULE_VALUE_COLUMN_HEADER, log_name, key);
+                let message = format!("`{IS_CONDITION}` and `{IS_NOT_CONDITION}` conditions are not valid when the `{RULE_VALUE_COLUMN_HEADER}` is a float, the rule for `{log_name}->{key}` with `{RULE_VALUE_COLUMN_HEADER}` `{}` is skipped", value.as_f64()?);
+                tracing::warn!("{}", message);
+                if let Some(messenger) = messenger {
+                    messenger.send_nonblock(Notification::new(message, Level::WARN));
+                }
                 return None;
             }
             _ => {
@@ -362,196 +367,241 @@ mod tests {
 
     #[test]
     fn rules_deserialization() {
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(LESS_CONDITION),
-            json!("log_name1"),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(LESS_CONDITION),
+                json!("log_name1"),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `less` cannot be a condition for a text value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(GREATER_CONDITION),
-            json!("log_name1"),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(GREATER_CONDITION),
+                json!("log_name1"),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `greater` cannot be a condition for a text value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(LESS_CONDITION),
-            json!(NOT_AVAILABLE),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(LESS_CONDITION),
+                json!(NOT_AVAILABLE),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `less` cannot be a condition for a N/A value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(GREATER_CONDITION),
-            json!(NOT_AVAILABLE),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(GREATER_CONDITION),
+                json!(NOT_AVAILABLE),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `greater` cannot be a condition for a N/A value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(LESS_CONDITION),
-            json!(true),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(LESS_CONDITION),
+                json!(true),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `less` cannot be a condition for a bool value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(GREATER_CONDITION),
-            json!(true),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(GREATER_CONDITION),
+                json!(true),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `greater` cannot be a condition for a bool value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_CONDITION),
-            json!("log_name1"),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_CONDITION),
+                json!("log_name1"),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `is` cannot be a condition for a text value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_CONDITION),
-            json!(1.0),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_CONDITION),
+                json!(1.0),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `is` cannot be a condition for a float value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_NOT_CONDITION),
-            json!("log_name1"),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_NOT_CONDITION),
+                json!("log_name1"),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `is not` cannot be a condition for a text value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_NOT_CONDITION),
-            json!(1.0),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_NOT_CONDITION),
+                json!(1.0),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `is not` cannot be a condition for a float value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(CONTAINS_CONDITION),
-            json!(1.0),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(CONTAINS_CONDITION),
+                json!(1.0),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `contains` cannot be a condition for a float value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(CONTAINS_CONDITION),
-            json!(1),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(CONTAINS_CONDITION),
+                json!(1),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `contains` cannot be a condition for a integer value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(CONTAINS_CONDITION),
-            json!(true),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(CONTAINS_CONDITION),
+                json!(true),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `contains` cannot be a condition for a bool value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(CONTAINS_CONDITION),
-            json!(NOT_AVAILABLE),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(CONTAINS_CONDITION),
+                json!(NOT_AVAILABLE),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: `contains` cannot be a condition for a N/A value"
         );
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_CONDITION),
-            json!(-2),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_CONDITION),
+                json!(-2),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         assert!(
             rule.is_none(),
             "test assert: negative integers are not supported"
@@ -560,14 +610,17 @@ mod tests {
 
     #[test]
     fn rules_application() {
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_NOT_CONDITION),
-            json!(NOT_AVAILABLE),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_NOT_CONDITION),
+                json!(NOT_AVAILABLE),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -581,14 +634,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(LESS_CONDITION),
-            json!(-9),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(LESS_CONDITION),
+                json!(-9),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -602,14 +658,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(LESS_CONDITION),
-            json!(9.0),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(LESS_CONDITION),
+                json!(9.0),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -623,14 +682,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(GREATER_CONDITION),
-            json!(9.0),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(GREATER_CONDITION),
+                json!(9.0),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -644,14 +706,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(LESS_CONDITION),
-            json!(9),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(LESS_CONDITION),
+                json!(9),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -665,14 +730,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(GREATER_CONDITION),
-            json!(9),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(GREATER_CONDITION),
+                json!(9),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -686,14 +754,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(LESS_CONDITION),
-            json!(9.0),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(LESS_CONDITION),
+                json!(9.0),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -707,14 +778,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(GREATER_CONDITION),
-            json!(9.0),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(GREATER_CONDITION),
+                json!(9.0),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -728,14 +802,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(LESS_CONDITION),
-            json!(0.9),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(LESS_CONDITION),
+                json!(0.9),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -749,14 +826,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(GREATER_CONDITION),
-            json!(0.9),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(GREATER_CONDITION),
+                json!(0.9),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -770,14 +850,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_CONDITION),
-            json!(true),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_CONDITION),
+                json!(true),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -791,14 +874,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_CONDITION),
-            json!(10),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_CONDITION),
+                json!(10),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -812,14 +898,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_CONDITION),
-            json!(10),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_CONDITION),
+                json!(10),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -833,14 +922,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(IS_NOT_CONDITION),
-            json!(10),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_NOT_CONDITION),
+                json!(10),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -854,14 +946,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(CONTAINS_CONDITION),
-            json!("substring"),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(CONTAINS_CONDITION),
+                json!("substring"),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
@@ -878,14 +973,17 @@ mod tests {
             _ => panic!("test assert: rule should trigger"),
         };
 
-        let rule = Rule::try_from_values(vec![
-            json!(0.0),
-            json!("log_name1"),
-            json!("key"),
-            json!(NOT_CONTAINS_CONDITION),
-            json!("substring"),
-            json!(INFO_ACTION),
-        ]);
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(NOT_CONTAINS_CONDITION),
+                json!("substring"),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),

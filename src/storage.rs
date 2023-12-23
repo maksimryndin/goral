@@ -5,12 +5,12 @@ use crate::spreadsheet::sheet::{
 };
 use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS;
 use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
-use crate::{get_service_tab_color, Sender, HOST_ID_CHARS_LIMIT};
+use crate::{get_service_tab_color, Notification, Sender, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, Utc};
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::Level;
 
 const METADATA_SERVICE_KEY: &str = "service";
 const METADATA_HOST_ID_KEY: &str = "host";
@@ -40,41 +40,36 @@ impl Storage {
     }
 }
 
-pub fn create_log(
-    storage: Arc<Storage>,
-    spreadsheet_id: String,
-    service: String,
-    truncate_at: f32,
-) -> AppendableLog {
-    let tab_color_rgb = get_service_tab_color(&service);
-    AppendableLog {
-        storage,
-        spreadsheet_id,
-        service,
-        tab_color_rgb,
-        rules_sheet_id: None,
-        truncate_at,
-    }
-}
-
 pub struct AppendableLog {
     storage: Arc<Storage>,
     service: String,
     spreadsheet_id: String,
     tab_color_rgb: TabColorRGB,
     rules_sheet_id: Option<SheetId>,
+    messenger: Option<Sender>,
     truncate_at: f32,
 }
 
-#[derive(Debug)]
-struct SheetUsage {
-    sheet_id: SheetId,
-    row_count: i32,
-    column_count: i32,
-    updated_at: DateTime<Utc>,
-}
-
 impl AppendableLog {
+    pub fn new(
+        storage: Arc<Storage>,
+        spreadsheet_id: String,
+        service: String,
+        messenger: Option<Sender>,
+        truncate_at: f32,
+    ) -> Self {
+        let tab_color_rgb = get_service_tab_color(&service);
+        Self {
+            storage,
+            spreadsheet_id,
+            service,
+            tab_color_rgb,
+            rules_sheet_id: None,
+            messenger,
+            truncate_at,
+        }
+    }
+
     async fn fetch_sheets(&self) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, HttpResponse> {
         let basic_metadata = Metadata::new(vec![
             (METADATA_HOST_ID_KEY, self.storage.host_id.to_string()),
@@ -226,7 +221,7 @@ impl AppendableLog {
 
         tracing::debug!("existing sheets:\n{:?}", existing_sheets);
 
-        let truncate_requests = Self::prepare_truncate_requests(&existing_sheets, self.truncate_at);
+        let truncate_requests = self.prepare_truncate_requests(&existing_sheets, self.truncate_at);
 
         // Check for sheet type to be grid
         let mut sheets_to_create: HashMap<SheetId, (VirtualSheet, Vec<String>)> = HashMap::new();
@@ -358,6 +353,7 @@ impl AppendableLog {
     }
 
     fn prepare_truncate_requests(
+        &self,
         existing_service_sheets: &HashMap<SheetId, (Sheet, Vec<String>)>,
         limit: f32,
     ) -> Vec<CleanupSheet> {
@@ -374,6 +370,13 @@ impl AppendableLog {
             100.0 * (cells_used_by_service as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32);
 
         if usage < limit {
+            if usage > 0.8 * limit {
+                let message = format!("current spreadsheet usage `{usage}%` for service `{}` is approaching a limit `{limit}%`, copy the data if needed otherwise it will be truncated", self.service);
+                tracing::warn!("{}", message);
+                if let Some(messenger) = self.messenger.as_ref() {
+                    messenger.send_nonblock(Notification::new(message, Level::WARN));
+                }
+            }
             return vec![];
         }
         // remove surplus and 10% of the limit
@@ -467,9 +470,17 @@ impl AppendableLog {
             .await
             .unwrap();
         data.into_iter()
-            .filter_map(|row| Rule::try_from_values(row))
+            .filter_map(|row| Rule::try_from_values(row, self.messenger.as_ref()))
             .collect()
     }
+}
+
+#[derive(Debug)]
+struct SheetUsage {
+    sheet_id: SheetId,
+    row_count: i32,
+    column_count: i32,
+    updated_at: DateTime<Utc>,
 }
 
 macro_rules! sheet_name_jitter {
@@ -546,7 +557,7 @@ mod tests {
     #[tokio::test]
     async fn basic_append_flow() {
         let (tx, _) = mpsc::channel(1);
-        let tx = Sender::new(tx);
+        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
             TestState::new(vec![mock_ordinary_google_sheet("some sheet")], None, None),
@@ -556,10 +567,11 @@ mod tests {
             sheets_api,
             tx.clone(),
         ));
-        let mut log = create_log(
+        let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(tx.clone()),
             100.0,
         );
 
@@ -728,7 +740,7 @@ mod tests {
     #[tokio::test]
     async fn append_retry() {
         let (tx, _) = mpsc::channel(1);
-        let tx = Sender::new(tx);
+        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
             TestState::new(
@@ -742,10 +754,11 @@ mod tests {
             sheets_api,
             tx.clone(),
         ));
-        let mut log = create_log(
+        let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(tx.clone()),
             100.0,
         );
 
@@ -781,7 +794,7 @@ mod tests {
     #[should_panic(expected = "The application's API key was not found in the configuration")]
     async fn append_fatal_error() {
         let (tx, mut rx) = mpsc::channel(1);
-        let tx = Sender::new(tx);
+        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
             TestState::new(
@@ -795,10 +808,11 @@ mod tests {
             sheets_api,
             tx.clone(),
         ));
-        let mut log = create_log(
+        let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(tx.clone()),
             100.0,
         );
 
@@ -842,7 +856,7 @@ mod tests {
     #[should_panic(expected = "Google API request timed-out")]
     async fn append_request_timeout() {
         let (tx, mut rx) = mpsc::channel(1);
-        let tx = Sender::new(tx);
+        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
             TestState::new(
@@ -856,10 +870,11 @@ mod tests {
             sheets_api,
             tx.clone(),
         ));
-        let mut log = create_log(
+        let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(tx.clone()),
             100.0,
         );
 
@@ -908,7 +923,7 @@ mod tests {
     #[should_panic(expected = "Google API request maximum retry duration")]
     async fn append_retry_maximum_backoff() {
         let (tx, mut rx) = mpsc::channel(1);
-        let tx = Sender::new(tx);
+        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
             TestState::new(
@@ -922,10 +937,11 @@ mod tests {
             sheets_api,
             tx.clone(),
         ));
-        let mut log = create_log(
+        let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(tx.clone()),
             100.0,
         );
 
@@ -974,7 +990,7 @@ mod tests {
     #[should_panic(expected = "error to retry")]
     async fn append_without_retry() {
         let (tx, mut rx) = mpsc::channel(1);
-        let tx = Sender::new(tx);
+        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
             TestState::new(
@@ -988,10 +1004,11 @@ mod tests {
             sheets_api,
             tx.clone(),
         ));
-        let mut log = create_log(
+        let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(tx.clone()),
             100.0,
         );
 
@@ -1033,8 +1050,11 @@ mod tests {
 
     #[tokio::test]
     async fn truncation_flow() {
-        let (tx, _) = mpsc::channel(1);
-        let tx = Sender::new(tx);
+        let (tx, mut rx) = mpsc::channel(1);
+        let messages_task = tokio::spawn(async move {
+            let _ = rx.recv().await;
+        });
+        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(tx.clone(), TestState::new(vec![], None, None));
         let storage = Arc::new(Storage::new(
             TEST_HOST_ID.to_string(),
@@ -1043,10 +1063,11 @@ mod tests {
         ));
         // for simplicity we create logs with one key to easily
         // make assertions on rows count (only two columns - timestamp and key)
-        let mut log = create_log(
+        let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(tx.clone()),
             0.01, // 0.01% of 10 000 000 cells means 1000 cells or 500 rows
         );
 
@@ -1237,5 +1258,6 @@ mod tests {
                 );
             }
         }
+        messages_task.await.unwrap();
     }
 }

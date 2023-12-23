@@ -2,11 +2,11 @@ pub(crate) mod configuration;
 use crate::messenger::configuration::MessengerConfig;
 use crate::rules::RULES_LOG_NAME;
 use crate::services::kv::configuration::Kv;
-use crate::services::{capture_datetime, rules_notifications, Data, Service};
+use crate::services::{capture_datetime, messenger_queue, rules_notifications, Data, Service};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::spreadsheet::HttpResponse;
 use crate::storage::AppendableLog;
-use crate::{Sender, Shared};
+use crate::{MessengerApi, Notification, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::future::try_join_all;
@@ -136,18 +136,23 @@ impl Drop for ReadyHandle {
 pub(crate) struct KvService {
     shared: Shared,
     spreadsheet_id: String,
-    messenger_config: Option<MessengerConfig>,
+    messenger: Option<MessengerApi>,
     port: u16,
     truncate_at: f32,
 }
 
 impl KvService {
-    pub(crate) fn new(shared: Shared, config: Kv) -> KvService {
+    pub(crate) fn new(shared: Shared, mut config: Kv) -> KvService {
+        let messenger = if let Some(messenger_config) = config.messenger.take() {
+            Some(MessengerApi::new(messenger_config, KV_SERVICE_NAME))
+        } else {
+            None
+        };
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
             port: config.port,
-            messenger_config: config.messenger,
+            messenger,
             truncate_at: config.autotruncate_at_usage_percent,
         }
     }
@@ -283,7 +288,7 @@ impl KvService {
 
 #[async_trait]
 impl Service for KvService {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         KV_SERVICE_NAME
     }
 
@@ -300,8 +305,16 @@ impl Service for KvService {
         &self.shared
     }
 
-    fn messenger_config(&self) -> Option<MessengerConfig> {
-        self.messenger_config.clone()
+    fn messenger(&self) -> Option<Sender> {
+        self.messenger.as_ref().map(|m| m.message_tx.clone())
+    }
+
+    fn messenger_config(&self) -> Option<&MessengerConfig> {
+        self.messenger.as_ref().map(|m| &m.config)
+    }
+
+    fn take_messenger_rx(&mut self) -> Option<mpsc::Receiver<Notification>> {
+        self.messenger.as_mut().and_then(|m| m.message_rx.take())
     }
 
     fn truncate_at(&self) -> f32 {
@@ -323,21 +336,37 @@ impl Service for KvService {
 
         let (mut rules_input, rules_output) =
             self.start_rules_thread(is_shutdown.clone(), &mut log).await;
-        if let Some(messenger) = self.shared().messenger.clone() {
-            let base_url = log.spreadsheet_baseurl();
+
+        if let Some(message_rx) = self.take_messenger_rx() {
+            let messenger =
+                self.shared().messenger.clone().expect(
+                    "assert: if messenger receiver channel is set then the messenger is set",
+                );
             let messenger_config = self
                 .messenger_config()
-                .expect("assert: if messenger is set for service, it has a config");
+                .expect(
+                    "assert: if messenger receiver channel is set then the messenger config is set",
+                )
+                .clone();
             let send_notification = self.shared().send_notification.clone();
+            let service = self.name();
+            let host_id = log.host_id().to_string();
             tasks.push(tokio::spawn(async move {
-                rules_notifications(
+                messenger_queue(
                     messenger,
                     messenger_config,
                     send_notification,
-                    rules_output,
-                    base_url,
+                    message_rx,
+                    host_id,
+                    service,
                 )
                 .await
+            }));
+        }
+        if let Some(message_tx) = self.messenger() {
+            let base_url = log.spreadsheet_baseurl();
+            tasks.push(tokio::spawn(async move {
+                rules_notifications(message_tx, rules_output, base_url).await
             }));
         }
         let mut rules_update_interval = tokio::time::interval(self.rules_update_interval());
@@ -406,7 +435,7 @@ mod tests {
     use crate::spreadsheet::Metadata;
     use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;
-    use crate::{create_log, Sender, Shared};
+    use crate::{Sender, Shared};
     use hyper::{header, Body, Client, Method};
     use serde_json::json;
     use std::sync::Arc;
@@ -417,7 +446,7 @@ mod tests {
         const NUMBER_OF_MESSAGES: usize = 10;
 
         let (send_notification, _) = mpsc::channel(NUMBER_OF_MESSAGES);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, KV_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             send_notification.clone(),
             TestState::new(vec![], None, None),
@@ -427,10 +456,11 @@ mod tests {
             sheets_api,
             send_notification.clone(),
         ));
-        let log = create_log(
+        let log = AppendableLog::new(
             storage.clone(),
             "spreadsheet1".to_string(),
             KV_SERVICE_NAME.to_string(),
+            Some(send_notification.clone()),
             100.0,
         );
 

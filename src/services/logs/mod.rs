@@ -6,7 +6,7 @@ use crate::services::{capture_datetime, Data, Service, TaskResult};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL;
 use crate::storage::AppendableLog;
-use crate::{Sender, Shared};
+use crate::{MessengerApi, Notification, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, NaiveDateTime, Utc};
 use lazy_static::lazy_static;
@@ -31,13 +31,18 @@ pub(crate) struct LogsService {
     channel_capacity: usize,
     filter_if_contains: Vec<String>,
     drop_if_contains: Vec<String>,
-    messenger_config: Option<MessengerConfig>,
+    messenger: Option<MessengerApi>,
     truncate_at: f32,
 }
 
 impl LogsService {
-    pub(crate) fn new(shared: Shared, config: Logs) -> LogsService {
+    pub(crate) fn new(shared: Shared, mut config: Logs) -> LogsService {
         let channel_capacity = channel_capacity(&config.push_interval_secs);
+        let messenger = if let Some(messenger_config) = config.messenger.take() {
+            Some(MessengerApi::new(messenger_config, LOGS_SERVICE_NAME))
+        } else {
+            None
+        };
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
@@ -45,7 +50,7 @@ impl LogsService {
             filter_if_contains: config.filter_if_contains.unwrap_or(vec![]),
             drop_if_contains: config.drop_if_contains.unwrap_or(vec![]),
             channel_capacity,
-            messenger_config: config.messenger,
+            messenger,
             truncate_at: config.autotruncate_at_usage_percent,
         }
     }
@@ -255,39 +260,11 @@ impl LogsService {
         }
         sender.closed().await;
     }
-
-    async fn send_error(&self, message: &str) {
-        let message = format!("`{}` while collecting logs from stdin", message);
-        if let Some(messenger) = self.shared.messenger.as_ref() {
-            let messenger_config = self
-                .messenger_config
-                .as_ref()
-                .expect("assert: if messenger is set, then config is also nonempty");
-            if let Err(_) = messenger.send_error(messenger_config, &message).await {
-                tracing::error!("failed to send error of logs collector via configured messenger: {:?} for service {}",  messenger_config, self.name());
-                self.shared.send_notification.try_error(format!(
-                    "{}. Sending via configured messenger failed.",
-                    message
-                ));
-            }
-        } else {
-            tracing::error!(
-                "Messenger is not configured for {}. Error: {}",
-                self.name(),
-                message,
-            );
-            self.shared.send_notification.try_error(format!(
-                "{}\nMessenger is not configured for {}",
-                message,
-                self.name(),
-            ));
-        }
-    }
 }
 
 #[async_trait]
 impl Service for LogsService {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         LOGS_SERVICE_NAME
     }
 
@@ -328,8 +305,16 @@ impl Service for LogsService {
         &self.shared
     }
 
-    fn messenger_config(&self) -> Option<MessengerConfig> {
-        self.messenger_config.clone()
+    fn messenger(&self) -> Option<Sender> {
+        self.messenger.as_ref().map(|m| m.message_tx.clone())
+    }
+
+    fn messenger_config(&self) -> Option<&MessengerConfig> {
+        self.messenger.as_ref().map(|m| &m.config)
+    }
+
+    fn take_messenger_rx(&mut self) -> Option<mpsc::Receiver<Notification>> {
+        self.messenger.as_mut().and_then(|m| m.message_rx.take())
     }
 
     fn truncate_at(&self) -> f32 {
@@ -350,7 +335,8 @@ impl Service for LogsService {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
                 tracing::error!("{}", msg);
-                self.send_error(&msg).await;
+                self.send_error(format!("`{}` while collecting logs from stdin", msg))
+                    .await;
                 Data::Empty
             }
             _ => panic!("assert: system result contains either single datarow or error text"),

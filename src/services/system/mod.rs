@@ -6,7 +6,7 @@ use crate::services::system::configuration::{scrape_push_rule, System};
 use crate::services::{Data, Service, TaskResult};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{Sender, Shared};
+use crate::{MessengerApi, Notification, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::sync::{
@@ -28,18 +28,23 @@ pub(crate) struct SystemService {
     mounts: Vec<String>,
     process_names: Vec<String>,
     channel_capacity: usize,
-    messenger_config: Option<MessengerConfig>,
+    messenger: Option<MessengerApi>,
     truncate_at: f32,
 }
 
 impl SystemService {
-    pub(crate) fn new(shared: Shared, config: System) -> SystemService {
+    pub(crate) fn new(shared: Shared, mut config: System) -> SystemService {
         let channel_capacity = scrape_push_rule(
             &config.scrape_timeout_ms,
             &config.scrape_interval_secs,
             &config.push_interval_secs,
         )
         .expect("assert: push/scrate ratio is validated at configuration");
+        let messenger = if let Some(messenger_config) = config.messenger.take() {
+            Some(MessengerApi::new(messenger_config, SYSTEM_SERVICE_NAME))
+        } else {
+            None
+        };
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
@@ -49,7 +54,7 @@ impl SystemService {
             mounts: config.mounts,
             process_names: config.process_names,
             channel_capacity,
-            messenger_config: config.messenger,
+            messenger,
             truncate_at: config.autotruncate_at_usage_percent,
         }
     }
@@ -60,14 +65,21 @@ impl SystemService {
         mut request_rx: mpsc::Receiver<DateTime<Utc>>,
         mounts: Vec<String>,
         names: Vec<String>,
+        messenger: Sender,
     ) {
         let mut sys = collector::initialize();
         tracing::info!("started system info scraping thread");
 
         while let Some(scrape_time) = request_rx.blocking_recv() {
-            let result = collector::collect(&mut sys, &mounts, &names, scrape_time.naive_utc())
-                .map(|datarows| Data::Many(datarows))
-                .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
+            let result = collector::collect(
+                &mut sys,
+                &mounts,
+                &names,
+                scrape_time.naive_utc(),
+                &messenger,
+            )
+            .map(|datarows| Data::Many(datarows))
+            .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
             if let Err(_) = sender.blocking_send(TaskResult { id: 0, result }) {
                 if is_shutdown.load(Ordering::Relaxed) {
                     return;
@@ -94,6 +106,7 @@ impl SystemService {
         scrape_interval: Duration,
         scrape_timeout: Duration,
         sender: mpsc::Sender<TaskResult>,
+        messenger: Sender,
         send_notification: Sender,
         mounts: Vec<String>,
         names: Vec<String>,
@@ -106,7 +119,14 @@ impl SystemService {
         std::thread::Builder::new()
             .name("sysinfo-collector".into())
             .spawn(move || {
-                Self::collect_sysinfo(cloned_is_shutdown, cloned_sender, rx, mounts, names)
+                Self::collect_sysinfo(
+                    cloned_is_shutdown,
+                    cloned_sender,
+                    rx,
+                    mounts,
+                    names,
+                    messenger,
+                )
             })
             .expect("assert: can spawn sysinfo collecting thread");
 
@@ -127,39 +147,11 @@ impl SystemService {
             }
         }
     }
-
-    async fn send_error(&self, message: &str) {
-        let message = format!("`{}` while scraping sysinfo", message);
-        if let Some(messenger) = self.shared.messenger.as_ref() {
-            let messenger_config = self
-                .messenger_config
-                .as_ref()
-                .expect("assert: if messenger is set, then config is also nonempty");
-            if let Err(_) = messenger.send_error(messenger_config, &message).await {
-                tracing::error!("failed to send liveness probe output via configured messenger: {:?} for service {}",  messenger_config, self.name());
-                self.shared.send_notification.try_error(format!(
-                    "{}. Sending via configured messenger failed.",
-                    message
-                ));
-            }
-        } else {
-            tracing::error!(
-                "Messenger is not configured for {}. Error: {}",
-                self.name(),
-                message,
-            );
-            self.shared.send_notification.try_error(format!(
-                "{}\nMessenger is not configured for {}",
-                message,
-                self.name(),
-            ));
-        }
-    }
 }
 
 #[async_trait]
 impl Service for SystemService {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         SYSTEM_SERVICE_NAME
     }
 
@@ -238,8 +230,16 @@ impl Service for SystemService {
         &self.shared
     }
 
-    fn messenger_config(&self) -> Option<MessengerConfig> {
-        self.messenger_config.clone()
+    fn messenger(&self) -> Option<Sender> {
+        self.messenger.as_ref().map(|m| m.message_tx.clone())
+    }
+
+    fn messenger_config(&self) -> Option<&MessengerConfig> {
+        self.messenger.as_ref().map(|m| &m.config)
+    }
+
+    fn take_messenger_rx(&mut self) -> Option<mpsc::Receiver<Notification>> {
+        self.messenger.as_mut().and_then(|m| m.message_rx.take())
     }
 
     fn truncate_at(&self) -> f32 {
@@ -260,7 +260,8 @@ impl Service for SystemService {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
                 tracing::error!("{}", msg);
-                self.send_error(&msg).await;
+                self.send_error(format!("`{}` while scraping sysinfo", msg))
+                    .await;
                 Data::Empty
             }
             _ => panic!("assert: system result contains either many datarows or error text"),
@@ -275,6 +276,9 @@ impl Service for SystemService {
         let is_shutdown = is_shutdown.clone();
         let sender = sender.clone();
         let send_notification = self.shared.send_notification.clone();
+        let messenger = self
+            .messenger()
+            .unwrap_or(self.shared.send_notification.clone());
         let mounts = self.mounts.clone();
         let names = self.process_names.clone();
         let scrape_interval = self.scrape_interval.clone();
@@ -285,6 +289,7 @@ impl Service for SystemService {
                 scrape_interval,
                 scrape_timeout,
                 sender,
+                messenger,
                 send_notification,
                 mounts,
                 names,
@@ -305,7 +310,7 @@ mod tests {
     async fn single_sys_scrape() {
         const NUM_OF_SCRAPES: usize = 1;
         let (send_notification, mut notifications_receiver) = mpsc::channel(1);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, "test");
         let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_SCRAPES);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 
@@ -322,6 +327,7 @@ mod tests {
                 Duration::from_secs(1),
                 Duration::from_secs(2),
                 data_sender,
+                send_notification.clone(),
                 send_notification,
                 vec![],
                 vec![],
@@ -356,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn sys_scrape_timeout() {
         let (send_notification, mut notifications_receiver) = mpsc::channel(1);
-        let send_notification = Sender::new(send_notification);
+        let send_notification = Sender::new(send_notification, SYSTEM_SERVICE_NAME);
         let (data_sender, mut data_receiver) = mpsc::channel(1);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 
@@ -369,6 +375,7 @@ mod tests {
                 Duration::from_secs(1),
                 Duration::from_millis(1),
                 data_sender,
+                send_notification.clone(),
                 send_notification,
                 vec![],
                 vec![],

@@ -10,7 +10,7 @@ use crate::messenger::configuration::MessengerConfig;
 use crate::rules::{Action, Rule, RuleCondition, RuleOutput, Triggered};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{BoxedMessenger, HttpsClient, Sender, Shared};
+use crate::{BoxedMessenger, HttpsClient, Notification, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::future::try_join_all;
@@ -165,9 +165,7 @@ fn process_rules(
 }
 
 async fn rules_notifications(
-    messenger: Arc<BoxedMessenger>,
-    messenger_config: MessengerConfig,
-    send_notification: Sender,
+    messenger: Sender,
     mut output_receiver: mpsc::Receiver<Triggered>,
     base_url: String,
 ) {
@@ -180,16 +178,31 @@ async fn rules_notifications(
             SkipFurtherRules => panic!("assert: `skip further rules` action shouldn't be sent"),
         };
         let message = format!(
-            "```{}```[spreadsheet]({}{}) may be created a bit later",
+            "```{}``` [spreadsheet]({}{}) may be created a bit later",
             triggered.message, base_url, triggered.sheet_id
         );
+        messenger.send(Notification::new(message, level)).await;
+    }
+}
+
+async fn messenger_queue(
+    messenger: Arc<BoxedMessenger>,
+    messenger_config: MessengerConfig,
+    send_notification: Sender,
+    mut rx: mpsc::Receiver<Notification>,
+    host_id: String,
+    service: &'static str,
+) {
+    while let Some(notification) = rx.recv().await {
+        let Notification { message, level } = notification;
         if let Err(_) = messenger
-            .send_by_level(&messenger_config, &message, level)
+            .send_by_level(&messenger_config, &format!("*{host_id}*: {message}"), level)
             .await
         {
             tracing::error!(
-                "failed to send triggered rule via configured messenger: {:?}",
-                messenger_config
+                "failed to send notification via configured messenger: `{:?}` for service {}",
+                messenger_config,
+                service
             );
             send_notification.try_error(format!(
                 "{}. Sending via configured messenger failed.",
@@ -206,7 +219,7 @@ pub enum RulePayload {
 
 #[async_trait]
 pub trait Service: Send + Sync {
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     fn spreadsheet_id(&self) -> &str;
 
@@ -238,11 +251,38 @@ pub trait Service: Send + Sync {
 
     fn shared(&self) -> &Shared;
 
-    fn messenger_config(&self) -> Option<MessengerConfig> {
+    fn messenger(&self) -> Option<Sender> {
+        None
+    }
+
+    fn messenger_config(&self) -> Option<&MessengerConfig> {
+        None
+    }
+
+    fn take_messenger_rx(&mut self) -> Option<mpsc::Receiver<Notification>> {
         None
     }
 
     fn truncate_at(&self) -> f32;
+
+    async fn send_error(&self, message: String) {
+        if let Some(messenger) = self.messenger() {
+            messenger
+                .send(Notification::new(message, Level::ERROR))
+                .await;
+        } else {
+            tracing::error!(
+                "Messenger is not configured for {}. Error: {}",
+                self.name(),
+                message,
+            );
+            self.shared().send_notification.try_error(format!(
+                "{}\nMessenger is not configured for {}",
+                message,
+                self.name(),
+            ));
+        }
+    }
 
     async fn process_task_result_on_shutdown(
         &mut self,
@@ -403,21 +443,38 @@ pub trait Service: Send + Sync {
         let (mut rules_input, rules_output) =
             self.start_rules_thread(is_shutdown.clone(), &mut log).await;
         let mut tasks = self.spawn_tasks(is_shutdown.clone(), tx).await;
-        if let Some(messenger) = self.shared().messenger.clone() {
-            let base_url = log.spreadsheet_baseurl();
+
+        if let Some(message_rx) = self.take_messenger_rx() {
+            let messenger =
+                self.shared().messenger.clone().expect(
+                    "assert: if messenger receiver channel is set then the messenger is set",
+                );
             let messenger_config = self
                 .messenger_config()
-                .expect("assert: if messenger is set for service, it has a config");
+                .expect(
+                    "assert: if messenger receiver channel is set then the messenger config is set",
+                )
+                .clone();
             let send_notification = self.shared().send_notification.clone();
+            let service = self.name();
+            let host_id = log.host_id().to_string();
             tasks.push(tokio::spawn(async move {
-                rules_notifications(
+                messenger_queue(
                     messenger,
                     messenger_config,
                     send_notification,
-                    rules_output,
-                    base_url,
+                    message_rx,
+                    host_id,
+                    service,
                 )
                 .await
+            }));
+        }
+
+        if let Some(message_tx) = self.messenger() {
+            let base_url = log.spreadsheet_baseurl();
+            tasks.push(tokio::spawn(async move {
+                rules_notifications(message_tx, rules_output, base_url).await
             }));
         }
         let tasks = try_join_all(tasks);
@@ -608,7 +665,7 @@ mod tests {
     use crate::spreadsheet::Metadata;
     use crate::storage::{jitter_duration, Storage};
     use crate::tests::TEST_HOST_ID;
-    use crate::{create_log, Sender};
+    use crate::Sender;
     use chrono::NaiveDate;
     use chrono::Utc;
     use hyper::service::{make_service_fn, service_fn};
@@ -632,7 +689,7 @@ mod tests {
 
     #[async_trait]
     impl Service for TestService {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             GENERAL_SERVICE_NAME
         }
 
@@ -642,7 +699,7 @@ mod tests {
 
         fn channel_capacity(&self) -> usize {
             // during appending we accumulate
-            50 * ceiled_division(APPEND_DURATION_MS as u16, SCRAPE_INTERVAL_MS as u16) as usize
+            100 * ceiled_division(APPEND_DURATION_MS as u16, SCRAPE_INTERVAL_MS as u16) as usize
         }
 
         fn push_interval(&self) -> Duration {
@@ -686,7 +743,7 @@ mod tests {
 
                             match sender.try_send(TaskResult{id: 0, result}) {
                                 Err(TrySendError::Full(_)) => {
-                                    panic!("test assert: messages queue is full");
+                                    panic!("test assert: messages queue shouldn't be full");
                                 },
                                 Err(TrySendError::Closed(_)) => {
                                     if is_shutdown.load(Ordering::Relaxed) {
@@ -706,7 +763,7 @@ mod tests {
     #[tokio::test]
     async fn basic_service_flow() {
         let (tx, _) = mpsc::channel(1);
-        let tx = Sender::new(tx);
+        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let data_counter = Arc::new(AtomicUsize::new(0));
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
@@ -730,10 +787,11 @@ mod tests {
             send_notification: tx.clone(),
         };
         let mut service = TestService { counter, shared };
-        let log = create_log(
+        let log = AppendableLog::new(
             storage.clone(),
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
+            Some(tx.clone()),
             service.truncate_at(),
         );
         let service = tokio::spawn(async move {
