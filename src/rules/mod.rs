@@ -307,15 +307,15 @@ impl Rule {
 }
 
 // to add some example rules
-impl Into<Datarow> for Rule {
-    fn into(self) -> Datarow {
-        let Self {
+impl From<Rule> for Datarow {
+    fn from(val: Rule) -> Self {
+        let Rule {
             log_name,
             key,
             condition,
             value,
             action,
-        } = self;
+        } = val;
         Datarow::new(
             RULES_LOG_NAME.to_string(),
             Utc::now().naive_utc(),

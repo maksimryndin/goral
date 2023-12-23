@@ -97,18 +97,19 @@ pub fn collect_messengers(
         ),
     ];
 
-    let hosts = pairs
-        .into_iter()
-        .fold(HashMap::new(), |mut map, (service, host)| {
-            map.entry(host).or_insert(vec![]).push(service);
-            map
-        });
+    let hosts: HashMap<Option<String>, Vec<&'static str>> =
+        pairs
+            .into_iter()
+            .fold(HashMap::new(), |mut map, (service, host)| {
+                map.entry(host).or_default().push(service);
+                map
+            });
 
     let mut map = HashMap::new();
     for (messenger_host, services) in hosts {
         let messenger = messenger_host.map(|host| {
             let messenger = get_messenger(&host)
-                .expect(format!("failed to create messenger for host `{}`", host).as_str());
+                .unwrap_or_else(|_| panic!("failed to create messenger for host `{}`", host));
             Arc::new(messenger)
         });
         for service in services {
@@ -217,7 +218,7 @@ impl Sender {
     }
 
     pub async fn send(&self, notification: Notification) {
-        if let Err(_) = self.tx.send(notification).await {
+        if self.tx.send(notification).await.is_err() {
             panic!(
                 "failed to send notification - `{}` service doesn't accept notifications",
                 self.service

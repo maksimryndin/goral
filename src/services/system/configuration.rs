@@ -36,8 +36,8 @@ pub(super) fn scrape_push_rule(
     // during the append we accumulate datarows in the channel
     // Estimate of append duration - 1 sec per row
     let append_duration = number_of_rows_in_batch;
-    let number_of_queued_rows = ceiled_division(append_duration as u16, *scrape_interval_secs)
-        * AVERAGE_DATAROWS_PER_SCRAPE;
+    let number_of_queued_rows =
+        ceiled_division(append_duration, *scrape_interval_secs) * AVERAGE_DATAROWS_PER_SCRAPE;
     if number_of_queued_rows > LIMIT {
         return Err(serde_valid::validation::Error::Custom(
             format!("push interval ({push_interval_secs}) is too big or scrape interval ({scrape_interval_secs}) is too small - too much data (estimated {number_of_queued_rows} rows vs limit of {LIMIT}) would be accumulated before saving to a spreadsheet")

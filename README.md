@@ -38,6 +38,7 @@ So Goral provides the following features being deployed next to your app(s):
 ### System requirements
 
 * Memory: RSS 30-40M, 200-300M of virtual memory. An actual requirement may be different - as it depends on the amount of data, scrape and push intervals (see below for each [service](#services))
+* Binary size is around 30 Mb
 * Platforms: Linux, MacOS. Other platform will probably work also.
 
 ## Setup

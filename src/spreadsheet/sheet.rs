@@ -71,11 +71,11 @@ impl PartialEq for Header {
 }
 impl Eq for Header {}
 
-impl Into<CellData> for Header {
-    fn into(self) -> CellData {
+impl From<Header> for CellData {
+    fn from(val: Header) -> Self {
         CellData {
             user_entered_value: Some(ExtendedValue {
-                string_value: Some(self.title),
+                string_value: Some(val.title),
                 ..Default::default()
             }),
             user_entered_format: Some(CellFormat {
@@ -105,7 +105,7 @@ impl Into<CellData> for Header {
                 }),
                 ..Default::default()
             }),
-            note: self.note,
+            note: val.note,
             ..Default::default()
         }
     }
@@ -161,7 +161,7 @@ impl From<GoogleSheet> for Sheet {
         let metadata: HashMap<String, String> = sh
             .developer_metadata
             .take()
-            .unwrap_or(vec![])
+            .unwrap_or_default()
             .into_iter()
             .map(|meta| {
                 (
@@ -342,7 +342,6 @@ impl VirtualSheet {
                         end_column_index: Some(column_index as i32 + 1),
                         ..Default::default()
                     }),
-                    ..Default::default()
                 }),
                 ..Default::default()
             });
@@ -466,7 +465,6 @@ impl UpdateSheet {
                         FieldMask::from_str("metadataValue")
                             .expect("assert: field mask can be constructed from static str"),
                     ),
-                    ..Default::default()
                 }),
                 ..Default::default()
             })

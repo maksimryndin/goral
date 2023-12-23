@@ -66,9 +66,9 @@ pub(super) fn scrape_push_rule(
         }
 
         if l.period_secs == 0 {
-            return Err(serde_valid::validation::Error::Custom(format!(
-                "liveness period cannot be zero"
-            )));
+            return Err(serde_valid::validation::Error::Custom(
+                "liveness period cannot be zero".to_string(),
+            ));
         }
     }
 

@@ -143,14 +143,10 @@ impl HealthcheckService {
         let channel_capacity = scrape_push_rule(&config.liveness, &config.push_interval_secs)
             .expect("assert: push/scrate ratio is validated at configuration");
         let liveness_previous_state = vec![None; config.liveness.len()];
-        let messenger = if let Some(messenger_config) = config.messenger.take() {
-            Some(MessengerApi::new(
-                messenger_config,
-                HEALTHCHECK_SERVICE_NAME,
-            ))
-        } else {
-            None
-        };
+        let messenger = config
+            .messenger
+            .take()
+            .map(|messenger_config| MessengerApi::new(messenger_config, HEALTHCHECK_SERVICE_NAME));
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
@@ -179,7 +175,7 @@ impl HealthcheckService {
                         );
                         client.get().await
                     }
-                    _ => return Err(format!("unknown url scheme for probe {:?}", liveness)),
+                    _ => Err(format!("unknown url scheme for probe {:?}", liveness)),
                 }
             }
             Probe::Command(command) => {

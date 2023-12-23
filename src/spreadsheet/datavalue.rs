@@ -109,14 +109,14 @@ impl Datarow {
         headers
     }
 
-    pub(crate) fn sort_by_keys(&mut self, keys: &Vec<String>) {
+    pub(crate) fn sort_by_keys(&mut self, keys: &[String]) {
         let cap = self.data.len();
         let mut data: HashMap<String, Datavalue> =
             mem::replace(&mut self.data, Vec::with_capacity(cap))
                 .into_iter()
                 .collect();
         // we skip first header which is DATETIME_COLUMN_NAME
-        for h in keys.into_iter().skip(1) {
+        for h in keys.iter().skip(1) {
             self.data.push(
                 data.remove_entry(h)
                     .expect("assert: datarow should be sorted by keys which it contains"),
@@ -139,9 +139,9 @@ impl Datarow {
 }
 
 // https://developers.google.com/sheets/api/guides/formats
-impl Into<RowData> for Datarow {
-    fn into(self) -> RowData {
-        let row = self
+impl From<Datarow> for RowData {
+    fn from(val: Datarow) -> Self {
+        let row = val
             .values()
             .into_iter()
             .map(|v| {
@@ -388,28 +388,25 @@ impl Into<RowData> for Datarow {
     }
 }
 
-impl Into<RuleApplicant> for Datarow {
-    fn into(self) -> RuleApplicant {
+impl From<Datarow> for RuleApplicant {
+    fn from(val: Datarow) -> Self {
         use Datavalue::*;
         let Datarow {
             log_name,
             timestamp,
             data,
             sheet_id,
-        } = self;
+        } = val;
         let sheet_id = sheet_id.expect(
             "assert: sheet id should be initialized before the rule applicant transformation",
         );
         // convert datavalues into types supported by rules with O(1) access
         let data = data
             .into_iter()
-            .chain(
-                [(
-                    DATETIME_COLUMN_NAME.to_string(),
-                    Datavalue::Datetime(timestamp),
-                )]
-                .into_iter(),
-            )
+            .chain([(
+                DATETIME_COLUMN_NAME.to_string(),
+                Datavalue::Datetime(timestamp),
+            )])
             .map(|(k, v)| {
                 let v = match v {
                     Text(t) | RedText(t) | OrangeText(t) | GreenText(t) => Text(t),

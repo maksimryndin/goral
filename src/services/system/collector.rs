@@ -84,35 +84,35 @@ impl ProcessInfo {
     }
 }
 
-fn top_cpu_process<'a>(processes: &'a mut Vec<ProcessInfo>) -> &'a ProcessInfo {
+fn top_cpu_process(processes: &mut [ProcessInfo]) -> &ProcessInfo {
     processes.sort_unstable_by_key(|p| (p.cpu_percent * 100.0) as u32);
     processes
         .last()
         .expect("assert: processes list should contain at least one process")
 }
 
-fn top_disk_read_process<'a>(processes: &'a mut Vec<ProcessInfo>) -> &'a ProcessInfo {
+fn top_disk_read_process(processes: &mut [ProcessInfo]) -> &ProcessInfo {
     processes.sort_unstable_by_key(|p| p.disk_read);
     processes
         .last()
         .expect("assert: processes list should contain at least one process")
 }
 
-fn top_disk_write_process<'a>(processes: &'a mut Vec<ProcessInfo>) -> &'a ProcessInfo {
+fn top_disk_write_process(processes: &mut [ProcessInfo]) -> &ProcessInfo {
     processes.sort_unstable_by_key(|p| p.disk_read);
     processes
         .last()
         .expect("assert: processes list should contain at least one process")
 }
 
-fn top_memory_process<'a>(processes: &'a mut Vec<ProcessInfo>) -> &'a ProcessInfo {
+fn top_memory_process(processes: &mut [ProcessInfo]) -> &ProcessInfo {
     processes.sort_unstable_by_key(|p| p.memory_used);
     processes
         .last()
         .expect("assert: processes list should contain at least one process")
 }
 
-fn top_open_files_process<'a>(processes: &'a mut Vec<ProcessInfo>) -> Option<&'a ProcessInfo> {
+fn top_open_files_process(processes: &mut [ProcessInfo]) -> Option<&ProcessInfo> {
     processes.sort_unstable_by_key(|p| p.open_files);
     processes.last()
 }
@@ -137,24 +137,30 @@ fn process_to_values(process: &ProcessInfo, sys: &mut System) -> Vec<(String, Da
     };
     vec![
         (
-            format!("pid"),
+            "pid".to_string(),
             Datavalue::IntegerID(process.pid.as_u32() as u64),
         ),
-        (format!("name"), Datavalue::Text(process.name.to_string())),
-        (format!("user"), Datavalue::Text(user.to_string())),
         (
-            format!("effective_user"),
+            "name".to_string(),
+            Datavalue::Text(process.name.to_string()),
+        ),
+        ("user".to_string(), Datavalue::Text(user.to_string())),
+        (
+            "effective_user".to_string(),
             Datavalue::Text(effective_user.to_string()),
         ),
         (
-            format!("start_time"),
+            "start_time".to_string(),
             Datavalue::Datetime(process.start_time),
         ),
         (
-            format!("virtual_memory"),
+            "virtual_memory".to_string(),
             Datavalue::Size(process.virtual_memory),
         ),
-        (format!("memory_used"), Datavalue::Size(process.memory_used)),
+        (
+            "memory_used".to_string(),
+            Datavalue::Size(process.memory_used),
+        ),
         (
             MEMORY_USE.to_string(),
             Datavalue::HeatmapPercent(process.memory_use as f64),
@@ -163,9 +169,12 @@ fn process_to_values(process: &ProcessInfo, sys: &mut System) -> Vec<(String, Da
             CPU.to_string(),
             Datavalue::HeatmapPercent(process.cpu_percent as f64),
         ),
-        (format!("disk_read"), Datavalue::Size(process.disk_read)),
-        (format!("disk_write"), Datavalue::Size(process.disk_write)),
-        (format!("open_files"), open_files),
+        ("disk_read".to_string(), Datavalue::Size(process.disk_read)),
+        (
+            "disk_write".to_string(),
+            Datavalue::Size(process.disk_write),
+        ),
+        ("open_files".to_string(), open_files),
     ]
 }
 
@@ -179,7 +188,7 @@ pub(super) fn initialize() -> System {
 }
 
 pub(super) fn collect(
-    mut sys: &mut System,
+    sys: &mut System,
     mounts: &[String],
     names: &[String],
     scrape_time: NaiveDateTime,
@@ -196,7 +205,7 @@ pub(super) fn collect(
     let sysinfo_processes = sys.processes();
     let total_memory = sys.total_memory();
     let mut processes_infos = Vec::with_capacity(sysinfo_processes.len());
-    for (_, p) in sysinfo_processes.into_iter() {
+    for (_, p) in sysinfo_processes.iter() {
         processes_infos.push(ProcessInfo::from(p, total_memory as f32));
     }
 
@@ -230,7 +239,7 @@ pub(super) fn collect(
             Datavalue::Integer(sysinfo_processes.len() as u64),
         ),
     ];
-    let cpus = sys.cpus().into_iter().enumerate().map(|(i, c)| {
+    let cpus = sys.cpus().iter().enumerate().map(|(i, c)| {
         (
             format!("cpu{i}"),
             Datavalue::HeatmapPercent(c.cpu_usage() as f64),
@@ -247,38 +256,38 @@ pub(super) fn collect(
         basic_values,
     ));
 
-    let mut disk_stat = disk_stat(sys, mounts, scrape_time, &messenger);
+    let mut disk_stat = disk_stat(sys, mounts, scrape_time, messenger);
     datarows.append(&mut disk_stat);
 
     let top_cpu = top_cpu_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_cpu".to_string(),
         scrape_time,
-        process_to_values(top_cpu, &mut sys),
+        process_to_values(top_cpu, sys),
     ));
     let top_memory = top_memory_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_memory".to_string(),
         scrape_time,
-        process_to_values(top_memory, &mut sys),
+        process_to_values(top_memory, sys),
     ));
     let top_read = top_disk_read_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_disk_read".to_string(),
         scrape_time,
-        process_to_values(top_read, &mut sys),
+        process_to_values(top_read, sys),
     ));
     let top_write = top_disk_write_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_disk_write".to_string(),
         scrape_time,
-        process_to_values(top_write, &mut sys),
+        process_to_values(top_write, sys),
     ));
     if let Some(top_open_files) = top_open_files_process(&mut processes_infos) {
         datarows.push(Datarow::new(
             "top_open_files".to_string(),
             scrape_time,
-            process_to_values(top_open_files, &mut sys),
+            process_to_values(top_open_files, sys),
         ));
     }
 
@@ -287,7 +296,7 @@ pub(super) fn collect(
             datarows.push(Datarow::new(
                 name.clone(),
                 scrape_time,
-                process_to_values(p, &mut sys),
+                process_to_values(p, sys),
             ));
         } else {
             let message = format!("process containing `{name}` in its name is not found to collect process statistics");
@@ -300,7 +309,7 @@ pub(super) fn collect(
     let network_values: Vec<(String, Datavalue)> = sys
         .networks()
         .into_iter()
-        .map(|(interface_name, data)| {
+        .flat_map(|(interface_name, data)| {
             [
                 (
                     format!("{}_total_received", interface_name),
@@ -320,7 +329,6 @@ pub(super) fn collect(
                 ),
             ]
         })
-        .flatten()
         .collect();
     datarows.push(Datarow::new(
         "network".to_string(),
@@ -357,7 +365,7 @@ fn disk_stat(
                     DISK_USE.to_string(),
                     Datavalue::HeatmapPercent(stat.percent() as f64),
                 ),
-                (format!("disk_free"), Datavalue::Size(stat.free())),
+                ("disk_free".to_string(), Datavalue::Size(stat.free())),
             ],
         ));
     }

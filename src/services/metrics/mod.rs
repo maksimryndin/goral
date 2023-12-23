@@ -60,11 +60,10 @@ impl MetricsService {
             &config.scrape_timeout_ms,
         )
         .expect("assert: push/scrate ratio is validated at configuration");
-        let messenger = if let Some(messenger_config) = config.messenger.take() {
-            Some(MessengerApi::new(messenger_config, METRICS_SERVICE_NAME))
-        } else {
-            None
-        };
+        let messenger = config
+            .messenger
+            .take()
+            .map(|messenger_config| MessengerApi::new(messenger_config, METRICS_SERVICE_NAME));
         Self {
             shared,
             messenger,
@@ -94,7 +93,7 @@ impl MetricsService {
 
     // sort samples for a neat order of keys
     // histogram/summary, then count, then sum
-    fn sort_samples(samples: &mut Vec<Sample>) {
+    fn sort_samples(samples: &mut [Sample]) {
         samples.sort_unstable_by(|a, b| {
             if a.metric.ends_with("_count") && b.metric.ends_with("_sum") {
                 return Cmp::Less;
@@ -122,7 +121,7 @@ impl MetricsService {
         labels.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let mut values: Vec<(String, Datavalue)> = samples
             .into_iter()
-            .map(|s| {
+            .flat_map(|s| {
                 let values: Vec<(String, Datavalue)> = match s.value {
                     Counter(v) | Gauge(v) | Untyped(v) => vec![(s.metric, Datavalue::Number(v))],
                     Histogram(buckets) => buckets
@@ -141,7 +140,6 @@ impl MetricsService {
                 };
                 values
             })
-            .flatten()
             .collect();
         values.append(&mut labels);
         values
@@ -185,8 +183,7 @@ impl MetricsService {
             let mut kv: Vec<&str> = s
                 .labels
                 .iter()
-                .map(|(k, v)| [k.as_str(), v.as_str()])
-                .flatten()
+                .flat_map(|(k, v)| [k.as_str(), v.as_str()])
                 .collect();
             kv.sort_unstable();
             let key = kv.join("");
@@ -254,12 +251,12 @@ impl MetricsService {
                                     send_notification.fatal(msg).await;
                                     panic!("assert: should be able to spawn blocking tasks");
                                 },
-                                Ok(res) => res.map(|d| Data::Many(d)).map_err(|e| Data::Message(format!("error scraping metrics `{e}`"))),
+                                Ok(res) => res.map(Data::Many).map_err(|e| Data::Message(format!("error scraping metrics `{e}`"))),
                             }
                         },
                         err => {
                             tracing::debug!("metrics scrape result for {:?} is an error: {:?}", scrape_target.url, err);
-                            err.map(|_| Data::Many(vec![])).map_err(|t| Data::Message(t))
+                            err.map(|_| Data::Many(vec![])).map_err(Data::Message)
                         },
                     };
 

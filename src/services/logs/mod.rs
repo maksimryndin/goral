@@ -38,17 +38,16 @@ pub(crate) struct LogsService {
 impl LogsService {
     pub(crate) fn new(shared: Shared, mut config: Logs) -> LogsService {
         let channel_capacity = channel_capacity(&config.push_interval_secs);
-        let messenger = if let Some(messenger_config) = config.messenger.take() {
-            Some(MessengerApi::new(messenger_config, LOGS_SERVICE_NAME))
-        } else {
-            None
-        };
+        let messenger = config
+            .messenger
+            .take()
+            .map(|messenger_config| MessengerApi::new(messenger_config, LOGS_SERVICE_NAME));
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
             push_interval: Duration::from_secs(config.push_interval_secs.into()),
-            filter_if_contains: config.filter_if_contains.unwrap_or(vec![]),
-            drop_if_contains: config.drop_if_contains.unwrap_or(vec![]),
+            filter_if_contains: config.filter_if_contains.unwrap_or_default(),
+            drop_if_contains: config.drop_if_contains.unwrap_or_default(),
             channel_capacity,
             messenger,
             truncate_at: config.autotruncate_at_usage_percent,
@@ -94,11 +93,11 @@ impl LogsService {
     fn guess_log_level(line: &str) -> Option<&str> {
         lazy_static! {
             static ref RE: Regex = Regex::new(
-                r#"(?xi)
+                r"(?xi)
                 (?P<level>(
                     panic|panicked|fatal|critical|error|warn|alert|info|notice|debug|trace|err|crit
                 ))[^\w]
-                "#
+                "
             )
             .expect("assert: log level regex is properly constructed");
         }
@@ -177,10 +176,13 @@ impl LogsService {
 
         while let Some(line) = request_rx.blocking_recv() {
             let data = Self::process_line(line, &filter_if_contains, &drop_if_contains);
-            if let Err(_) = sender.blocking_send(TaskResult {
-                id: 0,
-                result: Ok(data),
-            }) {
+            if sender
+                .blocking_send(TaskResult {
+                    id: 0,
+                    result: Ok(data),
+                })
+                .is_err()
+            {
                 if is_shutdown.load(Ordering::Relaxed) {
                     return;
                 }

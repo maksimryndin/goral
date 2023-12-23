@@ -11,6 +11,9 @@ path = "src/lib.rs"
 path = "src/main.rs"
 name = "goral"
 
+[profile.release]
+overflow-checks = true
+
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"

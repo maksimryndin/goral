@@ -68,9 +68,9 @@ pub(crate) fn host_port_validation_for_http(
 pub(crate) fn target_names(target: &Vec<Target>) -> Result<(), serde_valid::validation::Error> {
     for t in target {
         if target.len() > 1 && t.name.is_none() {
-            return Err(serde_valid::validation::Error::Custom(format!(
-                "Target should have a name if several targets are specified"
-            )));
+            return Err(serde_valid::validation::Error::Custom(
+                "Target should have a name if several targets are specified".to_string(),
+            ));
         }
     }
     Ok(())

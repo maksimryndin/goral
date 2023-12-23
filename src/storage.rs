@@ -136,8 +136,8 @@ impl AppendableLog {
             .filter(|d| d.log_name() != RULES_LOG_NAME)
             .count();
         tracing::info!("appending {} rows for service {}", rows_count, self.service);
-        let result = self
-            ._core_append(datarows, retry_limit, timeout)
+
+        self._core_append(datarows, retry_limit, timeout)
             .await
             .map_err(|e| {
                 let message = format!(
@@ -147,8 +147,7 @@ impl AppendableLog {
                 tracing::error!("{}", message);
                 self.storage.send_notification.try_error(message);
                 e
-            });
-        result
+            })
     }
 
     // https://developers.google.com/sheets/api/limits#example-algorithm
@@ -319,9 +318,8 @@ impl AppendableLog {
 
         let sheets_to_add: Vec<VirtualSheet> =
             sheets_to_create.into_iter().map(|(_, (s, _))| s).collect();
-        let sheets_to_update: Vec<UpdateSheet> =
-            sheets_to_update.into_iter().map(|(_, u)| u).collect();
-        let data: Vec<Rows> = data_to_append.into_iter().map(|(_, rows)| rows).collect();
+        let sheets_to_update: Vec<UpdateSheet> = sheets_to_update.into_values().collect();
+        let data: Vec<Rows> = data_to_append.into_values().collect();
         let rows_count = data.len();
 
         tracing::debug!("truncate_requests:\n{:?}", truncate_requests);
@@ -359,11 +357,10 @@ impl AppendableLog {
     ) -> Vec<CleanupSheet> {
         let cells_used_by_service: i32 = existing_service_sheets
             .values()
-            .filter_map(|(s, _)| {
-                (s.sheet_type() == SheetType::Grid).then(|| {
-                    s.row_count().expect("assert: grid sheet has rows")
-                        * s.column_count().expect("assert: grid sheet has columns")
-                })
+            .filter(|&(s, _)| (s.sheet_type() == SheetType::Grid))
+            .map(|(s, _)| {
+                s.row_count().expect("assert: grid sheet has rows")
+                    * s.column_count().expect("assert: grid sheet has columns")
             })
             .sum();
         let usage =
@@ -416,7 +413,7 @@ impl AppendableLog {
         tracing::debug!("usages:\n{:#?}", usages);
         usages
             .into_iter()
-            .map(|(_, (_, log_cells_usage, mut sheets))| {
+            .flat_map(|(_, (_, log_cells_usage, mut sheets))| {
                 let mut cells_to_delete_for_log = (log_cells_usage * cells_to_delete) as i32;
                 sheets.sort_unstable_by_key(|s| s.updated_at);
                 let mut requests = Vec::with_capacity(sheets.len());
@@ -441,7 +438,6 @@ impl AppendableLog {
                 }
                 requests
             })
-            .flatten()
             .collect()
     }
 
@@ -506,7 +502,7 @@ fn prepare_sheet_title(
         log_name,
         host_id,
         service,
-        timestamp.format("%yy/%m/%d %H:%M:%S").to_string(),
+        timestamp.format("%yy/%m/%d %H:%M:%S"),
     )
 }
 

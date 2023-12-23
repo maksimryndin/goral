@@ -40,11 +40,10 @@ impl SystemService {
             &config.push_interval_secs,
         )
         .expect("assert: push/scrate ratio is validated at configuration");
-        let messenger = if let Some(messenger_config) = config.messenger.take() {
-            Some(MessengerApi::new(messenger_config, SYSTEM_SERVICE_NAME))
-        } else {
-            None
-        };
+        let messenger = config
+            .messenger
+            .take()
+            .map(|messenger_config| MessengerApi::new(messenger_config, SYSTEM_SERVICE_NAME));
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
@@ -78,9 +77,9 @@ impl SystemService {
                 scrape_time.naive_utc(),
                 &messenger,
             )
-            .map(|datarows| Data::Many(datarows))
+            .map(Data::Many)
             .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
-            if let Err(_) = sender.blocking_send(TaskResult { id: 0, result }) {
+            if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
                 if is_shutdown.load(Ordering::Relaxed) {
                     return;
                 }
@@ -101,6 +100,7 @@ impl SystemService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn sys_observer(
         is_shutdown: Arc<AtomicBool>,
         scrape_interval: Duration,
@@ -281,8 +281,8 @@ impl Service for SystemService {
             .unwrap_or(self.shared.send_notification.clone());
         let mounts = self.mounts.clone();
         let names = self.process_names.clone();
-        let scrape_interval = self.scrape_interval.clone();
-        let scrape_timeout = self.scrape_timeout.clone();
+        let scrape_interval = self.scrape_interval;
+        let scrape_timeout = self.scrape_timeout;
         vec![tokio::spawn(async move {
             Self::sys_observer(
                 is_shutdown,

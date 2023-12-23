@@ -188,9 +188,10 @@ async fn messenger_queue(
 ) {
     while let Some(notification) = rx.recv().await {
         let Notification { message, level } = notification;
-        if let Err(_) = messenger
+        if messenger
             .send_by_level(&messenger_config, &format!("*{host_id}*: {message}"), level)
             .await
+            .is_err()
         {
             tracing::error!(
                 "failed to send notification via configured messenger: `{:?}` for service {}",
@@ -402,7 +403,7 @@ pub trait Service: Send + Sync {
         let service_name = self.name().to_string();
         let send_notification = self.shared().send_notification.clone();
         std::thread::Builder::new()
-            .name(format!("rules-processor-{}", self.name()).into())
+            .name(format!("rules-processor-{}", self.name()))
             .spawn(move || {
                 process_rules(
                     is_shutdown,

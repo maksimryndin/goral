@@ -54,7 +54,7 @@ impl GeneralService {
                 notification.level,
             )
             .await;
-        if let Err(_) = result {
+        if result.is_err() {
             tracing::error!(
                 "{} service failed to send message: {:?}",
                 self.name(),

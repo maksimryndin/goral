@@ -31,7 +31,7 @@ use tokio::task::JoinHandle;
 pub const KV_SERVICE_NAME: &str = "kv";
 
 fn unique_keys(data: &Vec<(String, Value)>) -> Result<(), serde_valid::validation::Error> {
-    let keys: HashSet<&String> = data.into_iter().map(|(k, _)| k).collect();
+    let keys: HashSet<&String> = data.iter().map(|(k, _)| k).collect();
     if keys.len() < data.len() {
         Err(serde_valid::validation::Error::Custom(
             "`data` should have unique keys".to_string(),
@@ -74,10 +74,10 @@ enum Value {
     Text(String),
 }
 
-impl Into<Datavalue> for Value {
-    fn into(self) -> Datavalue {
+impl From<Value> for Datavalue {
+    fn from(val: Value) -> Self {
         use Value::*;
-        match self {
+        match val {
             Integer(v) => Datavalue::Integer(v),
             Number(v) => Datavalue::Number(v),
             Bool(v) => Datavalue::Bool(v),
@@ -98,12 +98,12 @@ struct KVRow {
     data: Vec<(String, Value)>,
 }
 
-impl Into<Datarow> for KVRow {
-    fn into(self) -> Datarow {
+impl From<KVRow> for Datarow {
+    fn from(val: KVRow) -> Self {
         Datarow::new(
-            self.log_name,
-            self.datetime.naive_utc(),
-            self.data.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            val.log_name,
+            val.datetime.naive_utc(),
+            val.data.into_iter().map(|(k, v)| (k, v.into())).collect(),
         )
     }
 }
@@ -143,11 +143,10 @@ pub(crate) struct KvService {
 
 impl KvService {
     pub(crate) fn new(shared: Shared, mut config: Kv) -> KvService {
-        let messenger = if let Some(messenger_config) = config.messenger.take() {
-            Some(MessengerApi::new(messenger_config, KV_SERVICE_NAME))
-        } else {
-            None
-        };
+        let messenger = config
+            .messenger
+            .take()
+            .map(|messenger_config| MessengerApi::new(messenger_config, KV_SERVICE_NAME));
         Self {
             shared,
             spreadsheet_id: config.spreadsheet_id,
@@ -163,7 +162,10 @@ impl KvService {
         send_notification: Sender,
         is_ready: Arc<AtomicBool>,
     ) -> Result<HyperResponse<Body>, hyper::Error> {
-        if let Err(_) = is_ready.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst) {
+        if is_ready
+            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return Ok(HyperResponse::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -395,7 +397,7 @@ impl Service for KvService {
                             while let Some(append_request) = data_receiver.recv().await {
                                 let AppendRequest{datarows, reply_to} = append_request;
                                 let res = log.append_no_retry(datarows).await;
-                                if let Err(_) = reply_to.send(res) {
+                                if reply_to.send(res).is_err() {
                                     tracing::warn!("client of the kv server dropped connection");
                                 }
                             }
@@ -414,7 +416,7 @@ impl Service for KvService {
                     self.send_for_rule_processing(&log, &mut data, &mut rules_input).await;
                     let Data::Many(datarows) = data else {panic!("assert: packing/unpacking of KV data")};
                     let res = log.append_no_retry(datarows).await;
-                    if let Err(_) = reply_to.send(res) {
+                    if reply_to.send(res).is_err() {
                         tracing::warn!("client of the kv server dropped connection");
                     }
                 }
