@@ -27,7 +27,7 @@ fn open_files(pid: Pid) -> Option<usize> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn open_files(pid: Pid) -> Option<usize> {
+fn open_files(_: Pid) -> Option<usize> {
     None
 }
 
@@ -383,7 +383,7 @@ fn disk_stat(
     sys.refresh_disks_list();
     let mut mounts_stat: std::collections::HashMap<String, (u64, u64)> = sys
         .disks()
-        .into_iter()
+        .iter()
         .map(|d| {
             (
                 d.mount_point().to_string_lossy().into_owned(),
@@ -409,7 +409,7 @@ fn disk_stat(
                     DISK_USE.to_string(),
                     Datavalue::HeatmapPercent(100.0 * (total - available) as f64 / total as f64),
                 ),
-                (format!("disk_free"), Datavalue::Size(available)),
+                ("disk_free".to_string(), Datavalue::Size(available)),
             ],
         ));
     }
