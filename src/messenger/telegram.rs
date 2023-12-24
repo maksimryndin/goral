@@ -81,14 +81,17 @@ impl<'a> TelegramRequestBody<'a> {
 #[async_trait]
 impl Messenger for Telegram {
     async fn send_info(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
-        self.send_message(config, markdown, true).await
+        self.send_message(config, format!("🟢 {markdown}").as_str(), true)
+            .await
     }
 
     async fn send_warning(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
-        self.send_message(config, markdown, false).await
+        self.send_message(config, format!("🟡 {markdown}").as_str(), false)
+            .await
     }
 
     async fn send_error(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
-        self.send_message(config, markdown, false).await
+        self.send_message(config, format!("🔴 {markdown}").as_str(), false)
+            .await
     }
 }

@@ -6,7 +6,7 @@ use hyper::{
 };
 use std::time::Duration;
 
-/// Http(s) client for purposes of Healthchecks and Metrics
+/// Http(s) client for purposes of services
 pub(crate) struct HttpClient {
     client: HttpsClient,
     body_max_size: usize,

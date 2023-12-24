@@ -1,14 +1,15 @@
 pub(crate) mod configuration;
 
+use crate::configuration::APP_NAME;
 use crate::messenger::configuration::MessengerConfig;
 use crate::messenger::BoxedMessenger;
 use crate::services::general::configuration::General;
+use crate::services::http_client::HttpClient;
 use crate::services::Service;
 use crate::storage::AppendableLog;
 use crate::{Notification, Shared};
-
 use async_trait::async_trait;
-
+use serde::Deserialize;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +18,21 @@ use tokio::sync::mpsc::Receiver;
 use tracing::Level;
 
 pub const GENERAL_SERVICE_NAME: &str = "general";
+
+#[derive(Deserialize, Debug)]
+struct GithubRelease {
+    tag_name: String,
+    prerelease: bool,
+}
+
+async fn latest_release() -> Result<GithubRelease, Box<dyn std::error::Error + Send + Sync>> {
+    let url = "https://api.github.com/repos/maksimryndin/goral/releases/latest"
+        .parse()
+        .expect("assert: latest release url is correct");
+    let client = HttpClient::new(8192, true, Duration::from_millis(1000), url);
+    let res = client.get().await?;
+    Ok(serde_json::from_str(&res)?)
+}
 
 #[derive(Debug)]
 pub(crate) struct GeneralService {
@@ -96,8 +112,37 @@ impl Service for GeneralService {
 
     async fn run(&mut self, _: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         tracing::info!("running with log level {}", self.log_level);
+        let send_notification = self.shared().send_notification.clone();
         let collect = self.collect_notifications();
         tokio::pin!(collect); // pin and pass by mutable ref to prevent cancelling this future by select!
+        let release_checker = tokio::spawn(async move {
+            let mut release_check_interval =
+                tokio::time::interval(Duration::from_secs(60 * 60 * 24 * 3));
+            loop {
+                tokio::select! {
+                    _ = release_check_interval.tick() => {
+                        let release = latest_release().await;
+                        match release {
+                            Ok(release) => {
+                                let current = env!("CARGO_PKG_VERSION");
+                                let latest = release.tag_name;
+                                if !release.prerelease && current != latest {
+                                    let msg = format!(
+                                        "Your {APP_NAME} version {current} is not the latest {latest}, consider upgrading from https://github.com/maksimryndin/goral/releases"
+                                    );
+                                    send_notification.info(msg).await;
+                                }
+                            },
+                            Err(e) => {
+                                tracing::error!("error {} when fetching the latest {} release", e, APP_NAME);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        tokio::pin!(release_checker);
+
         tokio::select! {
             result = shutdown.recv() => {
                 let graceful_shutdown_timeout = match result {
@@ -115,7 +160,10 @@ impl Service for GeneralService {
                 tracing::info!("{} service has successfully shutdowned", GENERAL_SERVICE_NAME);
                 return;
             },
-            _ = &mut collect => {}
+            _ = &mut collect => {},
+            res = &mut release_checker => {
+                res.unwrap(); // propagate panics from spawned tasks
+            }
         }
     }
 }

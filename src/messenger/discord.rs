@@ -57,14 +57,17 @@ impl<'a> DiscordRequestBody<'a> {
 #[async_trait]
 impl Messenger for Discord {
     async fn send_info(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
-        self.send_message(config, markdown).await
+        self.send_message(config, format!("🟢 {markdown}").as_str())
+            .await
     }
 
     async fn send_warning(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
-        self.send_message(config, markdown).await
+        self.send_message(config, format!("🟡 {markdown}").as_str())
+            .await
     }
 
     async fn send_error(&self, config: &MessengerConfig, markdown: &str) -> Result<()> {
-        self.send_message(config, markdown).await
+        self.send_message(config, format!("🔴 {markdown}").as_str())
+            .await
     }
 }

@@ -4,6 +4,7 @@ Observability toolkit for small projects. Easy-to-use and compatible with indust
 
 - [Overview](#overview)
     - [System requirements](#system-requirements)
+    - [Installation](#installation)
 - [Setup](#setup)
     - [Telegram](#telegram)
     - [Slack](#slack)
@@ -31,15 +32,24 @@ So Goral provides the following features being deployed next to your app(s):
 * Features are modular - all [services](#services) are switched on/off in the configuration.
 * You can observe several instances of the same app or different apps on the same host with a single Goral daemon (except logs as logs are collected via stdin of Goral - see [below](#logs))
 * You can configure different messengers and/or channels for every [service](#services) to get notifications on errors, liveness updates, system resources overlimit etc
-* All the data collected is stored in Google Sheet with an automatic quota and limits checks and automatic data rotation - old data is deleted with a preliminary notification via configured messenger (see below). That way you don't have to buy a separate storage or overload your app VPS with Prometheus etc. Just a lean process next to your brilliant one which just sends app data in batches to Google Sheets for your ease of use. Google Sheets allow you to build your own diagrams over the metrics and analyse them, analyse liveness statistics and calculate uptime etc. By default Goral builds some charts for you.
+* All the data collected is stored in Google Sheet with an automatic quota and limits checks and automatic data rotation - old data is deleted with a preliminary notification via configured messenger (see below). That way you don't have to buy a separate storage or overload your app VPS with Prometheus, ELK etc. Just a lean process next to your brilliant one which just sends app data in batches to Google Sheets for your ease of use. Google Sheets allow you to build your own diagrams over the metrics and analyse them, analyse liveness statistics and calculate uptime etc. By default Goral builds some charts for you.
 * You can configure different spreadsheets and messengers for every service
 * You can configure [rules](#rules) for notifications by messenger for any data.
 
 ### System requirements
 
-* Memory: RSS 30-40M, 200-300M of virtual memory. An actual requirement may be different - as it depends on the amount of data, scrape and push intervals (see below for each [service](#services))
+* Memory: RSS 30M, 900M for virtual memory. An actual requirement may be different - as it depends on the amount of data, scrape and push intervals (see below for each [service](#services))
 * Binary size is around 30 Mb
 * Platforms: Linux, MacOS. Other platform will probably work also.
+
+### Installation
+
+You can install Goral
+1) by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases
+2) from source (you need Rust compiler and `cargo`) with a command
+```sh
+RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
+```
 
 ## Setup
 
@@ -74,6 +84,8 @@ messenger.url = "https://api.telegram.org/bot<bot token>/sendMessage"
 ```
 
 [Rate limit](https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this)
+
+*Note* for Telegram all info-level messages are sent without notification so the phone doesn't vibrate or make any sound.
 
 ### Slack
 
@@ -113,19 +125,21 @@ messenger.url = "https://discord.com/api/webhooks/<webhook_id>/<webhook_token>"
 
 ## Services
 
-A sheet managed by Goral has a title `<parameter to collect data on>@<host_id>@<service> <creation datetime>`. You can change the title, column names and other elements of the sheet but be aware that Goral will continue to append data in the same order as when the sheet was created by Goral if the form of the data hasn't changed (either `<parameter to collect data on>` or its keys). Creation datetimes for sheets always differ by some amount of seconds (jittered) even those sheets were created at the same time - in order to prevent conflicts in sheet titles.
+A workhorse abstraction of Goral over a sheet is an appendable log - just a table which grows with adding key-value records to it.
 
-For all configurations below commented lines (starting with #) are optional and example values are their defaults.
+A sheet managed by Goral has a title `<log to collect data on>@<host_id>@<service> <creation datetime>`. You can change the title, column names and other elements of the sheet but be aware that Goral will continue to append data in the same order as when the sheet was created by Goral if the form of the data hasn't changed (either `<log to collect data on>` or its keys). Creation datetimes for sheets always differ by some amount of seconds (jittered) even those sheets were created at the same time - in order to prevent conflicts in sheet titles.
+
+Commented lines (starting with `#`) for all configurations below are optional and example values are their defaults.
 Every service has a messenger configuration (see [Setup](#setup)). It is recommended to have several messengers and different chats/channels for each messenger and take into account their rate limits when configuring a service.
 
-Every service (except General) has an `autotruncate_at_usage_percent` configuration - the limit of the usage share by a service. Any Google spreadsheet can contain at most 10_000_000 cells so if a services takes more than `autotruncate_at_usage_percent` of 10_000_000 cells, Goral will truncate old data by either removing old rows or removing the same named sheets under a service.
+Every service (except General) has an `autotruncate_at_usage_percent` configuration - the limit of the usage share by a service. Any Google spreadsheet can contain at most 10_000_000 cells so if a services takes more than `autotruncate_at_usage_percent` of 10_000_000 cells, Goral will truncate old data by either removing old rows or removing the same named sheets (`<log to collect data on>`) under a service.
 For every service the cleanup will truncate the surplus (actual usage - limit) and 10% of the limit.
 
 When providing your own limits, do remember to have a sum of limits no more than 100% for all services related to the same spreadsheet. Default settings assume conservatively that you write all the data to the same spreadsheet. Also if a spreadsheet includes other sheets not managed by Goral, take into account their usage.
 
 ### General
 
-General service is responsible for reserved communication channel and important notifications about Goral itself. Its configuration
+General service is responsible for reserved communication channel and important notifications about Goral itself. Also it periodically checks (72 hours at the moment) for new releases of Goral to notify. Its configuration
 
 <details open>
   <summary>Basic configuration</summary>
@@ -223,7 +237,7 @@ If a messenger is configured, then any healthcheck change (healthy -> unhealthy 
 
 ### Metrics
 
-Metrics scrape endpoints with Prometheus metrics. Maximum response body is set to 16384 bytes.
+Metrics scrape endpoints with Prometheus metrics. Maximum response body is set to 65536 bytes.
 
 <details open>
   <summary>Basic configuration</summary>
@@ -366,7 +380,7 @@ Your client asks you for a billing data for each of the services in a spreadshee
 ```toml
 [kv]
 spreadsheet_id = "<spreadsheet_id>"
-port = <"port from the range 49152-65535">
+port = 49152 # port from the range 49152-65535
 ```
 </details>
 
@@ -386,19 +400,19 @@ Such a configuration runs a server process in the Goral daemon listening at the 
 ```json
 [
     {
-        "datetime": "2023-12-09T09:50:46.136945094Z", // an RFC 3339 and ISO 8601 date and time string
-        "log_name": "orders", // validated against regex ^[a-zA-Z_][a-zA-Z0-9_]*$
-        "data": [["donuts", 10], ["chocolate bars", 3]], // first datarow in "orders" log defines order of column headers for a sheet (if it should be created)
+        "datetime": "2023-12-09T09:50:46.136945094Z", /* an RFC 3339 and ISO 8601 date and time string */
+        "log_name": "orders", /* validated against regex ^[a-zA-Z_][a-zA-Z0-9_]*$ */
+        "data": [["donuts", 10], ["chocolate bars", 3]], /* first datarow in "orders" log defines order of column headers for a sheet (if it should be created) */
     },
     {
         "datetime": "2023-12-09T09:50:46.136945094Z",
         "log_name": "orders",
-        "data": [["chocolate bars", 3], ["donuts", 0]], // you should provide the same keys (but the order is not important) for all datarows which go to the same sheet, otherwise a separate sheet is created
+        "data": [["chocolate bars", 3], ["donuts", 0]], /* you should provide the same keys (but the order is not important) for all datarows which go to the same sheet, otherwise a separate sheet is created */
     },
     {
         "datetime": "2023-12-09T09:50:46.136945094Z",
         "log_name": "campaigns",
-        "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6], ["datetime", "2023-12-11 09:19:32.827321506"]], // datatypes for values are string, integer (unsigned 64-bits), boolean, float (64 bits) and datetime string (in common formats without tz).
+        "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6], ["datetime", "2023-12-11 09:19:32.827321506"]], /* datatypes for values are string, integer (unsigned 64-bits), boolean, float (64 bits) and datetime string (in common formats without tz) */
     }
 ]
 ```
@@ -434,8 +448,16 @@ There is also a case of fatal errors (e.g. `MissingToken error` for Google API w
 
 So following Erlang's idea of [supervision trees](https://adoptingerlang.org/docs/development/supervision_trees/) we recommend to run Goral as a systemd service under Linux for automatic restarts in case of panics and other issues. An example systemd configuration:
 ```
+[Unit]
+Description=Goral observability daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/goral -c /etc/goral.toml --id myhost
+Restart=always
+[Install]
+WantedBy=multi-user.target
 ```
 If you plan to use System service then you should not containerize Goral to get the actual system data.
 Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ctrl+C) and SIGTERM signals to safely send all the data in process to the permanent spreadsheet storage.
-
-TODO logs example with fake writer
