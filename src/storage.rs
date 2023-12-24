@@ -457,17 +457,24 @@ impl AppendableLog {
             .spreadsheet_baseurl(&self.spreadsheet_id)
     }
 
-    // TODO add timeout for fetch
-    pub(crate) async fn get_rules(&self) -> Vec<Rule> {
-        let data = self
-            .storage
-            .google
-            .get_sheet_data(&self.spreadsheet_id, self.rules_sheet_id.expect("assert: rules sheet id is saved at the start of the service at the first append"))
-            .await
-            .unwrap();
-        data.into_iter()
-            .filter_map(|row| Rule::try_from_values(row, self.messenger.as_ref()))
-            .collect()
+    pub(crate) async fn get_rules(&self) -> Result<Vec<Rule>, String> {
+        let timeout = Duration::from_secs(1);
+        tokio::select! {
+            _ = tokio::time::sleep(timeout) => Err(format!("timeout {:?}", timeout)),
+            res = self
+                .storage
+                .google
+                .get_sheet_data(
+                    &self.spreadsheet_id,
+                    self.rules_sheet_id.expect("assert: rules sheet id is saved at the start of the service at the first append")
+                ) => {
+                    let data = res.map_err(|e| format!("response with status {}", e.status()))?;
+                    Ok(data.into_iter()
+                        .filter_map(|row| Rule::try_from_values(row, self.messenger.as_ref()))
+                        .collect()
+                    )
+            }
+        }
     }
 }
 

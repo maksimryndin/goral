@@ -50,6 +50,7 @@ mod tests {
             build_config(config).expect("should be able to build minimum configuration");
         assert_eq!(config.spreadsheet_id, "123");
         assert_eq!(config.port, 49152);
+        assert!(config.autotruncate_at_usage_percent > 99.0);
     }
 
     #[test]

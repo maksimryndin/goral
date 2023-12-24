@@ -10,6 +10,7 @@ Observability toolkit for small projects. Easy-to-use and compatible with indust
     - [Slack](#slack)
     - [Discord](#discord)
 - [Services](#services)
+      - [Storage quota](#storage-quota)
     - [General](#general)
     - [Healthcheck](#healthcheck)
     - [Metrics](#metrics)
@@ -132,10 +133,14 @@ A sheet managed by Goral has a title `<log to collect data on>@<host_id>@<servic
 Commented lines (starting with `#`) for all configurations below are optional and example values are their defaults.
 Every service has a messenger configuration (see [Setup](#setup)). It is recommended to have several messengers and different chats/channels for each messenger and take into account their rate limits when configuring a service.
 
+#### Storage quota
+
 Every service (except General) has an `autotruncate_at_usage_percent` configuration - the limit of the usage share by a service. Any Google spreadsheet can contain at most 10_000_000 cells so if a services takes more than `autotruncate_at_usage_percent` of 10_000_000 cells, Goral will truncate old data by either removing old rows or removing the same named sheets (`<log to collect data on>`) under a service.
 For every service the cleanup will truncate the surplus (actual usage - limit) and 10% of the limit.
 
-When providing your own limits, do remember to have a sum of limits no more than 100% for all services related to the same spreadsheet. Default settings assume conservatively that you write all the data to the same spreadsheet. Also if a spreadsheet includes other sheets not managed by Goral, take into account their usage.
+When providing your own limits, do remember to have a sum of limits no more than 100% for all services related to the same spreadsheet. Default settings assume conservatively that you write all the data to the same spreadsheet. If [KV service](#kv-log) is turned on, its default truncation limit is set for 100% (meaning nothing is truncated as a safe default), so you will get a warning that limits sum is over 100% if you use the same spreadsheet for other services.
+
+Also if a spreadsheet includes other sheets not managed by Goral, take into account their usage.
 
 ### General
 
@@ -436,7 +441,7 @@ Another notable use case is to log console errors from the frontend - catch JS e
 ## Rules
 
 Every service automatically creates a rules sheet (for some services reasonable defaults are provided) which allows you to set notifications (via configured messengers) on the data as it is collected.
-Datetime for rules is optional and is set only for default rules. You choose a log name (everything up to the first @ in a sheet title) and a key (a column header of a sheet), select a condition which is checked, and action: either send info/warn/error message or skip the rules match from any further rules processing.
+Datetime for rules is optional and is set only for default rules. You choose a log name (everything up to the first `@` in a sheet title) and a key (a column header of a sheet), select a condition which is checked, and action: either send info/warn/error message or skip the rules match from any further rules processing.
 
 Rules are fetched from a rules sheet by every Goral service dynamically every 15-31 seconds (the period is jittered to prevent hitting the Google quota).
 

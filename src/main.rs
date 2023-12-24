@@ -99,6 +99,7 @@ async fn start() -> Result<(), String> {
     let shared = Shared::new(tx.clone());
 
     let messengers = collect_messengers(&config);
+    let truncation_check = config.check_truncation_limits();
     let mut services = collect_services(config, shared, messengers, rx);
 
     let (shutdown, _) = broadcast::channel(1);
@@ -121,7 +122,13 @@ async fn start() -> Result<(), String> {
 
     let goral = try_join_all(tasks);
     tokio::pin!(goral);
-    welcome(tx.clone(), project_id, args.id.to_string()).await;
+    welcome(
+        tx.clone(),
+        project_id,
+        args.id.to_string(),
+        truncation_check,
+    )
+    .await;
     tracing::info!("{APP_NAME} started with pid {}", process::id());
 
     tokio::select! {

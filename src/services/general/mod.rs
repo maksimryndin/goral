@@ -56,7 +56,12 @@ impl GeneralService {
         }
     }
 
-    async fn send_notification(&self, notification: Notification, messenger: &Arc<BoxedMessenger>) {
+    async fn send_notification(
+        &self,
+        notification: Notification,
+        messenger: &Arc<BoxedMessenger>,
+        host_id: &str,
+    ) {
         tracing::debug!(
             "{} got notification to send: {:?}",
             self.name(),
@@ -66,7 +71,7 @@ impl GeneralService {
         let result = messenger
             .send_by_level(
                 &self.messenger_config,
-                &notification.message,
+                &format!("*{host_id}*: {}", &notification.message),
                 notification.level,
             )
             .await;
@@ -79,7 +84,7 @@ impl GeneralService {
         }
     }
 
-    async fn collect_notifications(&mut self) {
+    async fn collect_notifications(&mut self, host_id: &str) {
         let messenger = self
             .shared
             .messenger
@@ -87,7 +92,8 @@ impl GeneralService {
             .expect("assert: messenger is always configured for general service");
         while let Some(notification) = self.channel.recv().await {
             tracing::debug!("{:?}", notification);
-            self.send_notification(notification, &messenger).await;
+            self.send_notification(notification, &messenger, host_id)
+                .await;
         }
     }
 }
@@ -110,10 +116,10 @@ impl Service for GeneralService {
         100.0
     }
 
-    async fn run(&mut self, _: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
+    async fn run(&mut self, log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
         tracing::info!("running with log level {}", self.log_level);
         let send_notification = self.shared().send_notification.clone();
-        let collect = self.collect_notifications();
+        let collect = self.collect_notifications(log.host_id());
         tokio::pin!(collect); // pin and pass by mutable ref to prevent cancelling this future by select!
         let release_checker = tokio::spawn(async move {
             let mut release_check_interval =

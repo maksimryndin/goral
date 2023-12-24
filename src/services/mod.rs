@@ -354,7 +354,16 @@ pub trait Service: Send + Sync {
         if self.shared().messenger.is_none() {
             return;
         }
-        let rules = log.get_rules().await;
+        let rules = match log.get_rules().await {
+            Ok(rules) => rules,
+            Err(e) => {
+                let msg = format!("failed to fetch rules for service {}: {}", self.name(), e);
+                tracing::error!("{}", msg);
+                self.shared().send_notification.try_error(msg);
+                return;
+            }
+        };
+
         match input_tx.try_send(RulePayload::Rules(rules)) {
             Err(TrySendError::Full(_)) => {
                 let msg = format!(
@@ -395,7 +404,10 @@ pub trait Service: Send + Sync {
         let (output_tx, output_rx) = mpsc::channel(2 * self.channel_capacity());
         let example_rules = self.get_example_rules();
         let _ = log.append(example_rules).await;
-        let rules = log.get_rules().await;
+        let rules = log
+            .get_rules()
+            .await
+            .expect("assert: can fetch rules at the start");
         input_tx
             .send(RulePayload::Rules(rules))
             .await

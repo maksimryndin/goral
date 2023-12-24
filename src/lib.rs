@@ -341,7 +341,12 @@ impl Debug for Shared {
     }
 }
 
-pub async fn welcome(send_notification: Sender, project_id: String, host_id: String) {
+pub async fn welcome(
+    send_notification: Sender,
+    project_id: String,
+    host_id: String,
+    truncation_check: Result<(), String>,
+) {
     let sys = tokio::task::spawn_blocking(|| {
         sysinfo::set_open_files_limit(0);
         let sys = System::new_all();
@@ -371,6 +376,10 @@ pub async fn welcome(send_notification: Sender, project_id: String, host_id: Str
         "{APP_NAME} has started with [api usage page](https://console.cloud.google.com/apis/dashboard?project={project_id}&show=all) and [api quota page](https://console.cloud.google.com/iam-admin/quotas?project={project_id}) at `{sys}`, host id `{host_id}`", 
     );
     send_notification.info(msg).await;
+    if let Err(truncation_check) = truncation_check {
+        tracing::warn!("{}", truncation_check);
+        send_notification.try_warn(truncation_check);
+    }
 }
 
 fn capture_datetime(line: &str) -> Option<NaiveDateTime> {

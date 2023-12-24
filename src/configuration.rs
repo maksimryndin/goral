@@ -10,6 +10,8 @@ use regex::Regex;
 use serde::de::{self, Deserialize, Deserializer};
 use serde_derive::Deserialize;
 use serde_valid::Validate;
+use std::collections::HashMap;
+use std::fmt::Write;
 use std::str::FromStr;
 use url::Url;
 
@@ -124,6 +126,55 @@ impl Configuration {
             .validate()
             .map_err(|e| ConfigError::Message(e.to_string()))?;
         Ok(deserialized)
+    }
+
+    pub fn check_truncation_limits(&self) -> Result<(), String> {
+        let mut limits: HashMap<String, f32> = HashMap::new();
+
+        if let Some(healthcheck) = &self.healthcheck {
+            *limits
+                .entry(healthcheck.spreadsheet_id.to_string())
+                .or_default() += healthcheck.autotruncate_at_usage_percent;
+        }
+
+        if let Some(metrics) = &self.metrics {
+            *limits
+                .entry(metrics.spreadsheet_id.to_string())
+                .or_default() += metrics.autotruncate_at_usage_percent;
+        }
+
+        if let Some(logs) = &self.logs {
+            *limits.entry(logs.spreadsheet_id.to_string()).or_default() +=
+                logs.autotruncate_at_usage_percent;
+        }
+
+        if let Some(system) = &self.system {
+            *limits.entry(system.spreadsheet_id.to_string()).or_default() +=
+                system.autotruncate_at_usage_percent;
+        }
+
+        if let Some(kv) = &self.kv {
+            *limits.entry(kv.spreadsheet_id.to_string()).or_default() +=
+                kv.autotruncate_at_usage_percent;
+        }
+
+        let mut message = String::new();
+        for (spreadsheet_id, total) in limits {
+            if total > 100.0 {
+                write!(
+                    &mut message,
+                    "current usage limits sum up to {}% for spreadsheet `{}`,",
+                    total, spreadsheet_id
+                )
+                .expect("assert: can write to string");
+            }
+        }
+        if !message.is_empty() {
+            write!(&mut message, " there is a risk to hit a storage quota for Google sheets, [docs](https://github.com/maksimryndin/goral#storage-quota)").expect("assert: can write to string");
+            Err(message)
+        } else {
+            Ok(())
+        }
     }
 }
 
