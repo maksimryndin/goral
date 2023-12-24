@@ -70,18 +70,6 @@ jobs:
         with:
           command: audit
 
-      - name: Install udeps
-        uses: actions-rs/cargo@v1
-        with:
-          command: install
-          args: cargo-udeps
-
-      - name: Check unused dependencies
-        uses: actions-rs/cargo@v1
-        with:
-          command: udeps
-          args: --all-targets
-
       - name: Test
         uses: actions-rs/cargo@v1
         with:

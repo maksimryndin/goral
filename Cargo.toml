@@ -12,7 +12,13 @@ path = "src/main.rs"
 name = "goral"
 
 [profile.release]
+codegen-units = 1
+opt-level = 3
 overflow-checks = true
+
+[profile.dev]
+codegen-units = 8
+opt-level = 1
 
 [dependencies]
 anyhow = "1.0"
