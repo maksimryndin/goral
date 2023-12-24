@@ -5,7 +5,7 @@ use crate::spreadsheet::sheet::{
 };
 use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS;
 use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
-use crate::{get_service_tab_color, Notification, Sender, HOST_ID_CHARS_LIMIT};
+use crate::{get_service_tab_color, jitter_duration, Notification, Sender, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -506,14 +506,6 @@ fn prepare_sheet_title(
     )
 }
 
-pub(crate) fn jitter_duration() -> Duration {
-    let mut buf = [0u8; 2];
-    getrandom::getrandom(&mut buf).expect("assert: can get random from the OS");
-    let jitter = u16::from_be_bytes(buf);
-    let jitter = jitter >> 2; // to limit values to 2^14 = 16384
-    Duration::from_millis(jitter as u64)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,14 +532,6 @@ mod tests {
             jitter < 2_u8.pow(5),
             "sheet_name_jitter should produce values less than 2^5"
         )
-    }
-
-    #[test]
-    fn jittered_duration() {
-        let upper_bound = Duration::from_millis(2u64.pow(14) + 1);
-        for _ in 0..100 {
-            assert!(jitter_duration() < upper_bound);
-        }
     }
 
     #[tokio::test]

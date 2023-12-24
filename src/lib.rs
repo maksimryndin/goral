@@ -405,6 +405,14 @@ fn capture_datetime(line: &str) -> Option<NaiveDateTime> {
     })
 }
 
+pub(crate) fn jitter_duration() -> Duration {
+    let mut buf = [0u8; 2];
+    getrandom::getrandom(&mut buf).expect("assert: can get random from the OS");
+    let jitter = u16::from_be_bytes(buf);
+    let jitter = jitter >> 2; // to limit values to 2^14 = 16384 or ~16 secs
+    Duration::from_millis(jitter as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,5 +490,13 @@ mod tests {
                     .expect("test assert: static datetime")
             )
         );
+    }
+
+    #[test]
+    fn jittered_duration() {
+        let upper_bound = Duration::from_millis(2u64.pow(14) + 1);
+        for _ in 0..100 {
+            assert!(jitter_duration() < upper_bound);
+        }
     }
 }

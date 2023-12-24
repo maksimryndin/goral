@@ -10,7 +10,7 @@ use crate::messenger::configuration::MessengerConfig;
 use crate::rules::{Action, Rule, RuleCondition, RuleOutput, Triggered};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{BoxedMessenger, Notification, Sender, Shared};
+use crate::{jitter_duration, BoxedMessenger, Notification, Sender, Shared};
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use std::sync::{
@@ -228,7 +228,7 @@ pub trait Service: Send + Sync {
     }
 
     fn rules_update_interval(&self) -> Duration {
-        Duration::from_secs(15)
+        Duration::from_secs(15) + jitter_duration()
     }
 
     fn get_example_rules(&self) -> Vec<Datarow> {
@@ -542,7 +542,7 @@ mod tests {
     use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
     use crate::spreadsheet::tests::TestState;
     use crate::spreadsheet::Metadata;
-    use crate::storage::{jitter_duration, Storage};
+    use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;
     use crate::Sender;
 
