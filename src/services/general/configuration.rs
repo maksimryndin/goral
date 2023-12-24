@@ -11,7 +11,7 @@ fn log_level() -> Level {
 }
 
 fn graceful_timeout_secs() -> u16 {
-    10
+    5
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -55,7 +55,7 @@ mod tests {
         );
         // Check defaults
         assert_eq!(config.log_level, Level::INFO, "wrong default value");
-        assert_eq!(config.graceful_timeout_secs, 10, "wrong default value");
+        assert_eq!(config.graceful_timeout_secs, 5, "wrong default value");
     }
 
     #[test]
