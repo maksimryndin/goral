@@ -46,7 +46,7 @@ So Goral provides the following features being deployed next to your app(s):
 ### Installation
 
 You can install Goral
-1) by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases
+1) by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases (at the moment, linux x86-64, others targets soon)
 2) from source (you need Rust compiler and `cargo`) with a command
 ```sh
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
