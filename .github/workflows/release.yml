@@ -84,6 +84,7 @@ jobs:
         env:
           RUSTFLAGS: '-C target-feature=+crt-static'
         with:
+          use-cross: true
           command: build
           args: --verbose --release --target ${{ matrix.target }}
 
