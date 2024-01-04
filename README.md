@@ -33,7 +33,7 @@ So Goral provides the following features being deployed next to your app(s):
 * Features are modular - all [services](#services) are switched on/off in the configuration.
 * You can observe several instances of the same app or different apps on the same host with a single Goral daemon (except logs as logs are collected via stdin of Goral - see [below](#logs))
 * You can configure different messengers and/or channels for every [service](#services) to get notifications on errors, liveness updates, system resources overlimit etc
-* All the data collected is stored in Google Sheet with an automatic quota and limits checks and automatic data rotation - old data is deleted with a preliminary notification via configured messenger (see below). That way you don't have to buy a separate storage or overload your app VPS with Prometheus, ELK etc. Just a lean process next to your brilliant one which just sends app data in batches to Google Sheets for your ease of use. Google Sheets allow you to build your own diagrams over the metrics and analyse them, analyse liveness statistics and calculate uptime etc. By default Goral builds some charts for you.
+* All the data collected is stored in Google Sheet with an automatic quota and limits checks and automatic data rotation - old data is deleted with a preliminary notification via configured messenger (see below). That way you don't have to buy a separate storage or overload your app VPS with Prometheus, ELK etc. Just a lean process next to your brilliant one which just sends app data in batches to Google Sheets for your ease of use. Google Sheets allow you to build your own diagrams over the metrics and analyse them, analyse liveness statistics and calculate uptime etc.
 * You can configure different spreadsheets and messengers for every service
 * You can configure [rules](#rules) for notifications by messenger for any data.
 
@@ -50,6 +50,11 @@ You can install Goral
 2) from source (you need Rust compiler and `cargo`) with a command
 ```sh
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
+```
+
+To run a binary
+```sh
+goral -c config.toml --id myhost
 ```
 
 ## Setup
