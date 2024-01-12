@@ -65,12 +65,13 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: install
-          args: cargo-audit
+          args: cargo-deny
 
-      - name: Security audit
+      - name: Security audit, licenses
         uses: actions-rs/cargo@v1
         with:
-          command: audit
+          command: deny
+          args: check licenses advisories sources
 
       - name: Test
         uses: actions-rs/cargo@v1

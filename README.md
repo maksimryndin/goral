@@ -19,6 +19,7 @@ Observability toolkit for small projects. Easy-to-use and compatible with indust
     - [KV Log](#kv-log)
 - [Rules](#rules)
 - [Recommended deployment](#recommended-deployment)
+- [Licence](#licence)
 
 ## Overview
 
@@ -471,3 +472,7 @@ WantedBy=multi-user.target
 ```
 If you plan to use System service then you should not containerize Goral to get the actual system data.
 Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ctrl+C) and SIGTERM signals to safely send all the data in process to the permanent spreadsheet storage.
+
+## Licence
+
+Apache 2.0 licence is also applied to all commits in this repository when no licence was specified.

@@ -1,0 +1,74 @@
+name: "Goral bug report"
+description: You encountered a problem using Goral
+labels: ["bug"]
+assignees:
+  - maksimryndin
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Hi!
+
+        Thank you for using Goral and taking time to file a bug report.
+  - type: checkboxes
+    attributes:
+      label: Preliminary checks
+      description: Please make sure that you verify each checkbox and follow the instructions for them.
+      options:
+        - label: "Before opening a new issue, please search existing issues: https://github.com/maksimryndin/goral/issues. Perhaps, the bug has been already reported or solved"
+          required: true
+        - label: "This issue is not a feature request or other - for that just feel free to use a blank issue."
+          required: true
+  - type: textarea
+    attributes:
+      label: Description
+      description: Describe the issue that you're seeing (including a log message).
+      placeholder: Be as precise as you can. Feel free to share screenshots, videos, or logs.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: Clear steps describing how to reproduce the issue.
+      value: |
+        1.
+        2.
+        3.
+        ...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Expected result
+      description: Describe what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Actual result
+      description: Describe what actually happened.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    validations:
+      required: true
+    attributes:
+      label: What kind of operating system do you run Goral with?
+      multiple: false
+      options:
+        - Linux
+        - Mac OS
+        - Windows
+        - Other (please specify in the description)
+  - type: dropdown
+    id: cpuarch
+    validations:
+      required: true
+    attributes:
+      label: What kind of CPU architecture do you run Goral with?
+      multiple: false
+      options:
+        - Arm64
+        - x86-64
+        - Other (please specify in the description)
