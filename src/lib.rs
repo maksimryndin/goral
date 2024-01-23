@@ -26,7 +26,7 @@ use std::fmt::{self, Debug};
 use std::sync::Arc;
 use std::time::Duration;
 pub use storage::*;
-use sysinfo::{System, SystemExt};
+use sysinfo::System;
 use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender as TokioSender};
 use tracing::Level;
 
@@ -352,10 +352,10 @@ pub async fn welcome(
         let sys = System::new_all();
         let mem = sys.total_memory() / 1000 / 1000 / 1000;
         match (
-            sys.name(),
-            sys.long_os_version(),
-            sys.kernel_version(),
-            sys.host_name(),
+            System::name(),
+            System::long_os_version(),
+            System::kernel_version(),
+            System::host_name(),
         ) {
             (Some(name), Some(os_version), Some(kernel_version), Some(host_name)) => format!(
                 "{name} {os_version}(kernel {kernel_version}); hostname: {host_name}, RAM {mem}G"

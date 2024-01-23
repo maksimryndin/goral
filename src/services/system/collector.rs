@@ -4,10 +4,7 @@ use chrono::NaiveDateTime;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
-use sysinfo::{
-    CpuExt, NetworkExt, Pid, PidExt, Process as SysinfoProcess, ProcessExt, System, SystemExt, Uid,
-    UserExt,
-};
+use sysinfo::{Networks, Pid, Process as SysinfoProcess, System, Uid, Users};
 use tracing::Level;
 
 pub const BASIC_LOG: &str = "basic";
@@ -49,8 +46,11 @@ struct ProcessInfo {
 
 impl ProcessInfo {
     fn from(sysinfo_process: &SysinfoProcess, total_memory: f32) -> Self {
-        let name = if let Some(name) = sysinfo_process.exe().file_name() {
-            name.to_string_lossy().into_owned()
+        let name = if let Some(name) = sysinfo_process.exe() {
+            name.file_name()
+                .expect("assert: if process has a binary, it has a filename")
+                .to_string_lossy()
+                .into_owned()
         } else if let Some(cmd) = sysinfo_process.cmd().first() {
             Path::new(&cmd)
                 .file_name()
@@ -117,17 +117,17 @@ fn top_open_files_process(processes: &mut [ProcessInfo]) -> Option<&ProcessInfo>
     processes.last()
 }
 
-fn process_to_values(process: &ProcessInfo, sys: &mut System) -> Vec<(String, Datavalue)> {
+fn process_to_values(process: &ProcessInfo, users: &Users) -> Vec<(String, Datavalue)> {
     let user = process
         .user_id
         .as_ref()
-        .and_then(|uid| sys.get_user_by_id(uid))
+        .and_then(|uid| users.get_user_by_id(uid))
         .map(|u| u.name())
         .unwrap_or("unknown");
     let effective_user = process
         .effective_user_id
         .as_ref()
-        .and_then(|uid| sys.get_user_by_id(uid))
+        .and_then(|uid| users.get_user_by_id(uid))
         .map(|u| u.name())
         .unwrap_or("unknown");
     let open_files = if let Some(open_files) = process.open_files {
@@ -183,7 +183,6 @@ pub(super) fn initialize() -> System {
     let mut sys = System::new();
     sys.refresh_memory();
     sys.refresh_processes();
-    sys.refresh_users_list();
     sys
 }
 
@@ -194,7 +193,7 @@ pub(super) fn collect(
     scrape_time: NaiveDateTime,
     messenger: &Sender,
 ) -> Result<Vec<Datarow>, String> {
-    sys.refresh_users_list();
+    let users = Users::new_with_refreshed_list();
     sys.refresh_memory();
     sys.refresh_cpu();
     sys.refresh_processes();
@@ -210,7 +209,7 @@ pub(super) fn collect(
     }
 
     let boot_time = NaiveDateTime::from_timestamp_opt(
-        sys.boot_time()
+        System::boot_time()
             .try_into()
             .expect("assert: it is possible to build datetime from system boot time"),
         0,
@@ -263,31 +262,31 @@ pub(super) fn collect(
     datarows.push(Datarow::new(
         "top_cpu".to_string(),
         scrape_time,
-        process_to_values(top_cpu, sys),
+        process_to_values(top_cpu, &users),
     ));
     let top_memory = top_memory_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_memory".to_string(),
         scrape_time,
-        process_to_values(top_memory, sys),
+        process_to_values(top_memory, &users),
     ));
     let top_read = top_disk_read_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_disk_read".to_string(),
         scrape_time,
-        process_to_values(top_read, sys),
+        process_to_values(top_read, &users),
     ));
     let top_write = top_disk_write_process(&mut processes_infos);
     datarows.push(Datarow::new(
         "top_disk_write".to_string(),
         scrape_time,
-        process_to_values(top_write, sys),
+        process_to_values(top_write, &users),
     ));
     if let Some(top_open_files) = top_open_files_process(&mut processes_infos) {
         datarows.push(Datarow::new(
             "top_open_files".to_string(),
             scrape_time,
-            process_to_values(top_open_files, sys),
+            process_to_values(top_open_files, &users),
         ));
     }
 
@@ -296,7 +295,7 @@ pub(super) fn collect(
             datarows.push(Datarow::new(
                 name.clone(),
                 scrape_time,
-                process_to_values(p, sys),
+                process_to_values(p, &users),
             ));
         } else {
             let message = format!("process containing `{name}` in its name is not found to collect process statistics");
@@ -305,9 +304,8 @@ pub(super) fn collect(
         }
     }
 
-    sys.refresh_networks_list();
-    let network_values: Vec<(String, Datavalue)> = sys
-        .networks()
+    let networks = Networks::new_with_refreshed_list();
+    let network_values: Vec<(String, Datavalue)> = networks
         .into_iter()
         .flat_map(|(interface_name, data)| {
             [
@@ -380,9 +378,8 @@ fn disk_stat(
     messenger: &Sender,
 ) -> Vec<Datarow> {
     let mut datarows = Vec::with_capacity(mounts.len());
-    sys.refresh_disks_list();
-    let mut mounts_stat: std::collections::HashMap<String, (u64, u64)> = sys
-        .disks()
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let mut mounts_stat: std::collections::HashMap<String, (u64, u64)> = disks
         .iter()
         .map(|d| {
             (

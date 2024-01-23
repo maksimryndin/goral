@@ -48,6 +48,15 @@ So Goral provides the following features being deployed next to your app(s):
 
 You can install Goral
 1) by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases (at the moment, linux x86-64, others targets soon)
+
+For example, for Linux
+```sh
+wget https://github.com/maksimryndin/goral/releases/download/0.1.0/goral-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf goral-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+sudo mv goral-0.1.0-x86_64-unknown-linux-gnu/goral /usr/local/bin
+rm -rf goral*
+```
+
 2) from source (you need Rust compiler and `cargo`) with a command
 ```sh
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
@@ -57,6 +66,20 @@ To run a binary
 ```sh
 goral -c config.toml --id myhost
 ```
+
+where an example `config.toml` is
+
+```toml
+[general]
+service_account_credentials_path = "/etc/goral_service_account.json"
+messenger.url = "https://discord.com/api/webhooks/123/zzz"
+
+[system]
+spreadsheet_id = "123XYZ"
+messenger.url = "https://discord.com/api/webhooks/123/zzz"
+```
+
+See also [Services](#services) and [Recommended deployment](#recommended-deployment).
 
 ## Setup
 
@@ -457,7 +480,7 @@ Goral follows a fail-fast approach - if something violates assumptions (marked w
 
 There is also a case of fatal errors (e.g. `MissingToken error` for Google API which usually means that system time has skewed). In that case only someone outside can help. And in case of such panics Goral first tries to notify you via a messenger configured for General service to let you know immediately.
 
-So following Erlang's idea of [supervision trees](https://adoptingerlang.org/docs/development/supervision_trees/) we recommend to run Goral as a systemd service under Linux for automatic restarts in case of panics and other issues. An example systemd configuration:
+So following Erlang's idea of [supervision trees](https://adoptingerlang.org/docs/development/supervision_trees/) we recommend to run Goral as a systemd service under Linux for automatic restarts in case of panics and other issues. An example systemd configuration (can be created with `sudo systemctl edit --force --full goral.service`):
 ```
 [Unit]
 Description=Goral observability daemon
@@ -470,6 +493,9 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 ```
+
+where 
+
 If you plan to use System service then you should not containerize Goral to get the actual system data.
 Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ctrl+C) and SIGTERM signals to safely send all the data in process to the permanent spreadsheet storage.
 
