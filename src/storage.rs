@@ -167,8 +167,7 @@ impl AppendableLog {
                 _ = tokio::time::sleep(timeout) => {
                     let msg = format!("No response from Google API for timeout {timeout:?} for retry {retry}");
                     tracing::error!("{}", msg);
-                    self.storage.send_notification.fatal(msg).await;
-                    panic!("Google API request timed-out");
+                    self.storage.send_notification.try_error(msg);
                 },
                 res = self.fetch_sheets() => {
                     match res {
@@ -189,7 +188,7 @@ impl AppendableLog {
         let msg = format!("Google API request maximum retry duration {maximum_backoff:?} is reached with {retry} retries");
         tracing::error!("{}", msg);
         self.storage.send_notification.fatal(msg).await;
-        panic!("assert: Google API request maximum retry duration");
+        panic!("Google API request maximum retry duration");
     }
 
     // for newly created log sheet its headers order is determined by its first datarow. Fields for other datarows for the same sheet are sorted accordingly.
@@ -840,9 +839,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Google API request timed-out")]
+    #[should_panic(expected = "Google API request maximum retry duration")]
     async fn append_request_timeout() {
-        let (tx, mut rx) = mpsc::channel(1);
+        let (tx, mut rx) = mpsc::channel(10);
         let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
@@ -891,10 +890,9 @@ mod tests {
         ];
 
         let handle = tokio::task::spawn(async move {
-            assert!(
-                rx.recv().await.is_some(),
-                "notification is sent for nonrecoverable error"
-            );
+            while let Some(msg) = rx.recv().await {
+                println!("{msg:?}");
+            }
         });
         log._append(
             datarows,

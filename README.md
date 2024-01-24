@@ -93,7 +93,12 @@ To use Goral you need to have a Google account and obtain a service account:
 
 Note: you can also install Google Sheets app for your phone to have an access to the data.
 
-And notifications are sent to messengers:
+Notifications are sent to messengers with three levels:
+* 🟢 (INFO)
+* 🟡 (WARN)
+* 🔴 (ERROR)
+
+and are prefixed with id (the argument for `--id` flag).
 
 ### Telegram
 
@@ -485,11 +490,13 @@ So following Erlang's idea of [supervision trees](https://adoptingerlang.org/doc
 [Unit]
 Description=Goral observability daemon
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/goral -c /etc/goral.toml --id myhost
 Restart=always
+
 [Install]
 WantedBy=multi-user.target
 ```
