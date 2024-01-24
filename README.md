@@ -53,7 +53,7 @@ For example, for Linux
 ```sh
 wget https://github.com/maksimryndin/goral/releases/download/0.1.0/goral-0.1.0-x86_64-unknown-linux-gnu.tar.gz
 tar -xzf goral-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-sudo mv goral-0.1.0-x86_64-unknown-linux-gnu/goral /usr/local/bin
+sudo mv goral-0.1.0-x86_64-unknown-linux-gnu/goral /usr/local/bin/goral
 rm -rf goral*
 ```
 
@@ -494,7 +494,11 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-where 
+Then to check errors in Goral's log (if any error is reported via a messenger):
+
+```sh
+sudo journalctl --no-pager -u goral -g ERROR
+```
 
 If you plan to use System service then you should not containerize Goral to get the actual system data.
 Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ctrl+C) and SIGTERM signals to safely send all the data in process to the permanent spreadsheet storage.

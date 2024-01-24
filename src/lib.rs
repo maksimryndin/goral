@@ -350,7 +350,12 @@ pub async fn welcome(
     let sys = tokio::task::spawn_blocking(|| {
         sysinfo::set_open_files_limit(0);
         let sys = System::new_all();
-        let mem = sys.total_memory() / 1000 / 1000 / 1000;
+        let mem = sys.total_memory() / 1000 / 1000;
+        let mem = if mem > 1000 {
+            format!("{}G", mem / 1000)
+        } else {
+            format!("{mem}M")
+        };
         match (
             System::name(),
             System::long_os_version(),
@@ -358,16 +363,16 @@ pub async fn welcome(
             System::host_name(),
         ) {
             (Some(name), Some(os_version), Some(kernel_version), Some(host_name)) => format!(
-                "{name} {os_version}(kernel {kernel_version}); hostname: {host_name}, RAM {mem}G"
+                "{name} {os_version}(kernel {kernel_version}); hostname: {host_name}, RAM {mem}"
             ),
             (Some(name), Some(os_version), None, Some(host_name)) => {
-                format!("{name} {os_version}; hostname: {host_name}, RAM {mem}G")
+                format!("{name} {os_version}; hostname: {host_name}, RAM {mem}")
             }
             (Some(name), Some(os_version), None, None) => {
-                format!("{name} {os_version}; RAM {mem}G")
+                format!("{name} {os_version}; RAM {mem}")
             }
-            (Some(name), None, None, None) => format!("{name}; RAM {mem}G"),
-            _ => format!("RAM {mem}G"),
+            (Some(name), None, None, None) => format!("{name}; RAM {mem}"),
+            _ => format!("RAM {mem}"),
         }
     })
     .await

@@ -168,7 +168,7 @@ impl AppendableLog {
                     let msg = format!("No response from Google API for timeout {timeout:?} for retry {retry}");
                     tracing::error!("{}", msg);
                     self.storage.send_notification.fatal(msg).await;
-                    panic!("assert: Google API request timed-out");
+                    panic!("Google API request timed-out");
                 },
                 res = self.fetch_sheets() => {
                     match res {
@@ -458,7 +458,7 @@ impl AppendableLog {
     }
 
     pub(crate) async fn get_rules(&self) -> Result<Vec<Rule>, String> {
-        let timeout = Duration::from_secs(1);
+        let timeout = Duration::from_millis(1500);
         tokio::select! {
             _ = tokio::time::sleep(timeout) => Err(format!("timeout {:?}", timeout)),
             res = self

@@ -357,7 +357,7 @@ pub trait Service: Send + Sync {
         let rules = match log.get_rules().await {
             Ok(rules) => rules,
             Err(e) => {
-                let msg = format!("failed to fetch rules for service {}: {}", self.name(), e);
+                let msg = format!("failed to fetch rules for service `{}`: {}", self.name(), e);
                 tracing::error!("{}", msg);
                 self.shared().send_notification.try_error(msg);
                 return;
