@@ -86,7 +86,7 @@ See also [Services](#services) and [Recommended deployment](#recommended-deploym
 ## Setup
 
 To use Goral you need to have a Google account and obtain a service account:
-1) Create a project https://console.cloud.google.com/projectcreate (we suggest creating a separate GCP for Goral project for security reasons)
+1) Create a project https://console.cloud.google.com/projectcreate (we suggest creating a separate project for Goral for security reasons)
 2) Enable Sheets from the products page https://console.cloud.google.com/workspace-api/products
 3) Create a service account https://console.cloud.google.com/workspace-api/credentials with Editor role
 4) After creating the service acoount create a private key (type JSON) for it (the private key should be downloaded by your browser)
@@ -164,7 +164,7 @@ messenger.url = "https://discord.com/api/webhooks/<webhook_id>/<webhook_token>"
 
 ## Services
 
-A workhorse abstraction of Goral over a sheet is an appendable log - just a table which grows with adding key-value records to it.
+A workhorse abstraction of Goral over a sheet is an appendable log - just a table which grows via addition of key-value records.
 
 A sheet managed by Goral has a title `<log to collect data on>@<host_id>@<service> <creation datetime>`. You can change the title, column names and other elements of the sheet but be aware that Goral will continue to append data in the same order as when the sheet was created by Goral if the form of the data hasn't changed (either `<log to collect data on>` or its keys). Creation datetimes for sheets always differ by some amount of seconds (jittered) even those sheets were created at the same time - in order to prevent conflicts in sheet titles.
 
