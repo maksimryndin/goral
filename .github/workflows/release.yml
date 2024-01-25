@@ -48,7 +48,7 @@ jobs:
           set +e
           
           echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-          if echo "${{ env.VERSION }}" | grep -q "rc"; then
+          if echo "${GITHUB_REF#refs/tags/}" | grep -q "rc"; then
             echo "PRERELEASE=true" >> $GITHUB_ENV
           else
             echo "PRERELEASE=false" >> $GITHUB_ENV
