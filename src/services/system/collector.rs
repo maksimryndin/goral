@@ -60,6 +60,7 @@ impl ProcessInfo {
         } else {
             sysinfo_process.name().to_string()
         };
+
         Self {
             pid: sysinfo_process.pid(),
             name,
@@ -122,19 +123,19 @@ fn process_to_values(process: &ProcessInfo, users: &Users) -> Vec<(String, Datav
         .user_id
         .as_ref()
         .and_then(|uid| users.get_user_by_id(uid))
-        .map(|u| u.name())
-        .unwrap_or("unknown");
+        .map(|u| Datavalue::Text(u.name().to_string()))
+        .unwrap_or(Datavalue::NotAvailable);
     let effective_user = process
         .effective_user_id
         .as_ref()
         .and_then(|uid| users.get_user_by_id(uid))
-        .map(|u| u.name())
-        .unwrap_or("unknown");
-    let open_files = if let Some(open_files) = process.open_files {
-        Datavalue::Integer(open_files as u64)
-    } else {
-        Datavalue::NotAvailable
-    };
+        .map(|u| Datavalue::Text(u.name().to_string()))
+        .unwrap_or(Datavalue::NotAvailable);
+    let open_files = process
+        .open_files
+        .map(|open_files| Datavalue::Integer(open_files as u64))
+        .unwrap_or(Datavalue::NotAvailable);
+
     vec![
         (
             "pid".to_string(),
@@ -144,11 +145,8 @@ fn process_to_values(process: &ProcessInfo, users: &Users) -> Vec<(String, Datav
             "name".to_string(),
             Datavalue::Text(process.name.to_string()),
         ),
-        ("user".to_string(), Datavalue::Text(user.to_string())),
-        (
-            "effective_user".to_string(),
-            Datavalue::Text(effective_user.to_string()),
-        ),
+        ("user".to_string(), user),
+        ("effective_user".to_string(), effective_user),
         (
             "start_time".to_string(),
             Datavalue::Datetime(process.start_time),
@@ -193,14 +191,10 @@ pub(super) fn collect(
     scrape_time: NaiveDateTime,
     messenger: &Sender,
 ) -> Result<Vec<Datarow>, String> {
-    let users = Users::new_with_refreshed_list();
-    sys.refresh_memory();
-    sys.refresh_cpu();
-    sys.refresh_processes();
+    sys.refresh_all();
     thread::sleep(Duration::from_secs(1));
-    sys.refresh_memory();
-    sys.refresh_cpu();
-    sys.refresh_processes();
+    sys.refresh_all();
+    let users = Users::new_with_refreshed_list();
     let sysinfo_processes = sys.processes();
     let total_memory = sys.total_memory();
     let mut processes_infos = Vec::with_capacity(sysinfo_processes.len());

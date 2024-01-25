@@ -8,6 +8,8 @@ on:
     tags:
       # Regex for a version number such as 0.1.0
       - "[0-9]+.[0-9]+.[0-9]+"
+      # Regex for a prerelease such as 0.1.1rc1
+      - '[0-9]+.[0-9]+.[0-9]+rc[0-9]+'
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,15 +41,46 @@ jobs:
     steps:
       - name: Clone repository
         uses: actions/checkout@v3
+
+      - name: Get the release version from the tag
+        shell: bash
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          if echo $VERSION | grep -q "rc"; then
+            echo "PRERELEASE=true" >> $GITHUB_ENV
+          else
+            echo "PRERELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Check release version
+        shell: bash
+        run: |
+          if ${{ env.PRERELEASE }}; then
+            exit 0
+          fi
+
+          grep -q ${{ env.VERSION }} .github/ISSUE_TEMPLATE/BUG_REPORT.yaml
+          if [ $? -ne 0 ]; then 
+            echo "BUG_REPORT.yaml should contain a new release version in goral_version dropdown" 
+            exit 1 
+          fi
+
+          grep -q ${{ env.VERSION }} Cargo.toml
+          if [ $? -ne 0 ]; then 
+            echo "Cargo.toml should contain a new release version" 
+            exit 1 
+          fi
+
+          grep -q ${{ env.VERSION }} CHANGELOG.md
+          if [ $? -ne 0 ]; then 
+            echo "CHANGELOG.md should contain a new release version" 
+            exit 1 
+          fi
   
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Get the release version from the tag
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
       - name: Check fmt
         uses: actions-rs/cargo@v1
@@ -108,8 +141,18 @@ jobs:
             echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
           fi
 
+      - name: Generate Changelog
+        run: |
+          if ${{ env.PRERELEASE }}; then
+            exit 0
+          fi
+
+          echo $(grep -A10000 ${{ env.VERSION }} CHANGELOG.md | grep -B10000 -m2 -P "[0-9]+\.[0-9]+\.[0-9]+" CHANGELOG.md | grep "\S" | grep -v -E "[0-9]+\.[0-9]+\.[0-9]+") > ${{ env.VERSION }}-CHANGELOG.txt
+
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
+          body_path: ${{ env.VERSION }}-CHANGELOG.txt
+          prerelease: ${{ env.PRERELEASE }}
           files: |
             ${{ env.ASSET }}

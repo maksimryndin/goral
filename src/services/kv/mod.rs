@@ -4,8 +4,7 @@ use crate::rules::RULES_LOG_NAME;
 use crate::services::kv::configuration::Kv;
 use crate::services::{messenger_queue, rules_notifications, Data, Service};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
-use crate::spreadsheet::HttpResponse;
-use crate::storage::AppendableLog;
+use crate::storage::{AppendError, AppendableLog};
 use crate::{capture_datetime, MessengerApi, Notification, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -122,7 +121,7 @@ struct Response {
 
 struct AppendRequest {
     datarows: Vec<Datarow>,
-    reply_to: oneshot::Sender<Result<Vec<String>, HttpResponse>>,
+    reply_to: oneshot::Sender<Result<Vec<String>, AppendError>>,
 }
 
 struct ReadyHandle(Arc<AtomicBool>);
@@ -218,7 +217,10 @@ impl KvService {
                         send_notification.fatal(msg).await;
                         panic!("assert: kv service should be able to get a result of append");
                     }
-                    Ok(Err(http_response)) => {
+                    Ok(Err(AppendError::ApiTimeout)) => {
+                        panic!("assert: for kv service google api timeout is not applied");
+                    }
+                    Ok(Err(AppendError::Http(http_response))) => {
                         return Ok(HyperResponse::builder()
                             .status(
                                 StatusCode::from_u16(http_response.status().as_u16())
@@ -324,14 +326,7 @@ impl Service for KvService {
     }
 
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
-        log.healthcheck()
-            .await
-            .expect("failed to connect to Google API");
-        tracing::info!(
-            "service {} is running with spreadsheet {}",
-            self.name(),
-            self.spreadsheet_id(),
-        );
+        self.prerun_hook(&log).await;
         let (tx, mut data_receiver) = mpsc::channel(1);
         let mut tasks = vec![];
         let is_shutdown = Arc::new(AtomicBool::new(false));
@@ -447,7 +442,12 @@ mod tests {
     async fn kv_service_flow() {
         const NUMBER_OF_MESSAGES: usize = 10;
 
-        let (send_notification, _) = mpsc::channel(NUMBER_OF_MESSAGES);
+        let (send_notification, mut rx) = mpsc::channel(NUMBER_OF_MESSAGES);
+        tokio::task::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                println!("message {msg:?}");
+            }
+        });
         let send_notification = Sender::new(send_notification, KV_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             send_notification.clone(),

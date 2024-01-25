@@ -1,6 +1,6 @@
 [package]
 name = "goral"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 author = "Maksim Ryndin"
 license = "Apache-2.0"
@@ -52,7 +52,5 @@ url = { version = "2", features = ["serde"] }
 psutil = { version = "3.2.2", default-features = false, features = ["disk"]}
 
 [dev-dependencies]
-lazy_static = "1.4.0"
-prometheus = "0.13"
 prost = "0.12"
 tonic-build = "0.10.2"

@@ -282,7 +282,7 @@ impl Sender {
         // It is more important to notify user via messenger than to
         // restart quickly because restart doesn't help for recovery
         // user is required to fix a problem
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn jittered_duration() {
-        let upper_bound = Duration::from_millis(2u64.pow(14) + 1);
+        let upper_bound = Duration::from_secs(17);
         for _ in 0..100 {
             assert!(jitter_duration() < upper_bound);
         }

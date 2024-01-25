@@ -69,6 +69,15 @@ body:
       label: What kind of CPU architecture do you run Goral with?
       multiple: false
       options:
-        - Arm64
+        - aarch64
         - x86-64
         - Other (please specify in the description)
+  - type: dropdown
+    id: goral_version
+    validations:
+      required: true
+    attributes:
+      label: Which version of Goral do you run (`goral --version`)?
+      multiple: false
+      options:
+        - 0.1.0

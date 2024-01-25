@@ -345,6 +345,7 @@ pub(crate) mod tests {
         metadata: HashMap<i32, (SheetId, usize)>,
         respond_with_error: Option<Error>,
         basic_response_duration_millis: u64,
+        basic_response_duration_millis_for_second_request: u64,
     }
 
     impl TestState {
@@ -352,6 +353,33 @@ pub(crate) mod tests {
             sheets: Vec<GoogleSheet>,
             respond_with_error: Option<Error>,
             basic_response_duration_millis: Option<u64>,
+        ) -> Self {
+            Self::create(
+                sheets,
+                respond_with_error,
+                basic_response_duration_millis,
+                basic_response_duration_millis,
+            )
+        }
+
+        pub(crate) fn with_response_durations(
+            sheets: Vec<GoogleSheet>,
+            basic_response_duration_millis: u64,
+            basic_response_duration_millis_for_second_request: u64,
+        ) -> Self {
+            Self::create(
+                sheets,
+                None,
+                Some(basic_response_duration_millis),
+                Some(basic_response_duration_millis_for_second_request),
+            )
+        }
+
+        fn create(
+            sheets: Vec<GoogleSheet>,
+            respond_with_error: Option<Error>,
+            basic_response_duration_millis: Option<u64>,
+            basic_response_duration_millis_for_second_request: Option<u64>,
         ) -> Self {
             let mut sheet_titles = HashSet::with_capacity(sheets.len());
             let mut metadata = HashMap::with_capacity(sheets.len());
@@ -386,6 +414,8 @@ pub(crate) mod tests {
                 metadata: HashMap::new(),
                 respond_with_error,
                 basic_response_duration_millis: basic_response_duration_millis.unwrap_or(200),
+                basic_response_duration_millis_for_second_request:
+                    basic_response_duration_millis_for_second_request.unwrap_or(200),
             }
         }
 
@@ -400,7 +430,11 @@ pub(crate) mod tests {
         }
 
         pub(crate) async fn get(&mut self, _: &str) -> SheetsResult<(Response<Body>, Spreadsheet)> {
-            sleep(Duration::from_millis(self.basic_response_duration_millis)).await;
+            let response_duration_millis = self.basic_response_duration_millis;
+            self.basic_response_duration_millis =
+                self.basic_response_duration_millis_for_second_request;
+            sleep(Duration::from_millis(response_duration_millis)).await;
+
             if let Some(err) = self.respond_with_error.take() {
                 return Err(err);
             }

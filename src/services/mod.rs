@@ -259,6 +259,31 @@ pub trait Service: Send + Sync {
 
     fn truncate_at(&self) -> f32;
 
+    async fn prerun_hook(&self, log: &AppendableLog) {
+        if let Err(e) = log.healthcheck().await {
+            let msg = format!(
+                "service `{}` failed to connect to Google API: `{:?}`",
+                self.name(),
+                e
+            );
+            tracing::error!("{}", msg);
+            self.shared().send_notification.fatal(msg.clone()).await;
+            panic!("{}", msg);
+        }
+        let msg = format!(
+            "service `{}` is running with spreadsheet `{}`",
+            self.name(),
+            self.spreadsheet_id(),
+        );
+        tracing::info!("{}", msg);
+        self.shared().send_notification.try_info(msg);
+        tracing::debug!(
+            "channel capacity `{}` for service `{}`",
+            self.channel_capacity(),
+            self.name()
+        );
+    }
+
     async fn send_error(&self, message: String) {
         if let Some(messenger) = self.messenger() {
             messenger
@@ -357,7 +382,11 @@ pub trait Service: Send + Sync {
         let rules = match log.get_rules().await {
             Ok(rules) => rules,
             Err(e) => {
-                let msg = format!("failed to fetch rules for service `{}`: {}", self.name(), e);
+                let msg = format!(
+                    "failed to fetch rules for service `{}`: `{}`",
+                    self.name(),
+                    e
+                );
                 tracing::error!("{}", msg);
                 self.shared().send_notification.try_error(msg);
                 return;
@@ -430,19 +459,7 @@ pub trait Service: Send + Sync {
     }
 
     async fn run(&mut self, mut log: AppendableLog, mut shutdown: broadcast::Receiver<u16>) {
-        log.healthcheck()
-            .await
-            .expect("failed to connect to Google API");
-        tracing::info!(
-            "service {} is running with spreadsheet {}",
-            self.name(),
-            self.spreadsheet_id(),
-        );
-        tracing::debug!(
-            "channel capacity {} for service {}",
-            self.channel_capacity(),
-            self.name()
-        );
+        self.prerun_hook(&log).await;
         //  channel to collect results
         let (tx, mut data_receiver) = mpsc::channel(2 * self.channel_capacity());
         let is_shutdown = Arc::new(AtomicBool::new(false));
@@ -652,7 +669,12 @@ mod tests {
 
     #[tokio::test]
     async fn basic_service_flow() {
-        let (tx, _) = mpsc::channel(1);
+        let (tx, mut rx) = mpsc::channel(1);
+        tokio::task::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                println!("message {msg:?}");
+            }
+        });
         let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let data_counter = Arc::new(AtomicUsize::new(0));
         let sheets_api = SpreadsheetAPI::new(

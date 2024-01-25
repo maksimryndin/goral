@@ -40,6 +40,18 @@ impl Storage {
     }
 }
 
+#[derive(Debug)]
+pub enum AppendError {
+    ApiTimeout,
+    Http(HttpResponse),
+}
+
+impl From<HttpResponse> for AppendError {
+    fn from(r: HttpResponse) -> Self {
+        AppendError::Http(r)
+    }
+}
+
 pub struct AppendableLog {
     storage: Arc<Storage>,
     service: String,
@@ -70,7 +82,7 @@ impl AppendableLog {
         }
     }
 
-    async fn fetch_sheets(&self) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, HttpResponse> {
+    async fn fetch_sheets(&self) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, AppendError> {
         let basic_metadata = Metadata::new(vec![
             (METADATA_HOST_ID_KEY, self.storage.host_id.to_string()),
             (METADATA_SERVICE_KEY, self.service.to_string()),
@@ -96,12 +108,12 @@ impl AppendableLog {
             .collect())
     }
 
-    pub(crate) async fn healthcheck(&mut self) -> Result<(), HttpResponse> {
+    pub(crate) async fn healthcheck(&self) -> Result<(), AppendError> {
         self.fetch_sheets().await?;
         Ok(())
     }
 
-    pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<(), HttpResponse> {
+    pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<(), AppendError> {
         self._append(
             datarows,
             Some(Duration::from_secs(32)),
@@ -113,7 +125,7 @@ impl AppendableLog {
     pub(crate) async fn append_no_retry(
         &mut self,
         mut datarows: Vec<Datarow>,
-    ) -> Result<Vec<String>, HttpResponse> {
+    ) -> Result<Vec<String>, AppendError> {
         let sheet_ids = datarows
             .iter_mut()
             .map(|d| {
@@ -130,22 +142,30 @@ impl AppendableLog {
         datarows: Vec<Datarow>,
         retry_limit: Option<Duration>,
         timeout: Option<Duration>,
-    ) -> Result<(), HttpResponse> {
-        let rows_count = datarows
+    ) -> Result<(), AppendError> {
+        let rows_count_wo_rules = datarows
             .iter()
             .filter(|d| d.log_name() != RULES_LOG_NAME)
             .count();
-        tracing::info!("appending {} rows for service {}", rows_count, self.service);
+        if rows_count_wo_rules > 0 {
+            tracing::info!(
+                "appending {} rows for service {}",
+                rows_count_wo_rules,
+                self.service
+            );
+        }
 
         self._core_append(datarows, retry_limit, timeout)
             .await
             .map_err(|e| {
-                let message = format!(
-                    "Saving batch data of {rows_count} rows failed for service {}",
-                    self.service
-                );
-                tracing::error!("{}", message);
-                self.storage.send_notification.try_error(message);
+                if rows_count_wo_rules > 0 {
+                    let message = format!(
+                        "Saving batch data of `{rows_count_wo_rules}` rows failed for service `{}`",
+                        self.service
+                    );
+                    tracing::error!("{}", message);
+                    self.storage.send_notification.try_error(message);
+                }
                 e
             })
     }
@@ -155,7 +175,7 @@ impl AppendableLog {
         &self,
         maximum_backoff: Duration,
         timeout: Duration,
-    ) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, HttpResponse> {
+    ) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, AppendError> {
         let mut total_time = Duration::from_millis(0);
         let mut wait = Duration::from_millis(2);
         let mut retry = 0;
@@ -165,30 +185,34 @@ impl AppendableLog {
             tokio::select! {
                 _ = &mut max_backoff => {break;}
                 _ = tokio::time::sleep(timeout) => {
-                    let msg = format!("No response from Google API for timeout {timeout:?} for retry {retry}");
-                    tracing::error!("{}", msg);
-                    self.storage.send_notification.try_error(msg);
+                    tracing::warn!("No response from Google API for timeout {:?} for retry {} for service `{}`", timeout, retry, self.service);
                 },
                 res = self.fetch_sheets() => {
                     match res {
                         Ok(val) => {
                             return Ok(val);},
                         Err(e) => {
-                            tracing::error!("error {:?} for retry {}", e, retry);
+                            tracing::error!("error {:?} for retry {} for service `{}`", e, retry, self.service);
                         }
                     }
                 }
             }
-            let jittered = wait + jitter_duration();
+            let jittered = wait + jitter_duration() / 2u32.pow(4);
+            retry += 1;
+            tracing::warn!(
+                "waiting {:?} for retry {} for service `{}`",
+                jittered,
+                retry,
+                self.service
+            );
             tokio::time::sleep(jittered).await;
             total_time += jittered;
-            retry += 1;
             wait *= 2;
         }
-        let msg = format!("Google API request maximum retry duration {maximum_backoff:?} is reached with {retry} retries");
+        let msg = format!("Google API request maximum retry duration `{maximum_backoff:?}` is reached with `{retry}` retries for service `{}`", self.service);
         tracing::error!("{}", msg);
-        self.storage.send_notification.fatal(msg).await;
-        panic!("Google API request maximum retry duration");
+        self.storage.send_notification.try_error(msg);
+        Err(AppendError::ApiTimeout)
     }
 
     // for newly created log sheet its headers order is determined by its first datarow. Fields for other datarows for the same sheet are sorted accordingly.
@@ -197,7 +221,7 @@ impl AppendableLog {
         datarows: Vec<Datarow>,
         retry_limit: Option<Duration>,
         timeout: Option<Duration>,
-    ) -> Result<(), HttpResponse> {
+    ) -> Result<(), AppendError> {
         if datarows.is_empty() {
             return Ok(());
         }
@@ -839,16 +863,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Google API request maximum retry duration")]
     async fn append_request_timeout() {
-        let (tx, mut rx) = mpsc::channel(10);
+        let (tx, _) = mpsc::channel(1);
         let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
-            TestState::new(
+            TestState::with_response_durations(
                 vec![mock_ordinary_google_sheet("some sheet")],
-                None,
-                Some(150),
+                150,
+                50,
             ),
         );
         let storage = Arc::new(Storage::new(
@@ -889,23 +912,17 @@ mod tests {
             ),
         ];
 
-        let handle = tokio::task::spawn(async move {
-            while let Some(msg) = rx.recv().await {
-                println!("{msg:?}");
-            }
-        });
-        log._append(
-            datarows,
-            Some(Duration::from_millis(200)),
-            Some(Duration::from_millis(100)),
-        )
-        .await
-        .unwrap();
-        handle.await.unwrap();
+        let res = log
+            ._append(
+                datarows,
+                Some(Duration::from_millis(1200)), // approx 1050 maximum jitter, 150 ms for the first response
+                Some(Duration::from_millis(100)),
+            )
+            .await;
+        assert!(matches!(res, Ok(())), "should fit into maximum retry limit");
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Google API request maximum retry duration")]
     async fn append_retry_maximum_backoff() {
         let (tx, mut rx) = mpsc::channel(1);
         let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
@@ -961,13 +978,17 @@ mod tests {
                 "notification is sent for nonrecoverable error"
             );
         });
-        log._append(
-            datarows,
-            Some(Duration::from_millis(100)),
-            Some(Duration::from_millis(200)),
-        )
-        .await
-        .unwrap();
+        let res = log
+            ._append(
+                datarows,
+                Some(Duration::from_millis(100)),
+                Some(Duration::from_millis(200)),
+            )
+            .await;
+        assert!(
+            matches!(res, Err(AppendError::ApiTimeout)),
+            "Google API request maximum retry duration should happen"
+        );
         handle.await.unwrap();
     }
 

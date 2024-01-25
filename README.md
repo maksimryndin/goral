@@ -57,7 +57,7 @@ sudo mv goral-0.1.0-x86_64-unknown-linux-gnu/goral /usr/local/bin/goral
 rm -rf goral*
 ```
 
-2) from source (you need Rust compiler and `cargo`) with a command
+2) from source (you need [Rust](https://www.rust-lang.org/tools/install)) with a command
 ```sh
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
 ```
@@ -90,6 +90,8 @@ To use Goral you need to have a Google account and obtain a service account:
 4) After creating the service acoount create a private key (type JSON) for it (the private key should be downloaded by your browser)
 5) Create a spreadsheet (where the scraped data will be stored) and add the service account email as an Editor to the spreadsheet
 6) Extract spreadsheet id from the spreadsheet url
+
+Steps 5-6 can be repeated for each [service](#services) (it is recommended to have separate spreadsheets for usability and separation of concerns).
 
 Note: you can also install Google Sheets app for your phone to have an access to the data.
 
