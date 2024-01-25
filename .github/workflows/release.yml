@@ -154,6 +154,8 @@ jobs:
       - name: Generate Changelog
         run: |
           if ${{ env.PRERELEASE }}; then
+            PREVIOUS_VERSION=$(grep  -m1 -P 'version = \"[0-9]+\.[0-9]+\.[0-9]+\"' Cargo.toml | cut -d '"' -f2)
+            echo "PRERELEASE_NOTES=$(git log --pretty=oneline HEAD...$PREVIOUS_VERSION)" >> $GITHUB_ENV
             exit 0
           fi
 
@@ -163,6 +165,9 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           body_path: ${{ env.VERSION }}-CHANGELOG.txt
+          body: ${{ env.PRERELEASE_NOTES }}
           prerelease: ${{ env.PRERELEASE }}
           files: |
             ${{ env.ASSET }}
+
+

@@ -5,12 +5,11 @@ use crate::spreadsheet::sheet::{
 };
 use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS;
 use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
-use crate::{get_service_tab_color, jitter_duration, Notification, Sender, HOST_ID_CHARS_LIMIT};
+use crate::{get_service_tab_color, jitter_duration, Sender, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::Level;
 
 const METADATA_SERVICE_KEY: &str = "service";
 const METADATA_HOST_ID_KEY: &str = "host";
@@ -60,6 +59,7 @@ pub struct AppendableLog {
     rules_sheet_id: Option<SheetId>,
     messenger: Option<Sender>,
     truncate_at: f32,
+    truncate_warning_is_sent: bool,
 }
 
 impl AppendableLog {
@@ -79,6 +79,7 @@ impl AppendableLog {
             rules_sheet_id: None,
             messenger,
             truncate_at,
+            truncate_warning_is_sent: false,
         }
     }
 
@@ -354,6 +355,7 @@ impl AppendableLog {
             return Ok(());
         }
 
+        let truncation = !truncate_requests.is_empty();
         self.storage
             .google
             .crud_sheets(
@@ -365,6 +367,10 @@ impl AppendableLog {
             )
             .await?;
 
+        if truncation {
+            self.truncate_warning_is_sent = false;
+        }
+
         tracing::info!(
             "appended to log {} rows for service {}",
             rows_count,
@@ -374,7 +380,7 @@ impl AppendableLog {
     }
 
     fn prepare_truncate_requests(
-        &self,
+        &mut self,
         existing_service_sheets: &HashMap<SheetId, (Sheet, Vec<String>)>,
         limit: f32,
     ) -> Vec<CleanupSheet> {
@@ -390,11 +396,12 @@ impl AppendableLog {
             100.0 * (cells_used_by_service as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32);
 
         if usage < limit {
-            if usage > 0.8 * limit {
-                let message = format!("current spreadsheet usage `{usage}%` for service `{}` is approaching a limit `{limit}%`, copy the data if needed otherwise it will be truncated", self.service);
+            if usage > 0.8 * limit && !self.truncate_warning_is_sent {
+                let message = format!("current spreadsheet usage `{usage:.2}%` for service `{}` is approaching a limit `{limit}%`, copy the data if needed otherwise it will be truncated", self.service);
                 tracing::warn!("{}", message);
                 if let Some(messenger) = self.messenger.as_ref() {
-                    messenger.send_nonblock(Notification::new(message, Level::WARN));
+                    messenger.try_warn(message);
+                    self.truncate_warning_is_sent = true;
                 }
             }
             return vec![];

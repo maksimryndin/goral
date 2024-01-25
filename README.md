@@ -511,7 +511,7 @@ Then to check errors in Goral's log (if any error is reported via a messenger):
 sudo journalctl --no-pager -u goral -g ERROR
 ```
 
-If you plan to use System service then you should not containerize Goral to get the actual system data.
+If you plan to use [System](#system) service then you should not containerize Goral to get the actual system data.
 Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ctrl+C) and SIGTERM signals to safely send all the data in process to the permanent spreadsheet storage.
 
 ## Licence
