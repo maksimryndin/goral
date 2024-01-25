@@ -271,7 +271,7 @@ pub trait Service: Send + Sync {
             panic!("{}", msg);
         }
         let msg = format!(
-            "service `{0}` is running with spreadsheet [{1}]({1})",
+            "service `{}` is running with [spreadsheet]({})",
             self.name(),
             log.spreadsheet_baseurl(),
         );

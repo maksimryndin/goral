@@ -410,6 +410,15 @@ impl AppendableLog {
         let cells_to_delete =
             (usage - 0.9 * limit) * GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32 / 100.0;
 
+        let message = format!(
+            "sheets managed by service `{}` with usage `{usage:.2}%` are truncated",
+            self.service
+        );
+        tracing::warn!("{}", message);
+        if let Some(messenger) = self.messenger.as_ref() {
+            messenger.try_warn(message);
+        }
+
         let usages = existing_service_sheets
             .values()
             .filter(|(s, _)| s.sheet_type() == SheetType::Grid)
@@ -1064,8 +1073,10 @@ mod tests {
     #[tokio::test]
     async fn truncation_flow() {
         let (tx, mut rx) = mpsc::channel(1);
-        let messages_task = tokio::spawn(async move {
-            let _ = rx.recv().await;
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                println!("{msg:?}");
+            }
         });
         let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(tx.clone(), TestState::new(vec![], None, None));
@@ -1271,6 +1282,5 @@ mod tests {
                 );
             }
         }
-        messages_task.await.unwrap();
     }
 }
