@@ -45,8 +45,10 @@ jobs:
       - name: Get the release version from the tag
         shell: bash
         run: |
+          set +e
+          
           echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-          if echo ${{ env.VERSION }} | grep -q "rc"; then
+          if echo "${{ env.VERSION }}" | grep -q "rc"; then
             echo "PRERELEASE=true" >> $GITHUB_ENV
           else
             echo "PRERELEASE=false" >> $GITHUB_ENV
@@ -55,6 +57,8 @@ jobs:
       - name: Check release version
         shell: bash
         run: |
+          set +e
+
           if ${{ env.PRERELEASE }}; then
             exit 0
           fi
