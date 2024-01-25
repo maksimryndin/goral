@@ -271,9 +271,9 @@ pub trait Service: Send + Sync {
             panic!("{}", msg);
         }
         let msg = format!(
-            "service `{}` is running with spreadsheet `{}`",
+            "service `{0}` is running with spreadsheet [{1}]({1})",
             self.name(),
-            self.spreadsheet_id(),
+            log.spreadsheet_baseurl(),
         );
         tracing::info!("{}", msg);
         self.shared().send_notification.try_info(msg);
