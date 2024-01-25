@@ -488,7 +488,7 @@ impl AppendableLog {
     }
 
     pub(crate) async fn get_rules(&self) -> Result<Vec<Rule>, String> {
-        let timeout = Duration::from_millis(1500);
+        let timeout = Duration::from_millis(2000);
         tokio::select! {
             _ = tokio::time::sleep(timeout) => Err(format!("timeout {:?}", timeout)),
             res = self
