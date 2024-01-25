@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-          if echo $VERSION | grep -q "rc"; then
+          if echo ${{ env.VERSION }} | grep -q "rc"; then
             echo "PRERELEASE=true" >> $GITHUB_ENV
           else
             echo "PRERELEASE=false" >> $GITHUB_ENV
@@ -74,6 +74,12 @@ jobs:
           grep -q ${{ env.VERSION }} CHANGELOG.md
           if [ $? -ne 0 ]; then 
             echo "CHANGELOG.md should contain a new release version" 
+            exit 1 
+          fi
+
+          grep -q ${{ env.VERSION }} README.md
+          if [ $? -ne 0 ]; then 
+            echo "README.md should contain a new release version in Installation section" 
             exit 1 
           fi
   

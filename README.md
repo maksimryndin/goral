@@ -59,6 +59,8 @@ rm -rf goral*
 
 2) from source (you need [Rust](https://www.rust-lang.org/tools/install)) with a command
 ```sh
+git clone https://github.com/maksimryndin/goral/tree/0.1.0
+cd goral
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
 ```
 
