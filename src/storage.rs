@@ -247,7 +247,7 @@ impl AppendableLog {
 
         let mut rows_count: HashMap<SheetId, i32> = existing_sheets
             .iter()
-            .map(|(&sheet_id, &(ref sheet, _))| {
+            .map(|(&sheet_id, (sheet, _))| {
                 (
                     sheet_id,
                     sheet
@@ -433,7 +433,7 @@ impl AppendableLog {
     fn prepare_truncate_requests(
         &mut self,
         existing_service_sheets: &HashMap<SheetId, (Sheet, Vec<String>)>,
-        sheets_to_create: &Vec<VirtualSheet>,
+        sheets_to_create: &[VirtualSheet],
         data_to_append: &HashMap<SheetId, Rows>,
         limit: f32,
         rows_count: &mut HashMap<SheetId, i32>,
