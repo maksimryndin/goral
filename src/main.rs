@@ -158,7 +158,7 @@ async fn start() -> Result<(), String> {
             tracing::error!("{} couldn't gracefully shutdown", APP_NAME);
         },
         _ = &mut goral => {
-            tracing::info!("{} has gracefully shutdowned. If you like it, consider giving a star to https://github.com/maksimryndin/goral. Thank you!", APP_NAME);
+            tracing::info!("{} has gracefully shutdowned", APP_NAME);
         }
     }
     Ok(())

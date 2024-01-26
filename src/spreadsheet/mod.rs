@@ -6,7 +6,7 @@ use crate::HyperConnector;
 use google_sheets4::oauth2;
 use http::response::Response;
 use hyper::body::Body;
-pub use spreadsheet::*;
+pub use spreadsheet::SpreadsheetAPI;
 use std::collections::{hash_map::Iter, HashMap};
 
 #[derive(Debug)]
@@ -24,6 +24,10 @@ impl Metadata {
 
     pub(crate) fn get(&self, key: &str) -> Option<&String> {
         self.0.get(key)
+    }
+
+    pub(crate) fn insert(&mut self, key: String, value: String) {
+        self.0.insert(key, value);
     }
 
     pub(crate) fn contains(&self, other: &Self) -> bool {

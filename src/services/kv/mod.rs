@@ -427,8 +427,8 @@ impl Service for KvService {
 mod tests {
     use super::*;
     use crate::configuration::tests::build_config;
+    use crate::spreadsheet::spreadsheet::tests::TestState;
     use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
-    use crate::spreadsheet::tests::TestState;
     use crate::spreadsheet::Metadata;
     use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;

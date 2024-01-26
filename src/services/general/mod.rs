@@ -134,7 +134,10 @@ impl Service for GeneralService {
                                 let latest = release.tag_name;
                                 if !release.prerelease && current != latest {
                                     let msg = format!(
-                                        "Your {APP_NAME} version `{current}` is not the latest `{latest}`, consider [upgrading](https://github.com/maksimryndin/goral/releases)"
+                                        "Your {APP_NAME} version `{current}` is not the latest `{latest}`,\
+                                         consider [upgrading](https://github.com/maksimryndin/goral/releases).\
+                                         If you like {APP_NAME}, consider giving a star to the [repo](https://github.com/maksimryndin/goral). \
+                                         Thank you!"
                                     );
                                     send_notification.info(msg).await;
                                 }
@@ -179,8 +182,8 @@ mod tests {
     use super::*;
     use crate::configuration::tests::build_config;
     use crate::messenger::tests::TestMessenger;
+    use crate::spreadsheet::spreadsheet::tests::TestState;
     use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
-    use crate::spreadsheet::tests::TestState;
     use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;
     use crate::{Sender, Shared};

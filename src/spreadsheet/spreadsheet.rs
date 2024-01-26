@@ -37,7 +37,7 @@ async fn handle_error<T>(
     match result {
         Err(e) => match e {
             // fatal
-            Error::MissingAPIKey | Error::BadRequest(_) | Error::FieldClash(_) => {
+            Error::MissingAPIKey => {
                 tracing::error!("{}", e);
                 spreadsheet
                     .send_notification
@@ -66,8 +66,10 @@ async fn handle_error<T>(
             // retry
             Error::Failure(v) => Err(v),
             Error::HttpError(v) => Err(Response::new(Body::from(v.to_string()))),
+            Error::BadRequest(v) => Err(Response::new(Body::from(v.to_string()))),
             Error::Io(v) => Err(Response::new(Body::from(v.to_string()))),
             Error::JsonDecodeError(_, v) => Err(Response::new(Body::from(v.to_string()))),
+            Error::FieldClash(v) => Err(Response::new(Body::from(v.to_string()))),
             Error::Cancelled => Err(Response::new(Body::from("cancelled"))),
         },
         Ok(res) => Ok(res.1),

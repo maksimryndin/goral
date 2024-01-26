@@ -408,12 +408,24 @@ impl VirtualSheet {
         self
     }
 
+    pub(crate) fn metadata_mut(&mut self) -> &mut Metadata {
+        &mut self.sheet.metadata
+    }
+
     pub(crate) fn sheet_id(&self) -> SheetId {
         self.sheet.sheet_id()
     }
 
     pub(crate) fn row_count(&self) -> Option<i32> {
         self.sheet.row_count()
+    }
+
+    pub(crate) fn sheet_type(&self) -> SheetType {
+        self.sheet.sheet_type()
+    }
+
+    pub(crate) fn sheet(&self) -> &Sheet {
+        &self.sheet
     }
 }
 
@@ -442,6 +454,14 @@ pub(crate) struct UpdateSheet {
 impl UpdateSheet {
     pub(crate) fn new(sheet_id: SheetId, metadata: Metadata) -> Self {
         Self { sheet_id, metadata }
+    }
+
+    pub(crate) fn sheet_id(&self) -> SheetId {
+        self.sheet_id
+    }
+
+    pub(crate) fn metadata_mut(&mut self) -> &mut Metadata {
+        &mut self.metadata
     }
 
     pub(super) fn into_api_requests(self) -> Vec<Request> {
@@ -530,6 +550,10 @@ impl Rows {
 
     pub(crate) fn push(&mut self, row: RowData) {
         self.rows.push(row)
+    }
+
+    pub(crate) fn new_rows_count(&self) -> i32 {
+        self.rows.len() as i32
     }
 
     pub(super) fn into_api_requests(self) -> Vec<Request> {

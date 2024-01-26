@@ -568,8 +568,8 @@ mod tests {
     use crate::configuration::ceiled_division;
     use crate::services::general::GENERAL_SERVICE_NAME;
     use crate::spreadsheet::datavalue::Datavalue;
+    use crate::spreadsheet::spreadsheet::tests::TestState;
     use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
-    use crate::spreadsheet::tests::TestState;
     use crate::spreadsheet::Metadata;
     use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;
