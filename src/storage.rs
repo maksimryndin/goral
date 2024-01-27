@@ -363,14 +363,6 @@ impl AppendableLog {
         );
         self.update_rows_metadata(&rows_count, &mut sheets_to_update, &mut sheets_to_add);
         let data: Vec<Rows> = data_to_append.into_values().collect();
-        let total_rows: i32 = rows_count
-            .into_iter()
-            .filter_map(|(sheet_id, rows)| {
-                (self.rules_sheet_id.is_none()
-                    || sheet_id != self.rules_sheet_id.expect("assert: rules sheet id is set"))
-                .then_some(rows)
-            })
-            .sum();
 
         tracing::debug!("truncate_requests:\n{:?}", truncate_requests);
         tracing::debug!("sheets_to_update:\n{:?}", sheets_to_update);
@@ -396,12 +388,6 @@ impl AppendableLog {
         if truncation {
             self.truncate_warning_is_sent = false;
         }
-
-        tracing::debug!(
-            "appended to log {} rows (with headers for newly created sheets) for service {}",
-            total_rows,
-            self.service
-        );
         Ok(())
     }
 
@@ -586,7 +572,7 @@ impl AppendableLog {
     }
 
     pub(crate) async fn get_rules(&self) -> Result<Vec<Rule>, String> {
-        let timeout = Duration::from_millis(2500);
+        let timeout = Duration::from_millis(3000);
         tokio::select! {
             _ = tokio::time::sleep(timeout) => Err(format!("timeout {:?}", timeout)),
             res = self

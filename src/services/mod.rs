@@ -383,12 +383,12 @@ pub trait Service: Send + Sync {
             Ok(rules) => rules,
             Err(e) => {
                 let msg = format!(
-                    "failed to fetch rules for service `{}`: `{}`",
+                    "failed to fetch rules update for service `{}`: `{}`",
                     self.name(),
                     e
                 );
-                tracing::error!("{}", msg);
-                self.shared().send_notification.try_error(msg);
+                tracing::warn!("{}", msg);
+                self.shared().send_notification.try_warn(msg);
                 return;
             }
         };
