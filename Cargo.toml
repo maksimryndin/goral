@@ -16,6 +16,7 @@ name = "goral"
 codegen-units = 1
 opt-level = 3
 overflow-checks = true
+strip = "debuginfo"
 
 [profile.dev]
 codegen-units = 8

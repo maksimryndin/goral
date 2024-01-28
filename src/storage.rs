@@ -450,7 +450,7 @@ impl AppendableLog {
         let usage =
             100.0 * (cells_used_by_service as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32);
         tracing::debug!(
-            "cells used by service `{}`: {}, usage: {}",
+            "cells used by service `{}`: {}, usage: {}%",
             self.service,
             cells_used_by_service,
             usage
