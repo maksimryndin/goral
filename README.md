@@ -51,15 +51,15 @@ You can install Goral
 
 For example, for Linux
 ```sh
-wget https://github.com/maksimryndin/goral/releases/download/0.1.0/goral-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-tar -xzf goral-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-sudo mv goral-0.1.0-x86_64-unknown-linux-gnu/goral /usr/local/bin/goral
+wget https://github.com/maksimryndin/goral/releases/download/0.1.1/goral-0.1.1-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf goral-0.1.1-x86_64-unknown-linux-gnu.tar.gz
+sudo mv goral-0.1.1-x86_64-unknown-linux-gnu/goral /usr/local/bin/goral
 rm -rf goral*
 ```
 
 2) from source (you need [Rust](https://www.rust-lang.org/tools/install)) with a command
 ```sh
-git clone --depth 1 --branch 0.1.0 https://github.com/maksimryndin/goral
+git clone --depth 1 --branch 0.1.1 https://github.com/maksimryndin/goral
 cd goral
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
 ```
@@ -387,7 +387,7 @@ spreadsheet_id = "<spreadsheet_id>"
 [system]
 spreadsheet_id = "<spreadsheet_id>"
 # push_interval_secs = 20
-# autotruncate_at_usage_percent = 20
+# autotruncate_at_usage_percent = 20 # approx 2 days of data under default settings
 # scrape_interval_secs = 10
 # scrape_timeout_ms = 3000
 # messenger.url = "<messenger api url for sending messages>"

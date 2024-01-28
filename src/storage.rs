@@ -635,7 +635,7 @@ mod tests {
     use crate::spreadsheet::sheet::tests::mock_ordinary_google_sheet;
     use crate::spreadsheet::spreadsheet::tests::TestState;
     use crate::tests::TEST_HOST_ID;
-    use crate::Sender;
+    use crate::{Notification, Sender};
     use chrono::NaiveDate;
     use google_sheets4::Error;
     use tokio::sync::mpsc;
@@ -1147,138 +1147,147 @@ mod tests {
 
     #[tokio::test]
     async fn truncation_flow() {
-        let (tx, mut rx) = mpsc::channel(1);
-        tokio::spawn(async move {
+        let (tx, mut rx) = mpsc::channel::<Notification>(1);
+        let messages = tokio::spawn(async move {
+            let mut warn_count = 0;
             while let Some(msg) = rx.recv().await {
+                if msg.message.contains("current spreadsheet usage") {
+                    warn_count += 1;
+                }
                 println!("{msg:?}");
             }
+            assert_eq!(warn_count, 1, "number of warnings is 1 after being sent");
         });
-        let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
-        let sheets_api = SpreadsheetAPI::new(tx.clone(), TestState::new(vec![], None, None));
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            tx.clone(),
-        ));
-        // for simplicity we create logs with one key to easily
-        // make assertions on rows count (only two columns - timestamp and key)
-        let mut log = AppendableLog::new(
-            storage,
-            "spreadsheet1".to_string(),
-            GENERAL_SERVICE_NAME.to_string(),
-            Some(tx.clone()),
-            0.01, // 0.01% of 10 000 000 cells means 1000 cells or 500 rows
-        );
-
-        let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
-            .expect("test assert: static date")
-            .and_hms_opt(0, 0, 0)
-            .expect("test assert: static time");
-
-        let mut datarows = Vec::with_capacity(400); // going to add 400 rows or 800 cells
-        for _ in 0..200 {
-            datarows.push(Datarow::new(
-                "log_name1".to_string(),
-                timestamp,
-                vec![(format!("key11"), Datavalue::Size(400_u64))],
+        {
+            let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
+            let sheets_api = SpreadsheetAPI::new(tx.clone(), TestState::new(vec![], None, None));
+            let storage = Arc::new(Storage::new(
+                TEST_HOST_ID.to_string(),
+                sheets_api,
+                tx.clone(),
             ));
+            // for simplicity we create logs with one key to easily
+            // make assertions on rows count (only two columns - timestamp and key)
+            let mut log = AppendableLog::new(
+                storage,
+                "spreadsheet1".to_string(),
+                GENERAL_SERVICE_NAME.to_string(),
+                Some(tx.clone()),
+                0.01, // 0.01% of 10 000 000 cells means 1000 cells or 500 rows
+            );
+
+            let timestamp = NaiveDate::from_ymd_opt(2023, 10, 19)
+                .expect("test assert: static date")
+                .and_hms_opt(0, 0, 0)
+                .expect("test assert: static time");
+
+            let mut datarows = Vec::with_capacity(400); // going to add 400 rows or 800 cells
+            for _ in 0..200 {
+                datarows.push(Datarow::new(
+                    "log_name1".to_string(),
+                    timestamp,
+                    vec![(format!("key11"), Datavalue::Size(400_u64))],
+                ));
+                datarows.push(Datarow::new(
+                    "log_name2".to_string(),
+                    timestamp,
+                    vec![(format!("key21"), Datavalue::Size(400_u64))],
+                ));
+            }
             datarows.push(Datarow::new(
-                "log_name2".to_string(),
+                RULES_LOG_NAME.to_string(),
                 timestamp,
                 vec![(format!("key21"), Datavalue::Size(400_u64))],
-            ));
-        }
-        datarows.push(Datarow::new(
-            RULES_LOG_NAME.to_string(),
-            timestamp,
-            vec![(format!("key21"), Datavalue::Size(400_u64))],
-        )); // 2 rows of rules (including header row) or 4 cells
+            )); // 2 rows of rules (including header row) or 4 cells
 
-        log.append(datarows).await.unwrap(); // 808 cells of log_name1, log_name2 and rules including headers
+            log.append(datarows).await.unwrap(); // 808 cells of log_name1, log_name2 and rules including headers
 
-        let all_sheets = log
-            .storage
-            .google
-            .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
-            .await
-            .unwrap();
-        assert_eq!(
-            all_sheets.len(),
-            3,
-            "`log_name1`, `log_name2`, `{}` sheets have been created",
-            RULES_LOG_NAME
-        );
-        for i in 0..3 {
-            if all_sheets[i].title().contains("log_name1")
-                || all_sheets[i].title().contains("log_name2")
-            {
-                assert_eq!(
-                    all_sheets[i].row_count(),
-                    Some(201),
-                    "`log_name..` contains header row and 248 rows of data"
-                );
-            } else {
-                assert_eq!(
-                    all_sheets[i].row_count(),
-                    Some(2),
-                    "`{}` contains header row and 1 row of data",
-                    RULES_LOG_NAME
-                );
+            let all_sheets = log
+                .storage
+                .google
+                .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
+                .await
+                .unwrap();
+            assert_eq!(
+                all_sheets.len(),
+                3,
+                "`log_name1`, `log_name2`, `{}` sheets have been created",
+                RULES_LOG_NAME
+            );
+            for i in 0..3 {
+                if all_sheets[i].title().contains("log_name1")
+                    || all_sheets[i].title().contains("log_name2")
+                {
+                    assert_eq!(
+                        all_sheets[i].row_count(),
+                        Some(201),
+                        "`log_name..` contains header row and 248 rows of data"
+                    );
+                } else {
+                    assert_eq!(
+                        all_sheets[i].row_count(),
+                        Some(2),
+                        "`{}` contains header row and 1 row of data",
+                        RULES_LOG_NAME
+                    );
+                }
             }
-        }
 
-        // we have 808 cells used out of 1000 (limit)
-        // now add 200 datarows => above the limit
-        // for log_name1 the key has changed - new sheet will be created
+            // we have 808 cells used out of 1000 (limit)
+            // now add 200 datarows => above the limit
+            // for log_name1 the key has changed - new sheet will be created
 
-        let mut datarows = Vec::with_capacity(10);
-        for _ in 0..100 {
-            datarows.push(Datarow::new(
-                "log_name1".to_string(),
-                timestamp,
-                vec![(format!("key12"), Datavalue::Size(400_u64))],
-            ));
-            datarows.push(Datarow::new(
-                "log_name2".to_string(),
-                timestamp,
-                vec![(format!("key21"), Datavalue::Size(400_u64))],
-            ));
-        } // log_name1 - new sheet to be created with headers,
-          // so old log_name1 - 201 rows, new log_name1 - 101 rows, log_name2 - 301 rows, rules - 2 rows - total 605 rows or 1210 cells
-          // we remove 210 and 1000 * 30% or 510 cells
-          // cells = (201+101+301) * 2 = 1206
-          // (201+101)*2/1206 = 50.08% of log_name1 or 256 cells or 128 rows
-          // 301*2/1206 = 49.91% of logn_name2 or 256 cells or 128 rows
+            let mut datarows = Vec::with_capacity(10);
+            for _ in 0..100 {
+                datarows.push(Datarow::new(
+                    "log_name1".to_string(),
+                    timestamp,
+                    vec![(format!("key12"), Datavalue::Size(400_u64))],
+                ));
+                datarows.push(Datarow::new(
+                    "log_name2".to_string(),
+                    timestamp,
+                    vec![(format!("key21"), Datavalue::Size(400_u64))],
+                ));
+            } // log_name1 - new sheet to be created with headers,
+              // so old log_name1 - 201 rows, new log_name1 - 101 rows, log_name2 - 301 rows, rules - 2 rows - total 605 rows or 1210 cells
+              // we remove 210 and 1000 * 30% or 510 cells
+              // cells = (201+101+301) * 2 = 1206
+              // (201+101)*2/1206 = 50.08% of log_name1 or 256 cells or 128 rows
+              // 301*2/1206 = 49.91% of logn_name2 or 256 cells or 128 rows
 
-        log.append(datarows).await.unwrap();
+            log.append(datarows).await.unwrap();
 
-        let all_sheets = log
-            .storage
-            .google
-            .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
-            .await
-            .unwrap();
-        assert_eq!(
-            all_sheets.len(),
-            4,
-            "`log_name1` with another key has been created"
-        );
+            let all_sheets = log
+                .storage
+                .google
+                .sheets_filtered_by_metadata(&log.spreadsheet_id, &Metadata::new(vec![]))
+                .await
+                .unwrap();
+            assert_eq!(
+                all_sheets.len(),
+                4,
+                "`log_name1` with another key has been created"
+            );
 
-        for i in 0..3 {
-            if all_sheets[i].title().contains("log_name2") {
-                assert_eq!(all_sheets[i].row_count(), Some(174));
-            } else if all_sheets[i].title().contains("log_name1") {
-                assert!(
-                    all_sheets[i].row_count() == Some(73) || all_sheets[i].row_count() == Some(101),
-                );
-            } else {
-                assert_eq!(
-                    all_sheets[i].row_count(),
-                    Some(2),
-                    "`{}` contains header row and 1 row of data",
-                    RULES_LOG_NAME
-                );
+            for i in 0..3 {
+                if all_sheets[i].title().contains("log_name2") {
+                    assert_eq!(all_sheets[i].row_count(), Some(174));
+                } else if all_sheets[i].title().contains("log_name1") {
+                    assert!(
+                        all_sheets[i].row_count() == Some(73)
+                            || all_sheets[i].row_count() == Some(101),
+                    );
+                } else {
+                    assert_eq!(
+                        all_sheets[i].row_count(),
+                        Some(2),
+                        "`{}` contains header row and 1 row of data",
+                        RULES_LOG_NAME
+                    );
+                }
             }
-        }
+        } // a scope to drop senders
+        messages.await.unwrap();
     }
 }
