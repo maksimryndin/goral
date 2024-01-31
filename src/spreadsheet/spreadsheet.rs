@@ -1,5 +1,6 @@
 use crate::spreadsheet::sheet::{CleanupSheet, Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
-use crate::spreadsheet::{HttpResponse, Metadata};
+use crate::spreadsheet::Metadata;
+use crate::storage::StorageError;
 
 #[cfg(not(test))]
 use crate::HyperConnector;
@@ -33,7 +34,7 @@ pub(crate) const GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL: usize = 50_000;
 async fn handle_error<T>(
     spreadsheet: &SpreadsheetAPI,
     result: SheetsResult<(Response<Body>, T)>,
-) -> Result<T, HttpResponse> {
+) -> Result<T, StorageError> {
     match result {
         Err(e) => match e {
             // fatal
@@ -64,13 +65,25 @@ async fn handle_error<T>(
                 panic!("Fatal error for Google API access: `{}`", msg);
             }
             // retry
-            Error::Failure(v) => Err(v),
-            Error::HttpError(v) => Err(Response::new(Body::from(v.to_string()))),
-            Error::BadRequest(v) => Err(Response::new(Body::from(v.to_string()))),
-            Error::Io(v) => Err(Response::new(Body::from(v.to_string()))),
-            Error::JsonDecodeError(_, v) => Err(Response::new(Body::from(v.to_string()))),
-            Error::FieldClash(v) => Err(Response::new(Body::from(v.to_string()))),
-            Error::Cancelled => Err(Response::new(Body::from("cancelled"))),
+            Error::Failure(v) => Err(StorageError::Retriable(v)),
+            Error::HttpError(v) => Err(StorageError::Retriable(Response::new(Body::from(
+                v.to_string(),
+            )))),
+            Error::BadRequest(v) => Err(StorageError::NonRetriable(Response::new(Body::from(
+                v.to_string(),
+            )))),
+            Error::Io(v) => Err(StorageError::Retriable(Response::new(Body::from(
+                v.to_string(),
+            )))),
+            Error::JsonDecodeError(_, v) => Err(StorageError::NonRetriable(Response::new(
+                Body::from(v.to_string()),
+            ))),
+            Error::FieldClash(v) => Err(StorageError::NonRetriable(Response::new(Body::from(
+                v.to_string(),
+            )))),
+            Error::Cancelled => Err(StorageError::Retriable(Response::new(Body::from(
+                "cancelled",
+            )))),
         },
         Ok(res) => Ok(res.1),
     }
@@ -147,7 +160,7 @@ impl SpreadsheetAPI {
         &self,
         spreadsheet_id: &str,
         sheet_id: SheetId,
-    ) -> Result<Vec<Vec<Value>>, HttpResponse> {
+    ) -> Result<Vec<Vec<Value>>, StorageError> {
         let req = BatchGetValuesByDataFilterRequest {
             data_filters: Some(vec![DataFilter {
                 grid_range: Some(GridRange {
@@ -168,7 +181,7 @@ impl SpreadsheetAPI {
             .values_batch_get_by_data_filter(req, spreadsheet_id)
             .doit()
             .await;
-        tracing::debug!("{:?}", result);
+        tracing::trace!("{:?}", result);
         let response = handle_error(self, result).await.map_err(|e| {
             tracing::error!("{:?}", e);
             e
@@ -188,7 +201,7 @@ impl SpreadsheetAPI {
         &self,
         spreadsheet_id: &str,
         sheet_id: SheetId,
-    ) -> Result<Vec<Vec<Value>>, HttpResponse> {
+    ) -> Result<Vec<Vec<Value>>, StorageError> {
         let mut state = self.state.lock().await;
         state.get_sheet_data(spreadsheet_id, sheet_id).await
     }
@@ -244,10 +257,10 @@ impl SpreadsheetAPI {
         &self,
         spreadsheet_id: &str,
         metadata: &Metadata,
-    ) -> Result<Vec<Sheet>, HttpResponse> {
+    ) -> Result<Vec<Sheet>, StorageError> {
         let result = self.get(spreadsheet_id, metadata).await;
 
-        tracing::debug!("{:?}", result);
+        tracing::trace!("{:?}", result);
         let response = handle_error(self, result).await.map_err(|e| {
             tracing::error!("{:?}", e);
             e
@@ -271,7 +284,7 @@ impl SpreadsheetAPI {
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
-    ) -> Result<BatchUpdateSpreadsheetResponse, HttpResponse> {
+    ) -> Result<BatchUpdateSpreadsheetResponse, StorageError> {
         // capacity for actual usage
         let mut requests = Vec::with_capacity(
             truncates.len() + sheets.len() * 10 + data.len() * 2 + updates.len(),
@@ -292,7 +305,7 @@ impl SpreadsheetAPI {
             requests.append(&mut rows.into_api_requests())
         }
 
-        tracing::debug!("requests:\n{:?}", requests);
+        tracing::trace!("requests:\n{:?}", requests);
 
         let req = BatchUpdateSpreadsheetRequest {
             include_spreadsheet_in_response: Some(false),
@@ -303,7 +316,7 @@ impl SpreadsheetAPI {
 
         let result = self.update(req, spreadsheet_id).await;
 
-        tracing::debug!("{:?}", result);
+        tracing::trace!("{:?}", result);
         handle_error(self, result).await
     }
 
@@ -314,7 +327,7 @@ impl SpreadsheetAPI {
         updates: Vec<UpdateSheet>,
         sheets: Vec<VirtualSheet>,
         data: Vec<Rows>,
-    ) -> Result<(), HttpResponse> {
+    ) -> Result<(), StorageError> {
         self._crud_sheets(spreadsheet_id, truncates, updates, sheets, data)
             .await
             .map_err(|e| {
@@ -421,7 +434,7 @@ pub(crate) mod tests {
             }
         }
 
-        pub(crate) fn bad_response(text: String) -> Error {
+        pub(crate) fn failure_response(text: String) -> Error {
             Error::Failure(
                 HyperResponse::builder()
                     .status(StatusCode::BAD_REQUEST)
@@ -429,6 +442,10 @@ pub(crate) mod tests {
                     .body(Body::from(text))
                     .expect("test assert: test state mock can create responses from strings"),
             )
+        }
+
+        pub(crate) fn bad_response(text: String) -> Error {
+            Error::BadRequest(serde_json::json!(text))
         }
 
         pub(crate) async fn get(&mut self, _: &str) -> SheetsResult<(Response<Body>, Spreadsheet)> {
@@ -466,7 +483,7 @@ pub(crate) mod tests {
             &mut self,
             _spreadsheet_id: &str,
             _sheet_id: SheetId,
-        ) -> Result<Vec<Vec<Value>>, HttpResponse> {
+        ) -> Result<Vec<Vec<Value>>, StorageError> {
             Ok(vec![])
         }
 

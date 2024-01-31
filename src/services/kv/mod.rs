@@ -4,7 +4,7 @@ use crate::rules::RULES_LOG_NAME;
 use crate::services::kv::configuration::Kv;
 use crate::services::{messenger_queue, rules_notifications, Data, Service};
 use crate::spreadsheet::datavalue::{Datarow, Datavalue};
-use crate::storage::{AppendError, AppendableLog};
+use crate::storage::{AppendableLog, StorageError};
 use crate::{capture_datetime, MessengerApi, Notification, Sender, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -121,7 +121,7 @@ struct Response {
 
 struct AppendRequest {
     datarows: Vec<Datarow>,
-    reply_to: oneshot::Sender<Result<Vec<String>, AppendError>>,
+    reply_to: oneshot::Sender<Result<Vec<String>, StorageError>>,
 }
 
 struct ReadyHandle(Arc<AtomicBool>);
@@ -217,10 +217,11 @@ impl KvService {
                         send_notification.fatal(msg).await;
                         panic!("assert: kv service should be able to get a result of append");
                     }
-                    Ok(Err(AppendError::ApiTimeout)) => {
+                    Ok(Err(StorageError::Timeout(_))) | Ok(Err(StorageError::RetryTimeout(_))) => {
                         panic!("assert: for kv service google api timeout is not applied");
                     }
-                    Ok(Err(AppendError::Http(http_response))) => {
+                    Ok(Err(StorageError::Retriable(http_response)))
+                    | Ok(Err(StorageError::NonRetriable(http_response))) => {
                         return Ok(HyperResponse::builder()
                             .status(
                                 StatusCode::from_u16(http_response.status().as_u16())
@@ -372,6 +373,7 @@ impl Service for KvService {
         tasks.push(server);
         let tasks = try_join_all(tasks);
         tokio::pin!(tasks);
+        self.welcome_hook(&log).await;
 
         loop {
             tokio::select! {
@@ -391,6 +393,9 @@ impl Service for KvService {
                             // drain remaining messages
                             while let Some(append_request) = data_receiver.recv().await {
                                 let AppendRequest{datarows, reply_to} = append_request;
+                                let mut data = Data::Many(datarows);
+                                self.send_for_rule_processing(&log, &mut data, &mut rules_input).await;
+                                let Data::Many(datarows) = data else {panic!("assert: packing/unpacking of KV data")};
                                 let res = log.append_no_retry(datarows).await;
                                 if reply_to.send(res).is_err() {
                                     tracing::warn!("client of the kv server dropped connection");
@@ -453,11 +458,7 @@ mod tests {
             send_notification.clone(),
             TestState::new(vec![], None, None),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            send_notification.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
         let log = AppendableLog::new(
             storage.clone(),
             "spreadsheet1".to_string(),

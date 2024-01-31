@@ -270,13 +270,18 @@ pub trait Service: Send + Sync {
             self.shared().send_notification.fatal(msg.clone()).await;
             panic!("{}", msg);
         }
+    }
+
+    async fn welcome_hook(&self, log: &AppendableLog) {
         let msg = format!(
             "service `{}` is running with [spreadsheet]({})",
             self.name(),
             log.spreadsheet_baseurl(),
         );
         tracing::info!("{}", msg);
-        self.shared().send_notification.try_info(msg);
+        self.messenger()
+            .unwrap_or(self.shared().send_notification.clone())
+            .try_info(msg);
         tracing::debug!(
             "channel capacity `{}` for service `{}`",
             self.channel_capacity(),
@@ -505,6 +510,7 @@ pub trait Service: Send + Sync {
         let mut push_interval = tokio::time::interval(self.push_interval());
         let mut rules_update_interval = tokio::time::interval(self.rules_update_interval());
         let mut accumulated_data = vec![];
+        self.welcome_hook(&log).await;
         loop {
             tokio::select! {
                 result = shutdown.recv() => {
@@ -522,7 +528,8 @@ pub trait Service: Send + Sync {
                         _ = async {
                             // drain remaining messages
                             while let Some(task_result) = data_receiver.recv().await {
-                                let data = self.process_task_result_on_shutdown(task_result, &log).await;
+                                let mut data = self.process_task_result_on_shutdown(task_result, &log).await;
+                                self.send_for_rule_processing(&log, &mut data, &mut rules_input).await;
                                 match data {
                                     Data::Empty | Data::Message(_) => {},
                                     Data::Single(datarow) => {accumulated_data.push(datarow);}
@@ -537,9 +544,28 @@ pub trait Service: Send + Sync {
                     return;
                 },
                 _ = push_interval.tick() => {
+                    let rows_count = accumulated_data.len();
+                    if rows_count > 0 {
+                        tracing::info!(
+                            "appending {} rows for service {}",
+                            rows_count,
+                            self.name()
+                        );
+                    }
                     let example_rules = self.get_example_rules();
                     accumulated_data.extend(example_rules);
-                    let _ = log.append(accumulated_data).await;
+                    if let Err(e) = log.append(accumulated_data).await {
+                        let msg = format!("{e} for service `{}`, failed to append {rows_count} rows", self.name());
+                        tracing::error!("{}", msg);
+                        self.messenger().unwrap_or(self.shared().send_notification.clone()).try_error(msg);
+                    } else if rows_count > 0 {
+                        tracing::info!(
+                            "appended {} rows for service {}",
+                            rows_count,
+                            self.name()
+                        );
+                    }
+
                     accumulated_data = vec![];
                 },
                 _ = rules_update_interval.tick() => {
@@ -685,11 +711,7 @@ mod tests {
                 Some(APPEND_DURATION_MS / 2), // because append is 2 Google api calls
             ),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            tx.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
 
         let (shutdown, rx) = broadcast::channel(1);
 

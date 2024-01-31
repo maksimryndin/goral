@@ -95,7 +95,7 @@ async fn start() -> Result<(), String> {
         get_google_auth(&config.general.service_account_credentials_path).await;
     let (tx, rx) = setup_general_messenger_channel();
     let sheets_api = SpreadsheetAPI::new(auth, tx.clone());
-    let storage = Arc::new(Storage::new(args.id.to_string(), sheets_api, tx.clone()));
+    let storage = Arc::new(Storage::new(args.id.to_string(), sheets_api));
     let shared = Shared::new(tx.clone());
 
     let messengers = collect_messengers(&config);

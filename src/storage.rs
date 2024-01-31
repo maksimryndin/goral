@@ -8,6 +8,7 @@ use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
 use crate::{get_service_tab_color, jitter_duration, Sender, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,32 +24,34 @@ const KEYS_DELIMITER: &str = "~^~";
 pub struct Storage {
     google: SpreadsheetAPI,
     host_id: String,
-    send_notification: Sender,
 }
 
 impl Storage {
-    pub fn new(host_id: String, google: SpreadsheetAPI, send_notification: Sender) -> Self {
+    pub fn new(host_id: String, google: SpreadsheetAPI) -> Self {
         assert!(
             host_id.chars().count() <= HOST_ID_CHARS_LIMIT,
             "host id should be no more than {HOST_ID_CHARS_LIMIT} characters"
         );
-        Self {
-            host_id,
-            google,
-            send_notification,
-        }
+        Self { host_id, google }
     }
 }
 
 #[derive(Debug)]
-pub enum AppendError {
-    ApiTimeout,
-    Http(HttpResponse),
+pub enum StorageError {
+    Timeout(Duration),
+    RetryTimeout((Duration, usize)),
+    Retriable(HttpResponse),
+    NonRetriable(HttpResponse),
 }
 
-impl From<HttpResponse> for AppendError {
-    fn from(r: HttpResponse) -> Self {
-        AppendError::Http(r)
+impl fmt::Display for StorageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use StorageError::*;
+        match self {
+            Timeout(duration) => write!(f, "timeout {:?}", duration),
+            RetryTimeout((maximum_backoff, retry)) => write!(f, "Google API is unavailable: maximum retry duration `{maximum_backoff:?}` is reached with `{retry}` retries"),
+            Retriable(e) | NonRetriable(e) => write!(f, "response with status {}", e.status()),
+        }
     }
 }
 
@@ -84,7 +87,7 @@ impl AppendableLog {
         }
     }
 
-    async fn fetch_sheets(&self) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, AppendError> {
+    async fn fetch_sheets(&self) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, StorageError> {
         let basic_metadata = Metadata::new(vec![
             (METADATA_HOST_ID_KEY, self.storage.host_id.to_string()),
             (METADATA_SERVICE_KEY, self.service.to_string()),
@@ -110,13 +113,13 @@ impl AppendableLog {
             .collect())
     }
 
-    pub(crate) async fn healthcheck(&self) -> Result<(), AppendError> {
+    pub(crate) async fn healthcheck(&self) -> Result<(), StorageError> {
         self.fetch_sheets().await?;
         Ok(())
     }
 
-    pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<(), AppendError> {
-        self._append(
+    pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<(), StorageError> {
+        self.core_append(
             datarows,
             Some(Duration::from_secs(32)),
             Some(Duration::from_secs(5)),
@@ -127,7 +130,7 @@ impl AppendableLog {
     pub(crate) async fn append_no_retry(
         &mut self,
         mut datarows: Vec<Datarow>,
-    ) -> Result<Vec<String>, AppendError> {
+    ) -> Result<Vec<String>, StorageError> {
         let sheet_ids = datarows
             .iter_mut()
             .map(|d| {
@@ -135,41 +138,8 @@ impl AppendableLog {
                 self.sheet_url(sheet_id)
             })
             .collect();
-        self._append(datarows, None, None).await?;
+        self.core_append(datarows, None, None).await?;
         Ok(sheet_ids)
-    }
-
-    async fn _append(
-        &mut self,
-        datarows: Vec<Datarow>,
-        retry_limit: Option<Duration>,
-        timeout: Option<Duration>,
-    ) -> Result<(), AppendError> {
-        let rows_count_wo_rules = datarows
-            .iter()
-            .filter(|d| d.log_name() != RULES_LOG_NAME)
-            .count();
-        if rows_count_wo_rules > 0 {
-            tracing::info!(
-                "appending {} rows for service {}",
-                rows_count_wo_rules,
-                self.service
-            );
-        }
-
-        self._core_append(datarows, retry_limit, timeout)
-            .await
-            .map_err(|e| {
-                if rows_count_wo_rules > 0 {
-                    let message = format!(
-                        "Saving batch data of `{rows_count_wo_rules}` rows failed for service `{}`",
-                        self.service
-                    );
-                    tracing::error!("{}", message);
-                    self.storage.send_notification.try_error(message);
-                }
-                e
-            })
     }
 
     // https://developers.google.com/sheets/api/limits#example-algorithm
@@ -177,7 +147,7 @@ impl AppendableLog {
         &self,
         maximum_backoff: Duration,
         timeout: Duration,
-    ) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, AppendError> {
+    ) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, StorageError> {
         let mut total_time = Duration::from_millis(0);
         let mut wait = Duration::from_millis(2);
         let mut retry = 0;
@@ -190,12 +160,10 @@ impl AppendableLog {
                     tracing::warn!("No response from Google API for timeout {:?} for retry {} for service `{}`", timeout, retry, self.service);
                 },
                 res = self.fetch_sheets() => {
-                    match res {
-                        Ok(val) => {
-                            return Ok(val);},
-                        Err(e) => {
-                            tracing::error!("error {:?} for retry {} for service `{}`", e, retry, self.service);
-                        }
+                    if let Err(StorageError::Retriable(e)) = res {
+                        tracing::error!("error {:?} for service `{}` retrying #{}", e, self.service, retry);
+                    } else {
+                        return res;
                     }
                 }
             }
@@ -211,19 +179,16 @@ impl AppendableLog {
             total_time += jittered;
             wait *= 2;
         }
-        let msg = format!("Google API request maximum retry duration `{maximum_backoff:?}` is reached with `{retry}` retries for service `{}`", self.service);
-        tracing::error!("{}", msg);
-        self.storage.send_notification.try_error(msg);
-        Err(AppendError::ApiTimeout)
+        Err(StorageError::RetryTimeout((maximum_backoff, retry)))
     }
 
     // for newly created log sheet its headers order is determined by its first datarow. Fields for other datarows for the same sheet are sorted accordingly.
-    async fn _core_append(
+    async fn core_append(
         &mut self,
         datarows: Vec<Datarow>,
         retry_limit: Option<Duration>,
         timeout: Option<Duration>,
-    ) -> Result<(), AppendError> {
+    ) -> Result<(), StorageError> {
         if datarows.is_empty() {
             return Ok(());
         }
@@ -243,7 +208,7 @@ impl AppendableLog {
             self.fetch_sheets().await?
         };
 
-        tracing::debug!("existing sheets:\n{:?}", existing_sheets);
+        tracing::trace!("existing sheets:\n{:?}", existing_sheets);
 
         let mut rows_count: HashMap<SheetId, i32> = existing_sheets
             .iter()
@@ -364,10 +329,10 @@ impl AppendableLog {
         self.update_rows_metadata(&rows_count, &mut sheets_to_update, &mut sheets_to_add);
         let data: Vec<Rows> = data_to_append.into_values().collect();
 
-        tracing::debug!("truncate_requests:\n{:?}", truncate_requests);
-        tracing::debug!("sheets_to_update:\n{:?}", sheets_to_update);
-        tracing::debug!("sheets_to_add:\n{:?}", sheets_to_add);
-        tracing::debug!("data:\n{:?}", data);
+        tracing::trace!("truncate_requests:\n{:?}", truncate_requests);
+        tracing::trace!("sheets_to_update:\n{:?}", sheets_to_update);
+        tracing::trace!("sheets_to_add:\n{:?}", sheets_to_add);
+        tracing::trace!("data:\n{:?}", data);
 
         if sheets_to_add.is_empty() && sheets_to_update.is_empty() {
             return Ok(());
@@ -571,10 +536,10 @@ impl AppendableLog {
             .spreadsheet_baseurl(&self.spreadsheet_id)
     }
 
-    pub(crate) async fn get_rules(&self) -> Result<Vec<Rule>, String> {
+    pub(crate) async fn get_rules(&self) -> Result<Vec<Rule>, StorageError> {
         let timeout = Duration::from_millis(3000);
         tokio::select! {
-            _ = tokio::time::sleep(timeout) => Err(format!("timeout {:?}", timeout)),
+            _ = tokio::time::sleep(timeout) => Err(StorageError::Timeout(timeout)),
             res = self
                 .storage
                 .google
@@ -582,7 +547,7 @@ impl AppendableLog {
                     &self.spreadsheet_id,
                     self.rules_sheet_id.expect("assert: rules sheet id is saved at the start of the service at the first append")
                 ) => {
-                    let data = res.map_err(|e| format!("response with status {}", e.status()))?;
+                    let data = res?;
                     Ok(data.into_iter()
                         .filter_map(|row| Rule::try_from_values(row, self.messenger.as_ref()))
                         .collect()
@@ -663,11 +628,7 @@ mod tests {
             tx.clone(),
             TestState::new(vec![mock_ordinary_google_sheet("some sheet")], None, None),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            tx.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
         let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
@@ -846,15 +807,11 @@ mod tests {
             tx.clone(),
             TestState::new(
                 vec![mock_ordinary_google_sheet("some sheet")],
-                Some(TestState::bad_response("error to retry".to_string())),
+                Some(TestState::failure_response("error to retry".to_string())),
                 None,
             ),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            tx.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
         let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
@@ -904,11 +861,7 @@ mod tests {
                 None,
             ),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            tx.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
         let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
@@ -965,11 +918,7 @@ mod tests {
                 50,
             ),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            tx.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
         let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
@@ -1004,7 +953,7 @@ mod tests {
         ];
 
         let res = log
-            ._append(
+            .core_append(
                 datarows,
                 Some(Duration::from_millis(1200)), // approx 1050 maximum jitter, 150 ms for the first response
                 Some(Duration::from_millis(100)),
@@ -1015,26 +964,22 @@ mod tests {
 
     #[tokio::test]
     async fn append_retry_maximum_backoff() {
-        let (tx, mut rx) = mpsc::channel(1);
+        let (tx, _) = mpsc::channel(1);
         let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
         let sheets_api = SpreadsheetAPI::new(
             tx.clone(),
             TestState::new(
                 vec![mock_ordinary_google_sheet("some sheet")],
-                Some(TestState::bad_response("error to retry".to_string())),
+                Some(TestState::failure_response("error to retry".to_string())),
                 Some(150),
             ),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            tx.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
         let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
             GENERAL_SERVICE_NAME.to_string(),
-            Some(tx.clone()),
+            Some(tx),
             100.0,
         );
 
@@ -1063,24 +1008,17 @@ mod tests {
             ),
         ];
 
-        let handle = tokio::task::spawn(async move {
-            assert!(
-                rx.recv().await.is_some(),
-                "notification is sent for nonrecoverable error"
-            );
-        });
         let res = log
-            ._append(
+            .core_append(
                 datarows,
                 Some(Duration::from_millis(100)),
                 Some(Duration::from_millis(200)),
             )
             .await;
         assert!(
-            matches!(res, Err(AppendError::ApiTimeout)),
+            matches!(res, Err(StorageError::RetryTimeout(_))),
             "Google API request maximum retry duration should happen"
         );
-        handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -1096,11 +1034,7 @@ mod tests {
                 None,
             ),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            tx.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
         let mut log = AppendableLog::new(
             storage,
             "spreadsheet1".to_string(),
@@ -1161,11 +1095,7 @@ mod tests {
         {
             let tx = Sender::new(tx, GENERAL_SERVICE_NAME);
             let sheets_api = SpreadsheetAPI::new(tx.clone(), TestState::new(vec![], None, None));
-            let storage = Arc::new(Storage::new(
-                TEST_HOST_ID.to_string(),
-                sheets_api,
-                tx.clone(),
-            ));
+            let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
             // for simplicity we create logs with one key to easily
             // make assertions on rows count (only two columns - timestamp and key)
             let mut log = AppendableLog::new(

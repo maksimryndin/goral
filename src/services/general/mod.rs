@@ -134,8 +134,8 @@ impl Service for GeneralService {
                                 let latest = release.tag_name;
                                 if !release.prerelease && current != latest {
                                     let msg = format!(
-                                        "Your {APP_NAME} version `{current}` is not the latest `{latest}`,\
-                                         consider [upgrading](https://github.com/maksimryndin/goral/releases).\
+                                        "Your {APP_NAME} version `{current}` is not the latest `{latest}`, \
+                                         consider [upgrading](https://github.com/maksimryndin/goral/releases). \
                                          If you like {APP_NAME}, consider giving a star to the [repo](https://github.com/maksimryndin/goral). \
                                          Thank you!"
                                     );
@@ -203,11 +203,7 @@ mod tests {
             send_notification.clone(),
             TestState::new(vec![], None, None),
         );
-        let storage = Arc::new(Storage::new(
-            TEST_HOST_ID.to_string(),
-            sheets_api,
-            send_notification.clone(),
-        ));
+        let storage = Arc::new(Storage::new(TEST_HOST_ID.to_string(), sheets_api));
         let log = AppendableLog::new(
             storage.clone(),
             "spreadsheet1".to_string(),
