@@ -393,7 +393,9 @@ pub trait Service: Send + Sync {
                     e
                 );
                 tracing::warn!("{}", msg);
-                self.shared().send_notification.try_warn(msg);
+                self.messenger()
+                    .unwrap_or(self.shared().send_notification.clone())
+                    .try_warn(msg);
                 return;
             }
         };
