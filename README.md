@@ -10,7 +10,6 @@ Observability toolkit for small projects. Easy-to-use and compatible with indust
     - [Slack](#slack)
     - [Discord](#discord)
 - [Services](#services)
-      - [Storage quota](#storage-quota)
     - [General](#general)
     - [Healthcheck](#healthcheck)
     - [Metrics](#metrics)
