@@ -538,7 +538,9 @@ pub trait Service: Send + Sync {
                                     Data::Many(mut datarows) => {accumulated_data.append(&mut datarows);}
                                 }
                             }
-                            let _ = log.append(accumulated_data).await;
+                            if !accumulated_data.is_empty() {
+                                let _ = log.append(accumulated_data).await;
+                            }
                         } => {
                             tracing::info!("{} service has successfully shutdowned", self.name());
                         }
@@ -553,11 +555,13 @@ pub trait Service: Send + Sync {
                             rows_count,
                             self.name()
                         );
+                    } else {
+                        continue;
                     }
                     let example_rules = self.get_example_rules();
                     accumulated_data.extend(example_rules);
                     if let Err(e) = log.append(accumulated_data).await {
-                        let msg = format!("{e} for service `{}`, failed to append {rows_count} rows", self.name());
+                        let msg = format!("`{e}` for service `{}`, failed to append {rows_count} rows", self.name());
                         tracing::error!("{}", msg);
                         self.messenger().unwrap_or(self.shared().send_notification.clone()).try_error(msg);
                     } else if rows_count > 0 {

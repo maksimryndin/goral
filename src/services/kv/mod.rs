@@ -220,16 +220,19 @@ impl KvService {
                     Ok(Err(StorageError::Timeout(_))) | Ok(Err(StorageError::RetryTimeout(_))) => {
                         panic!("assert: for kv service google api timeout is not applied");
                     }
-                    Ok(Err(StorageError::Retriable(http_response)))
-                    | Ok(Err(StorageError::NonRetriable(http_response))) => {
+                    Ok(Err(StorageError::Retriable(text))) => {
                         return Ok(HyperResponse::builder()
-                            .status(
-                                StatusCode::from_u16(http_response.status().as_u16())
-                                    .expect("assert: http status codes from http crate are valid"),
-                            )
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
                             .header(header::CONTENT_TYPE, "application/json")
-                            .body(http_response.into_body())
-                            .expect("assert: should be able to reuse http response body"));
+                            .body(Body::from(text))
+                            .expect("assert: should be able to build response body from string"));
+                    }
+                    Ok(Err(StorageError::NonRetriable(text))) => {
+                        return Ok(HyperResponse::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(text))
+                            .expect("assert: should be able to build response body from string"));
                     }
                     Ok(Ok(sheet_urls)) => sheet_urls,
                 };

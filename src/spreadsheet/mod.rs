@@ -4,14 +4,11 @@ pub mod sheet;
 pub mod spreadsheet;
 use crate::HyperConnector;
 use google_sheets4::oauth2;
-use http::response::Response;
-use hyper::body::Body;
 pub use spreadsheet::SpreadsheetAPI;
 use std::collections::{hash_map::Iter, HashMap};
 
 #[derive(Debug)]
 pub(crate) struct Metadata(HashMap<String, String>);
-pub(crate) type HttpResponse = Response<Body>;
 pub(crate) const DEFAULT_FONT: &str = "Verdana";
 pub(crate) const DEFAULT_FONT_TEXT: &str = "Courier New";
 

@@ -4,7 +4,7 @@ use crate::spreadsheet::sheet::{
     CleanupSheet, Rows, Sheet, SheetId, SheetType, TabColorRGB, UpdateSheet, VirtualSheet,
 };
 use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS;
-use crate::spreadsheet::{HttpResponse, Metadata, SpreadsheetAPI};
+use crate::spreadsheet::{Metadata, SpreadsheetAPI};
 use crate::{get_service_tab_color, jitter_duration, Sender, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -40,8 +40,8 @@ impl Storage {
 pub enum StorageError {
     Timeout(Duration),
     RetryTimeout((Duration, usize)),
-    Retriable(HttpResponse),
-    NonRetriable(HttpResponse),
+    Retriable(String),
+    NonRetriable(String),
 }
 
 impl fmt::Display for StorageError {
@@ -49,8 +49,8 @@ impl fmt::Display for StorageError {
         use StorageError::*;
         match self {
             Timeout(duration) => write!(f, "timeout {:?}", duration),
-            RetryTimeout((maximum_backoff, retry)) => write!(f, "Google API is unavailable: maximum retry duration `{maximum_backoff:?}` is reached with `{retry}` retries"),
-            Retriable(e) | NonRetriable(e) => write!(f, "response with status {}", e.status()),
+            RetryTimeout((maximum_backoff, retry)) => write!(f, "Google API is unavailable: maximum retry duration {maximum_backoff:?} is reached with {retry} retries"),
+            Retriable(e) | NonRetriable(e) => write!(f, "{}", e),
         }
     }
 }
@@ -537,7 +537,7 @@ impl AppendableLog {
     }
 
     pub(crate) async fn get_rules(&self) -> Result<Vec<Rule>, StorageError> {
-        let timeout = Duration::from_millis(3000);
+        let timeout = Duration::from_millis(5000);
         tokio::select! {
             _ = tokio::time::sleep(timeout) => Err(StorageError::Timeout(timeout)),
             res = self
