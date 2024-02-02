@@ -39,7 +39,7 @@ impl Storage {
 #[derive(Debug)]
 pub enum StorageError {
     Timeout(Duration),
-    RetryTimeout((Duration, usize)),
+    RetryTimeout((Duration, usize, String)),
     Retriable(String),
     NonRetriable(String),
 }
@@ -48,9 +48,9 @@ impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use StorageError::*;
         match self {
-            Timeout(duration) => write!(f, "timeout {:?}", duration),
-            RetryTimeout((maximum_backoff, retry)) => write!(f, "Google API is unavailable: maximum retry duration {maximum_backoff:?} is reached with {retry} retries"),
-            Retriable(e) | NonRetriable(e) => write!(f, "{}", e),
+            Timeout(duration) => write!(f, "Google API timeout {:?}", duration),
+            RetryTimeout((maximum_backoff, retry, last_retry_error)) => write!(f, "Google API is unavailable ({last_retry_error}): maximum retry duration {maximum_backoff:?} is reached with {retry} retries"),
+            Retriable(e) | NonRetriable(e) => write!(f, "Google API: {}", e),
         }
     }
 }
@@ -153,6 +153,7 @@ impl AppendableLog {
         let mut retry = 0;
         let max_backoff = tokio::time::sleep(maximum_backoff);
         tokio::pin!(max_backoff);
+        let mut last_retry_error = String::new();
         while total_time < maximum_backoff {
             tokio::select! {
                 _ = &mut max_backoff => {break;}
@@ -162,6 +163,7 @@ impl AppendableLog {
                 res = self.fetch_sheets() => {
                     if let Err(StorageError::Retriable(e)) = res {
                         tracing::error!("error {:?} for service `{}` retrying #{}", e, self.service, retry);
+                        last_retry_error = e;
                     } else {
                         return res;
                     }
@@ -179,7 +181,11 @@ impl AppendableLog {
             total_time += jittered;
             wait *= 2;
         }
-        Err(StorageError::RetryTimeout((maximum_backoff, retry)))
+        Err(StorageError::RetryTimeout((
+            maximum_backoff,
+            retry,
+            last_retry_error,
+        )))
     }
 
     // for newly created log sheet its headers order is determined by its first datarow. Fields for other datarows for the same sheet are sorted accordingly.
@@ -537,7 +543,7 @@ impl AppendableLog {
     }
 
     pub(crate) async fn get_rules(&self) -> Result<Vec<Rule>, StorageError> {
-        let timeout = Duration::from_millis(5000);
+        let timeout = Duration::from_millis(2000);
         tokio::select! {
             _ = tokio::time::sleep(timeout) => Err(StorageError::Timeout(timeout)),
             res = self
