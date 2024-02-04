@@ -119,12 +119,8 @@ impl AppendableLog {
     }
 
     pub(crate) async fn append(&mut self, datarows: Vec<Datarow>) -> Result<(), StorageError> {
-        self.core_append(
-            datarows,
-            Some(Duration::from_secs(32)),
-            Some(Duration::from_secs(5)),
-        )
-        .await
+        self.core_append(datarows, Some(Duration::from_secs(32)))
+            .await
     }
 
     pub(crate) async fn append_no_retry(
@@ -138,7 +134,7 @@ impl AppendableLog {
                 self.sheet_url(sheet_id)
             })
             .collect();
-        self.core_append(datarows, None, None).await?;
+        self.core_append(datarows, None).await?;
         Ok(sheet_ids)
     }
 
@@ -146,21 +142,16 @@ impl AppendableLog {
     async fn timed_fetch_sheets(
         &self,
         maximum_backoff: Duration,
-        timeout: Duration,
     ) -> Result<HashMap<SheetId, (Sheet, Vec<String>)>, StorageError> {
         let mut total_time = Duration::from_millis(0);
         let mut wait = Duration::from_millis(2);
         let mut retry = 0;
         let max_backoff = tokio::time::sleep(maximum_backoff);
         tokio::pin!(max_backoff);
-        let mut last_retry_error = String::new();
+        let mut last_retry_error = format!("timeout {maximum_backoff:?}");
         while total_time < maximum_backoff {
             tokio::select! {
                 _ = &mut max_backoff => {break;}
-                _ = tokio::time::sleep(timeout) => {
-                    tracing::warn!("No response from Google API for timeout {:?} for retry {} for service `{}`", timeout, retry, self.service);
-                    last_retry_error = format!("timeout {:?}", timeout);
-                },
                 res = self.fetch_sheets() => {
                     if let Err(StorageError::Retriable(e)) = res {
                         tracing::error!("error {:?} for service `{}` retrying #{}", e, self.service, retry);
@@ -194,7 +185,6 @@ impl AppendableLog {
         &mut self,
         datarows: Vec<Datarow>,
         retry_limit: Option<Duration>,
-        timeout: Option<Duration>,
     ) -> Result<(), StorageError> {
         if datarows.is_empty() {
             return Ok(());
@@ -206,11 +196,7 @@ impl AppendableLog {
             // either fix an error or fail.
             // Retrying `crud` is not idempotent and
             // would require cloning all sheets at every retry attempt
-            self.timed_fetch_sheets(
-                retry_limit,
-                timeout.expect("assert: timeout is set if retry_limit is set"),
-            )
-            .await?
+            self.timed_fetch_sheets(retry_limit).await?
         } else {
             self.fetch_sheets().await?
         };
@@ -963,7 +949,6 @@ mod tests {
             .core_append(
                 datarows,
                 Some(Duration::from_millis(1200)), // approx 1050 maximum jitter, 150 ms for the first response
-                Some(Duration::from_millis(100)),
             )
             .await;
         assert!(matches!(res, Ok(())), "should fit into maximum retry limit");
@@ -1016,11 +1001,7 @@ mod tests {
         ];
 
         let res = log
-            .core_append(
-                datarows,
-                Some(Duration::from_millis(100)),
-                Some(Duration::from_millis(200)),
-            )
+            .core_append(datarows, Some(Duration::from_millis(100)))
             .await;
         assert!(
             matches!(res, Err(StorageError::RetryTimeout(_))),
