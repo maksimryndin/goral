@@ -3,6 +3,7 @@
     * rules are applied also at shutdown
     * a welcome service message is sent to a service messenger instead of a general service messenger
     * rules update warn is sent to a service messenger first
+    * rules update interval is increased
 
 * 0.1.1
     * no panic for Google API access failure - just send an error to a messenger

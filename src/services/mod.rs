@@ -228,7 +228,7 @@ pub trait Service: Send + Sync {
     }
 
     fn rules_update_interval(&self) -> Duration {
-        Duration::from_secs(15) + jitter_duration()
+        Duration::from_secs(30) + jitter_duration()
     }
 
     fn get_example_rules(&self) -> Vec<Datarow> {

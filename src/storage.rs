@@ -159,6 +159,7 @@ impl AppendableLog {
                 _ = &mut max_backoff => {break;}
                 _ = tokio::time::sleep(timeout) => {
                     tracing::warn!("No response from Google API for timeout {:?} for retry {} for service `{}`", timeout, retry, self.service);
+                    last_retry_error = format!("timeout {:?}", timeout);
                 },
                 res = self.fetch_sheets() => {
                     if let Err(StorageError::Retriable(e)) = res {
