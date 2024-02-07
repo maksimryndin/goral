@@ -40,7 +40,7 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Get the release version from the tag
         shell: bash
@@ -93,37 +93,37 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Check fmt
-        uses: actions-rs/cargo@v1
+        uses: ructions/cargo@v1
         with:
           command: fmt
           args: --all -- --check
 
       - name: Run clippy
-        uses: actions-rs/cargo@v1
+        uses: ructions/cargo@v1
         with:
           command: clippy
           args: -- -D warnings
 
       - name: Install audit
-        uses: actions-rs/cargo@v1
+        uses: ructions/cargo@v1
         with:
           command: install
           args: cargo-deny
 
       - name: Security audit, licenses
-        uses: actions-rs/cargo@v1
+        uses: ructions/cargo@v1
         with:
           command: deny
           args: check licenses advisories sources
 
       - name: Test
-        uses: actions-rs/cargo@v1
+        uses: ructions/cargo@v1
         with:
           command: test
           args: -- --nocapture
 
       - name: Build
-        uses: actions-rs/cargo@v1
+        uses: ructions/cargo@v1
         env:
           RUSTFLAGS: '-C target-feature=+crt-static'
         with:

@@ -4,6 +4,8 @@
     * a welcome service message is sent to a service messenger instead of a general service messenger
     * rules update warn is sent to a service messenger first
     * rules update interval is increased
+    * the append timeout is set to the maximum backoff
+    * rule fetch timeout is decreased to 2000ms (from 3000ms)
 
 * 0.1.1
     * no panic for Google API access failure - just send an error to a messenger

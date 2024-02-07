@@ -65,12 +65,25 @@ async fn handle_error<T>(
                 panic!("Fatal error for Google API access: `{}`", msg);
             }
             // retry
-            Error::Failure(v) => Err(StorageError::Retriable(format!("{v:?}"))),
-            Error::HttpError(v) => Err(StorageError::Retriable(v.to_string())),
-            Error::BadRequest(v) => Err(StorageError::NonRetriable(v.to_string())),
-            Error::Io(v) => Err(StorageError::Retriable(v.to_string())),
-            Error::JsonDecodeError(_, v) => Err(StorageError::NonRetriable(v.to_string())),
-            Error::FieldClash(v) => Err(StorageError::NonRetriable(v.to_string())),
+            Error::Failure(v) => Err(StorageError::Retriable(format!("failure: {v:?}"))),
+            Error::HttpError(v) => Err(StorageError::Retriable(format!("http error: {v}"))),
+            Error::BadRequest(v) => {
+                match v
+                    .get("error")
+                    .and_then(|e| e.get("code"))
+                    .and_then(|code| code.as_u64())
+                {
+                    Some(code) if code > 499 => {
+                        Err(StorageError::Retriable(format!("bad request: {v}")))
+                    }
+                    _ => Err(StorageError::NonRetriable(format!("bad request: {v}"))),
+                }
+            }
+            Error::Io(v) => Err(StorageError::Retriable(format!("io: {v}"))),
+            Error::JsonDecodeError(_, v) => Err(StorageError::NonRetriable(format!(
+                "json decode error: {v}"
+            ))),
+            Error::FieldClash(v) => Err(StorageError::NonRetriable(format!("field clash: {v}"))),
             Error::Cancelled => Err(StorageError::Retriable("cancelled".to_string())),
         },
         Ok(res) => Ok(res.1),
