@@ -344,7 +344,6 @@ impl Debug for Shared {
 pub async fn welcome(
     send_notification: Sender,
     project_id: String,
-    host_id: String,
     truncation_check: Result<(), String>,
 ) {
     let sys = tokio::task::spawn_blocking(|| {
@@ -379,7 +378,7 @@ pub async fn welcome(
     .expect("assert: should be able to collect basic system info");
     let version = env!("CARGO_PKG_VERSION");
     let msg = format!(
-        "`{APP_NAME} v{version}` has started with [api usage page](https://console.cloud.google.com/apis/dashboard?project={project_id}&show=all) and [api quota page](https://console.cloud.google.com/iam-admin/quotas?project={project_id}) at `{sys}`, host id `{host_id}`", 
+        "`{APP_NAME} v{version}` has started with [api usage page](https://console.cloud.google.com/apis/dashboard?project={project_id}&show=all) and [api quota page](https://console.cloud.google.com/iam-admin/quotas?project={project_id}) at `{sys}`", 
     );
     send_notification.info(msg).await;
     if let Err(truncation_check) = truncation_check {
