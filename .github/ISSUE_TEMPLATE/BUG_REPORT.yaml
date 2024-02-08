@@ -80,5 +80,6 @@ body:
       label: Which version of Goral do you run (`goral --version`)?
       multiple: false
       options:
+        - 0.1.2
         - 0.1.1
         - 0.1.0

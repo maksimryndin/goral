@@ -8,7 +8,7 @@ use serde_valid::Validate;
 use url::Url;
 
 pub(super) fn scrape_push_rule(
-    endpoints: &Vec<Target>,
+    endpoints: &[Target],
     push_interval_secs: &u16,
     scrape_interval_secs: &u16,
     scrape_timeout_ms: &u32,

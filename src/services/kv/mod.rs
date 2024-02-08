@@ -29,7 +29,7 @@ use tokio::task::JoinHandle;
 
 pub const KV_SERVICE_NAME: &str = "kv";
 
-fn unique_keys(data: &Vec<(String, Value)>) -> Result<(), serde_valid::validation::Error> {
+fn unique_keys(data: &[(String, Value)]) -> Result<(), serde_valid::validation::Error> {
     let keys: HashSet<&String> = data.iter().map(|(k, _)| k).collect();
     if keys.len() < data.len() {
         Err(serde_valid::validation::Error::Custom(
