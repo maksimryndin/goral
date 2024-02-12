@@ -134,10 +134,10 @@ impl Service for GeneralService {
                                 let latest = release.tag_name;
                                 if !release.prerelease && current != latest {
                                     let msg = format!(
-                                        "Your {APP_NAME} version `{current}` is not the latest `{latest}`, \
-                                         consider [upgrading](https://github.com/maksimryndin/goral/releases). \
-                                         If you like {APP_NAME}, consider giving a star to the [repo](https://github.com/maksimryndin/goral). \
-                                         Thank you!"
+                                        "Your `{APP_NAME}` version `{current}` is not the latest `{latest}`, \
+                                         consider [upgrading](https://github.com/maksimryndin/goral/releases); \
+                                         if you like `{APP_NAME}`, consider giving a star to the [repo](https://github.com/maksimryndin/goral); \
+                                         thank you!"
                                     );
                                     send_notification.info(msg).await;
                                 }

@@ -1,3 +1,6 @@
+* 0.1.3
+    * fix version message for telegram
+
 * 0.1.2
     * improve an append error handling and reporting
     * rules are applied also at shutdown
