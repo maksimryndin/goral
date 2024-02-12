@@ -15,9 +15,53 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lint-and-test:
+    name: Lint, audit and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Check fmt
+        uses: ructions/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+      - name: Run clippy
+        uses: ructions/cargo@v1
+        with:
+          command: clippy
+          args: -- -D warnings
+
+      - name: Install audit
+        uses: ructions/cargo@v1
+        with:
+          command: install
+          args: cargo-deny
+
+      - name: Security audit, licenses
+        uses: ructions/cargo@v1
+        with:
+          command: deny
+          args: check licenses advisories sources
+
+      - name: Test
+        uses: ructions/cargo@v1
+        with:
+          command: test
+          args: -- --nocapture
+
   build-and-upload:
     name: Build and upload
     runs-on: ${{ matrix.os }}
+    needs: lint-and-test
 
     strategy:
       matrix:
@@ -97,42 +141,16 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Check fmt
-        uses: ructions/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-
-      - name: Run clippy
-        uses: ructions/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
-
-      - name: Install audit
-        uses: ructions/cargo@v1
-        with:
-          command: install
-          args: cargo-deny
-
-      - name: Security audit, licenses
-        uses: ructions/cargo@v1
-        with:
-          command: deny
-          args: check licenses advisories sources
-
-      - name: Test
-        uses: ructions/cargo@v1
-        with:
-          command: test
-          args: -- --nocapture
-
       - name: Install Zig
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
             exit 0
           fi
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get install gcc-aarch64-linux-gnu
+          fi
+          
           ZIG="zig-linux-x86_64-0.12.0-dev.2710+c3eb592a3"
           wget "https://ziglang.org/builds/$ZIG.tar.xz"
           tar -xvf zig-linux-x86_64-0.12.0-dev.2710+c3eb592a3.tar.xz
@@ -174,5 +192,3 @@ jobs:
           prerelease: ${{ env.PRERELEASE }}
           files: |
             ${{ env.ASSET }}
-
-
