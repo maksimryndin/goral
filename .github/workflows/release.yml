@@ -161,7 +161,7 @@ jobs:
       - name: Install toolchain
         shell: bash
         run: |
-          rustup toolchain install stable-${{ matrix.target }}
+          rustup target add stable-${{ matrix.target }}
 
       - name: Build
         uses: ructions/cargo@v1
