@@ -25,14 +25,19 @@ jobs:
           - build: linux
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            zig_target: x86-linux-gnu
+            rustflags: ""
 
-          # - build: linux
-          #   os: ubuntu-latest
-          #   target: aarch64-unknown-linux-gnu
+          - build: linux
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            zig_target: aarch64-linux-gnu
+            rustflags: "-C linker=./linker.sh"
 
           # - build: macos
           #   os: macos-latest
           #   target: aarch64-apple-darwin
+          #   zig_target: aarch64-macos-none
 
           # - build: windows-gnu
           #   os: windows-latest
@@ -122,10 +127,23 @@ jobs:
           command: test
           args: -- --nocapture
 
+      - name: Install Zig
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
+            exit 0
+          fi
+          ZIG="zig-linux-x86_64-0.12.0-dev.2710+c3eb592a3"
+          wget "https://ziglang.org/builds/$ZIG.tar.xz"
+          tar -xvf zig-linux-x86_64-0.12.0-dev.2710+c3eb592a3.tar.xz
+          echo '#!/bin/sh' > linker.sh
+          echo "./$ZIG/zig cc -target ${{ matrix.zig_target }} $@" >> linker.sh
+          chmod +x linker.sh
+
       - name: Build
         uses: ructions/cargo@v1
         env:
-          RUSTFLAGS: '-C target-feature=+crt-static'
+          RUSTFLAGS: '-C target-feature=+crt-static ${{ matrix.rustflags }}'
         with:
           command: build
           args: --verbose --release --target ${{ matrix.target }}
@@ -137,20 +155,10 @@ jobs:
       
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.target }}"
           mkdir "$dirname"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            mv "target/${{ matrix.target }}/release/$binary_name.exe" "$dirname"
-          else
-            mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
-          fi
-      
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a "$dirname.zip" "$dirname"
-            echo "ASSET=$dirname.zip" >> $GITHUB_ENV
-          else
-            tar -czf "$dirname.tar.gz" "$dirname"
-            echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
-          fi
-
+          mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
+          tar -czf "$dirname.tar.gz" "$dirname"
+          echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
+          
       - name: Generate Changelog
         run: |
           if ${{ env.PRERELEASE }}; then
