@@ -163,6 +163,7 @@ jobs:
         env:
           RUSTFLAGS: '-C target-feature=+crt-static ${{ matrix.rustflags }}'
         with:
+          toolchain: stable-${{ matrix.target }}
           command: build
           args: --verbose --release --target ${{ matrix.target }}
 
