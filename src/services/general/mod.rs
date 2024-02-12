@@ -137,7 +137,7 @@ impl Service for GeneralService {
                                         "Your `{APP_NAME}` version `{current}` is not the latest `{latest}`, \
                                          consider [upgrading](https://github.com/maksimryndin/goral/releases); \
                                          if you like `{APP_NAME}`, consider giving a star to the [repo](https://github.com/maksimryndin/goral); \
-                                         thank you!"
+                                         thank you😊"
                                     );
                                     send_notification.info(msg).await;
                                 }
