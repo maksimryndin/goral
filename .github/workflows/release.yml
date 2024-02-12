@@ -158,6 +158,11 @@ jobs:
           echo "./$ZIG/zig cc -target ${{ matrix.zig_target }} $@" >> linker.sh
           chmod +x linker.sh
 
+      - name: Install toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable-${{ matrix.target }}
+
       - name: Build
         uses: ructions/cargo@v1
         env:
