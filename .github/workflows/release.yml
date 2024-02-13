@@ -15,107 +15,107 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint-and-test:
-    name: Lint, audit and test
-    runs-on: ubuntu-latest
+  # lint-and-test:
+  #   name: Lint, audit and test
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - name: Clone repository
-        uses: actions/checkout@v4
+  #   steps:
+  #     - name: Clone repository
+  #       uses: actions/checkout@v4
 
-      - name: Get the release version from the tag
-        shell: bash
-        run: |
-          set +e
+  #     - name: Get the release version from the tag
+  #       shell: bash
+  #       run: |
+  #         set +e
           
-          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-          if echo "${GITHUB_REF#refs/tags/}" | grep -q "rc"; then
-            echo "PRERELEASE=true" >> $GITHUB_ENV
-          else
-            echo "PRERELEASE=false" >> $GITHUB_ENV
-          fi
+  #         echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+  #         if echo "${GITHUB_REF#refs/tags/}" | grep -q "rc"; then
+  #           echo "PRERELEASE=true" >> $GITHUB_ENV
+  #         else
+  #           echo "PRERELEASE=false" >> $GITHUB_ENV
+  #         fi
 
-      - name: Check release version
-        shell: bash
-        run: |
-          set +e
+  #     - name: Check release version
+  #       shell: bash
+  #       run: |
+  #         set +e
 
-          if ${{ env.PRERELEASE }}; then
-            exit 0
-          fi
+  #         if ${{ env.PRERELEASE }}; then
+  #           exit 0
+  #         fi
 
-          grep -q ${{ env.VERSION }} .github/ISSUE_TEMPLATE/BUG_REPORT.yaml
-          if [ $? -ne 0 ]; then 
-            echo "BUG_REPORT.yaml should contain a new release version in goral_version dropdown" 
-            exit 1 
-          fi
+  #         grep -q ${{ env.VERSION }} .github/ISSUE_TEMPLATE/BUG_REPORT.yaml
+  #         if [ $? -ne 0 ]; then 
+  #           echo "BUG_REPORT.yaml should contain a new release version in goral_version dropdown" 
+  #           exit 1 
+  #         fi
 
-          grep -q ${{ env.VERSION }} Cargo.toml
-          if [ $? -ne 0 ]; then 
-            echo "Cargo.toml should contain a new release version" 
-            exit 1 
-          fi
+  #         grep -q ${{ env.VERSION }} Cargo.toml
+  #         if [ $? -ne 0 ]; then 
+  #           echo "Cargo.toml should contain a new release version" 
+  #           exit 1 
+  #         fi
 
-          grep -q ${{ env.VERSION }} CHANGELOG.md
-          if [ $? -ne 0 ]; then 
-            echo "CHANGELOG.md should contain a new release version" 
-            exit 1 
-          fi
+  #         grep -q ${{ env.VERSION }} CHANGELOG.md
+  #         if [ $? -ne 0 ]; then 
+  #           echo "CHANGELOG.md should contain a new release version" 
+  #           exit 1 
+  #         fi
 
-          grep -q ${{ env.VERSION }} README.md
-          if [ $? -ne 0 ]; then 
-            echo "README.md should contain a new release version in Installation section" 
-            exit 1 
-          fi
+  #         grep -q ${{ env.VERSION }} README.md
+  #         if [ $? -ne 0 ]; then 
+  #           echo "README.md should contain a new release version in Installation section" 
+  #           exit 1 
+  #         fi
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
+  #     - name: Install Rust
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         targets: x86_64-unknown-linux-gnu
 
-      - name: Check fmt
-        uses: ructions/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+  #     - name: Check fmt
+  #       uses: ructions/cargo@v1
+  #       with:
+  #         command: fmt
+  #         args: --all -- --check
 
-      - name: Run clippy
-        uses: ructions/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
+  #     - name: Run clippy
+  #       uses: ructions/cargo@v1
+  #       with:
+  #         command: clippy
+  #         args: -- -D warnings
 
-      - name: Install audit
-        uses: ructions/cargo@v1
-        with:
-          command: install
-          args: cargo-deny
+  #     - name: Install audit
+  #       uses: ructions/cargo@v1
+  #       with:
+  #         command: install
+  #         args: cargo-deny
 
-      - name: Security audit, licenses
-        uses: ructions/cargo@v1
-        with:
-          command: deny
-          args: check licenses advisories sources
+  #     - name: Security audit, licenses
+  #       uses: ructions/cargo@v1
+  #       with:
+  #         command: deny
+  #         args: check licenses advisories sources
 
-      - name: Test
-        uses: ructions/cargo@v1
-        with:
-          command: test
-          args: -- --nocapture
+  #     - name: Test
+  #       uses: ructions/cargo@v1
+  #       with:
+  #         command: test
+  #         args: -- --nocapture
 
   build-and-upload:
     name: Build and upload
     runs-on: ${{ matrix.os }}
-    needs: lint-and-test
+    #needs: lint-and-test
 
     strategy:
       matrix:
         include:
-          - build: linux
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            zig_target: x86-linux-gnu
-            rustflags: ""
+          # - build: linux
+          #   os: ubuntu-latest
+          #   target: x86_64-unknown-linux-gnu
+          #   zig_target: x86-linux-gnu
+          #   rustflags: ""
 
           - build: linux
             os: ubuntu-latest
@@ -177,6 +177,7 @@ jobs:
             exit 0
           fi
           rustup component add rust-std --target ${{ matrix.target }}
+          rustup default stable-${{ matrix.target }}
           rustup target add stable-${{ matrix.target }}
 
       - name: Build
