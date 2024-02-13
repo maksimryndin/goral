@@ -176,8 +176,8 @@ jobs:
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
             exit 0
           fi
-          rustup target add stable-${{ matrix.target }}
           rustup component add rust-std --target ${{ matrix.target }}
+          rustup target add stable-${{ matrix.target }}
 
       - name: Build
         uses: ructions/cargo@v1
