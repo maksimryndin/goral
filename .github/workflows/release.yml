@@ -122,8 +122,6 @@ jobs:
           - build: linux
             os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            zig_target: aarch64-linux-gnu
-            rustflags: "-C linker=./linker.sh"
 
           # - build: macos
           #   os: macos-latest
@@ -173,14 +171,15 @@ jobs:
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
             exit 0
           fi
-          rustup toolchain add  stable-${{ matrix.target }}
+          rustup toolchain add stable-${{ matrix.target }}
           rustup target add ${{ matrix.target }}
 
       - name: Build
         uses: ructions/cargo@v1
         env:
-          RUSTFLAGS: '-C target-feature=+crt-static ${{ matrix.rustflags }}'
+          RUSTFLAGS: '-C target-feature=+crt-static'
           CC_aarch64_unknown_linux_gnu: "aarch64-linux-gnu-gcc"
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: "aarch64-linux-gnu-gcc"
         with:
           toolchain: stable-${{ matrix.target }}
           command: build
