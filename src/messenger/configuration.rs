@@ -51,6 +51,10 @@ impl Debug for MessengerImplementation {
     }
 }
 
+fn send_google_append_error() -> bool {
+    true
+}
+
 #[derive(Deserialize, Clone, Validate)]
 #[rule(messenger_implementation_host_rule(implementation, url))]
 #[serde(deny_unknown_fields)]
@@ -58,6 +62,10 @@ pub struct MessengerConfig {
     #[serde(rename(deserialize = "specific"))]
     pub(crate) implementation: Option<MessengerImplementation>,
     pub(crate) url: Url,
+    #[serde(default)]
+    pub(crate) send_rules_update_error: bool,
+    #[serde(default = "send_google_append_error")]
+    pub(crate) send_google_append_error: bool,
 }
 
 impl MessengerConfig {
@@ -112,6 +120,8 @@ mod tests {
             Some("api.telegram.org".to_string()),
             "host is required"
         );
+        assert!(!config.send_rules_update_error,);
+        assert!(config.send_google_append_error,);
     }
 
     #[test]

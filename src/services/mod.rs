@@ -393,9 +393,14 @@ pub trait Service: Send + Sync {
                     e
                 );
                 tracing::warn!("{}", msg);
-                self.messenger()
-                    .unwrap_or(self.shared().send_notification.clone())
-                    .try_warn(msg);
+                if let Some(messenger_config) = &self.messenger_config() {
+                    if messenger_config.send_rules_update_error {
+                        self.messenger()
+                            .unwrap_or(self.shared().send_notification.clone())
+                            .try_warn(msg);
+                    }
+                }
+
                 return;
             }
         };
@@ -563,7 +568,11 @@ pub trait Service: Send + Sync {
                     if let Err(e) = log.append(accumulated_data).await {
                         let msg = format!("`{e}` for service `{}`, failed to append {rows_count} rows", self.name());
                         tracing::error!("{}", msg);
-                        self.messenger().unwrap_or(self.shared().send_notification.clone()).try_error(msg);
+                        if let Some(messenger_config) = &self.messenger_config() {
+                            if messenger_config.send_google_append_error {
+                                self.messenger().unwrap_or(self.shared().send_notification.clone()).try_error(msg);
+                            }
+                        }
                     } else if rows_count > 0 {
                         tracing::info!(
                             "appended {} rows for service {}",
