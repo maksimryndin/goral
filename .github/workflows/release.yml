@@ -176,7 +176,7 @@ jobs:
 
       - name: Build
         env:
-          RUSTFLAGS: '-C target-feature=+crt-static'
+          RUSTFLAGS: '-C target-feature=+crt-static -C linker=${{ matrix.cc }}'
           #CC_aarch64_unknown_linux_gnu: "aarch64-linux-gnu-gcc"
           #CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: "aarch64-linux-gnu-gcc"
           #BINDGEN_EXTRA_CLANG_ARGS: -"-sysroot /usr/aarch64-linux-gnu"
