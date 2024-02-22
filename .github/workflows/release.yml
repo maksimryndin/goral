@@ -52,6 +52,12 @@ jobs:
             exit 1 
           fi
 
+          grep -q ${{ env.VERSION }} .github/site/install.sh
+          if [ $? -ne 0 ]; then 
+            echo "install.sh should contain a new release version" 
+            exit 1 
+          fi
+
           grep -q ${{ env.VERSION }} Cargo.toml
           if [ $? -ne 0 ]; then 
             echo "Cargo.toml should contain a new release version" 
@@ -190,12 +196,12 @@ jobs:
       
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.target }}"
           mkdir "$dirname"
-          if [ "${{ matrix.target }}" = "x86_64-pc-windows-gnu" ]; then
-            certutil -hashfile "target/${{ matrix.target }}/release/$binary_name" SHA256 > sha256_checksum.txt
-          else
-            shasum -a 256 "target/${{ matrix.target }}/release/$binary_name" > sha256_checksum.txt
-          fi
           mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
+          if [ "${{ matrix.target }}" = "x86_64-pc-windows-gnu" ]; then
+            certutil -hashfile "$dirname/$binary_name" SHA256 > sha256_checksum.txt
+          else
+            shasum -a 256 "$dirname/$binary_name" > sha256_checksum.txt
+          fi
           mv sha256_checksum.txt "$dirname"
           tar -czf "$dirname.tar.gz" "$dirname"
           echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
@@ -253,3 +259,11 @@ jobs:
           prerelease: ${{ env.PRERELEASE }}
           files: |
             ./artifacts/*
+
+      - name: Site
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./github/site
+        # Only deploy on a push to master, not on a pull request.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'maksimryndin/goral'
