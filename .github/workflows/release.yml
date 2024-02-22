@@ -113,11 +113,11 @@ jobs:
     strategy:
       matrix:
         include:
-          # - build: linux
-          #   os: ubuntu-latest
-          #   target: x86_64-unknown-linux-gnu
-          #   zig_target: x86-linux-gnu
-          #   rustflags: ""
+          - build: linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            packages: clang
+            cc: clang
 
           - build: linux
             os: ubuntu-latest
@@ -125,14 +125,11 @@ jobs:
             packages: "libc6-dev-arm64-cross gcc-aarch64-linux-gnu"
             cc: aarch64-linux-gnu-gcc
 
-          # - build: macos
-          #   os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   zig_target: aarch64-macos-none
-
-          # - build: windows-gnu
-          #   os: windows-latest
-          #   target: x86_64-pc-windows-gnu
+          - build: windows-gnu
+            os: windows-latest
+            target: x86_64-pc-windows-gnu
+            packages: gcc-mingw-w64-x86-64-win32
+            cc: mingw-w64-x86-64-win32-gcc
 
     steps:
       - name: Clone repository
@@ -145,8 +142,7 @@ jobs:
         run: |
           set +e
           
-          #echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-          echo "VERSION=test" >> $GITHUB_ENV
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
           if echo "${GITHUB_REF#refs/tags/}" | grep -q "rc"; then
             echo "PRERELEASE=true" >> $GITHUB_ENV
           else
@@ -177,9 +173,6 @@ jobs:
       - name: Build
         env:
           RUSTFLAGS: '-C target-feature=+crt-static -C linker=${{ matrix.cc }}'
-          #CC_aarch64_unknown_linux_gnu: "aarch64-linux-gnu-gcc"
-          #CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: "aarch64-linux-gnu-gcc"
-          #BINDGEN_EXTRA_CLANG_ARGS: -"-sysroot /usr/aarch64-linux-gnu"
         shell: bash
         run: |
           CC=${{ matrix.cc }} cargo build --verbose --release --target ${{ matrix.target }}
