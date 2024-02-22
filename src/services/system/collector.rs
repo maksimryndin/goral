@@ -363,7 +363,7 @@ fn disk_stat(
 
 #[cfg(not(target_os = "linux"))]
 fn disk_stat(
-    sys: &mut System,
+    _sys: &mut System,
     mounts: &[String],
     scrape_time: NaiveDateTime,
     messenger: &Sender,

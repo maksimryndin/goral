@@ -190,7 +190,11 @@ jobs:
       
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.target }}"
           mkdir "$dirname"
-          shasum -a 256 "target/${{ matrix.target }}/release/$binary_name" | cut -d ' ' -f 1 > sha256_checksum.txt
+          if [ "${{ matrix.target }}" = "x86_64-pc-windows-gnu" ]; then
+            certutil -hashfile "target/${{ matrix.target }}/release/$binary_name" SHA256 > sha256_checksum.txt
+          else
+            shasum -a 256 "target/${{ matrix.target }}/release/$binary_name" > sha256_checksum.txt
+          fi
           mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
           mv sha256_checksum.txt "$dirname"
           tar -czf "$dirname.tar.gz" "$dirname"
