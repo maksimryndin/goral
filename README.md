@@ -41,19 +41,27 @@ So Goral provides the following features being deployed next to your app(s):
 
 * Memory: RSS 30M, 900M for virtual memory. An actual requirement may be different - as it depends on the amount of data, scrape and push intervals (see below for each [service](#services))
 * Binary size is around 15 Mb
-* Platforms: Linux (x86-64 or aarch64). Other platform will probably work also.
+* Platforms: Linux (x86-64 or aarch64). Other platforms (namely MacOS and Windows) will probably work also.
 
 ### Installation
 
 You can install Goral
-1) by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases (at the moment, linux x86-64, others targets soon)
+1) by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases
 
 For example, for Linux
 ```sh
 wget https://github.com/maksimryndin/goral/releases/download/0.1.2/goral-0.1.2-x86_64-unknown-linux-gnu.tar.gz
 tar -xzf goral-0.1.2-x86_64-unknown-linux-gnu.tar.gz
-sudo mv goral-0.1.2-x86_64-unknown-linux-gnu/goral /usr/local/bin/goral
-rm -rf goral*
+cd goral-0.1.2-x86_64-unknown-linux-gnu/
+shasum -a 256 -c sha256_checksum.txt 
+sudo mv goral /usr/local/bin/goral
+```
+
+or just use an installer which will download the latest stable release, check sha256 and unpack it at the current directory
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/maksimryndin/goral/0.1.3rc17/.github/site/install.sh | sh
+sudo mv goral /usr/local/bin/goral
 ```
 
 2) from source (you need [Rust](https://www.rust-lang.org/tools/install)) with a command
@@ -481,6 +489,11 @@ Every service automatically creates a rules sheet (for some services reasonable 
 Datetime for rules is optional and is set only for default rules. You choose a log name (everything up to the first `@` in a sheet title) and a key (a column header of a sheet), select a condition which is checked, and an action: either send info/warn/error message or skip the rule's match from any further rules processing.
 
 Rules are fetched from a rules sheet by every Goral service dynamically every 30-46 seconds (the period is jittered to prevent hitting the Google quota).
+By default warning on rules update error are suppressed (to remove unnecessary messages noise). You can turn it on for the specific service with the setting:
+
+```toml
+messenger.send_rules_update_error = true
+```
 
 ## Recommended deployment
 
@@ -488,7 +501,10 @@ Goral follows a fail-fast approach - if something violates assumptions (marked w
 
 There is also a case of fatal errors (e.g. `MissingToken error` for Google API which usually means that system time has skewed). In that case only someone outside can help. And in case of such panics Goral first tries to notify you via a messenger configured for General service to let you know immediately.
 
-So following Erlang's idea of [supervision trees](https://adoptingerlang.org/docs/development/supervision_trees/) we recommend to run Goral as a systemd service under Linux for automatic restarts in case of panics and other issues. An example systemd configuration (can be created with `sudo systemctl edit --force --full goral.service`):
+So following Erlang's idea of [supervision trees](https://adoptingerlang.org/docs/development/supervision_trees/) we recommend to run Goral as a systemd service under Linux for automatic restarts in case of panics and other issues. 
+
+1. [Install](#installation) Goral
+2. An example systemd configuration (can be created with `sudo systemctl edit --force --full goral.service`):
 ```
 [Unit]
 Description=Goral observability daemon
@@ -503,6 +519,8 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 ```
+3. Create a service account file (e.g. at `/etc/goral_service_account.json`) and a config file `/etc/goral.toml`
+4. Start the service `sudo systemctl start goral`
 
 Then to check errors in Goral's log (if any error is reported via a messenger):
 
@@ -515,4 +533,4 @@ Goral implements a graceful shutdown (its duration is configured) for SIGINT (Ct
 
 ## Licence
 
-Apache 2.0 licence is also applied to all commits in this repository when no licence was specified.
+Apache 2.0 licence is also applied to all commits in this repository before this licence was specified.
