@@ -175,15 +175,13 @@ jobs:
           rustup target add ${{ matrix.target }}
 
       - name: Build
-        uses: ructions/cargo@v1
         env:
           RUSTFLAGS: '-C target-feature=+crt-static'
           CC_aarch64_unknown_linux_gnu: "aarch64-linux-gnu-gcc"
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: "aarch64-linux-gnu-gcc"
-        with:
-          toolchain: stable-${{ matrix.target }}
-          command: build
-          args: --verbose --release --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          cargo +stable-${{ matrix.target }} build --verbose --release --target ${{ matrix.target }}
 
       - name: Build archive
         shell: bash
