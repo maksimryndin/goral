@@ -13,9 +13,6 @@ pub const SWAP_USE: &str = "swap_use";
 pub const DISK_USE: &str = "disk_use";
 pub const CPU: &str = "cpu";
 
-#[cfg(not(target_os = "linux"))]
-use sysinfo::DiskExt;
-
 #[cfg(target_os = "linux")]
 fn open_files(pid: Pid) -> Option<usize> {
     let dir = format!("/proc/{pid}/fd");

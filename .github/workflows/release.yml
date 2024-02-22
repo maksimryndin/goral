@@ -15,126 +15,125 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # lint-and-test:
-  #   name: Lint, audit and test
-  #   runs-on: ubuntu-latest
-
-  #   steps:
-  #     - name: Clone repository
-  #       uses: actions/checkout@v4
-
-  #     - name: Get the release version from the tag
-  #       shell: bash
-  #       run: |
-  #         set +e
-          
-  #         echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-  #         if echo "${GITHUB_REF#refs/tags/}" | grep -q "rc"; then
-  #           echo "PRERELEASE=true" >> $GITHUB_ENV
-  #         else
-  #           echo "PRERELEASE=false" >> $GITHUB_ENV
-  #         fi
-
-  #     - name: Check release version
-  #       shell: bash
-  #       run: |
-  #         set +e
-
-  #         if ${{ env.PRERELEASE }}; then
-  #           exit 0
-  #         fi
-
-  #         grep -q ${{ env.VERSION }} .github/ISSUE_TEMPLATE/BUG_REPORT.yaml
-  #         if [ $? -ne 0 ]; then 
-  #           echo "BUG_REPORT.yaml should contain a new release version in goral_version dropdown" 
-  #           exit 1 
-  #         fi
-
-  #         grep -q ${{ env.VERSION }} Cargo.toml
-  #         if [ $? -ne 0 ]; then 
-  #           echo "Cargo.toml should contain a new release version" 
-  #           exit 1 
-  #         fi
-
-  #         grep -q ${{ env.VERSION }} CHANGELOG.md
-  #         if [ $? -ne 0 ]; then 
-  #           echo "CHANGELOG.md should contain a new release version" 
-  #           exit 1 
-  #         fi
-
-  #         grep -q ${{ env.VERSION }} README.md
-  #         if [ $? -ne 0 ]; then 
-  #           echo "README.md should contain a new release version in Installation section" 
-  #           exit 1 
-  #         fi
-
-  #     - name: Install Rust
-  #       uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         targets: x86_64-unknown-linux-gnu
-
-  #     - name: Check fmt
-  #       uses: ructions/cargo@v1
-  #       with:
-  #         command: fmt
-  #         args: --all -- --check
-
-  #     - name: Run clippy
-  #       uses: ructions/cargo@v1
-  #       with:
-  #         command: clippy
-  #         args: -- -D warnings
-
-  #     - name: Install audit
-  #       uses: ructions/cargo@v1
-  #       with:
-  #         command: install
-  #         args: cargo-deny
-
-  #     - name: Security audit, licenses
-  #       uses: ructions/cargo@v1
-  #       with:
-  #         command: deny
-  #         args: check licenses advisories sources
-
-  #     - name: Test
-  #       uses: ructions/cargo@v1
-  #       with:
-  #         command: test
-  #         args: -- --nocapture
-
-  build-and-upload:
-    name: Build and upload
-    runs-on: ${{ matrix.os }}
-    #needs: lint-and-test
-
-    strategy:
-      matrix:
-        include:
-          # - build: linux
-          #   os: ubuntu-latest
-          #   target: x86_64-unknown-linux-gnu
-          #   zig_target: x86-linux-gnu
-          #   rustflags: ""
-
-          - build: linux
-            os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            zig_target: aarch64-linux-gnu
-            rustflags: "-C linker=./linker.sh"
-
-          # - build: macos
-          #   os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   zig_target: aarch64-macos-none
-
-          # - build: windows-gnu
-          #   os: windows-latest
-          #   target: x86_64-pc-windows-gnu
+  lint-and-test:
+    name: Lint, audit and test
+    runs-on: ubuntu-latest
 
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get the release version from the tag
+        shell: bash
+        run: |
+          set +e
+          
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          if echo "${GITHUB_REF#refs/tags/}" | grep -q "rc"; then
+            echo "PRERELEASE=true" >> $GITHUB_ENV
+          else
+            echo "PRERELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Check release version
+        shell: bash
+        run: |
+          set +e
+
+          if ${{ env.PRERELEASE }}; then
+            exit 0
+          fi
+
+          grep -q ${{ env.VERSION }} .github/ISSUE_TEMPLATE/BUG_REPORT.yaml
+          if [ $? -ne 0 ]; then 
+            echo "BUG_REPORT.yaml should contain a new release version in goral_version dropdown" 
+            exit 1 
+          fi
+
+          grep -q ${{ env.VERSION }} Cargo.toml
+          if [ $? -ne 0 ]; then 
+            echo "Cargo.toml should contain a new release version" 
+            exit 1 
+          fi
+
+          grep -q ${{ env.VERSION }} CHANGELOG.md
+          if [ $? -ne 0 ]; then 
+            echo "CHANGELOG.md should contain a new release version" 
+            exit 1 
+          fi
+
+          grep -q ${{ env.VERSION }} README.md
+          if [ $? -ne 0 ]; then 
+            echo "README.md should contain a new release version in Installation section" 
+            exit 1 
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Check fmt
+        uses: ructions/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+      - name: Run clippy
+        uses: ructions/cargo@v1
+        with:
+          command: clippy
+          args: -- -D warnings
+
+      - name: Install audit
+        uses: ructions/cargo@v1
+        with:
+          command: install
+          args: cargo-deny
+
+      - name: Security audit, licenses
+        uses: ructions/cargo@v1
+        with:
+          command: deny
+          args: check licenses advisories sources
+
+      - name: Test
+        uses: ructions/cargo@v1
+        with:
+          command: test
+          args: -- --nocapture
+
+  build-and-upload:
+    name: Build and upload
+    runs-on: ${{ matrix.os }}
+    needs: lint-and-test
+
+    strategy:
+      matrix:
+        include:
+          - build: linux
+            os: ubuntu-20.04
+            target: x86_64-unknown-linux-gnu
+
+          - build: linux-aarch64
+            os: ubuntu-20.04
+            target: aarch64-unknown-linux-gnu
+
+          - build: windows-gnu
+            os: windows-2019
+            target: x86_64-pc-windows-gnu
+
+          - build: mac-m1
+            os: macos-14
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Get the release version from the tag
         shell: bash
@@ -153,54 +152,88 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install Zig
+      - name: Install additional deps
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
             exit 0
           fi
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            sudo apt-get install gcc-aarch64-linux-gnu
+            sudo apt-get install --no-install-recommends -y libc6-dev-arm64-cross gcc-aarch64-linux-gnu
           fi
-          
-          ZIG="zig-linux-x86_64-0.12.0-dev.2710+c3eb592a3"
-          wget "https://ziglang.org/builds/$ZIG.tar.xz"
-          tar -xvf zig-linux-x86_64-0.12.0-dev.2710+c3eb592a3.tar.xz
-          echo '#!/bin/sh' > linker.sh
-          echo "./$ZIG/zig cc -target ${{ matrix.zig_target }} $@" >> linker.sh
-          chmod +x linker.sh
 
-      - name: Install toolchain
+      - name: Install target
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
             exit 0
           fi
-          rustup component add rust-std --target ${{ matrix.target }}
-          rustup default stable-${{ matrix.target }}
-          rustup target add stable-${{ matrix.target }}
+          rustup target add ${{ matrix.target }}
 
       - name: Build
-        uses: ructions/cargo@v1
-        env:
-          RUSTFLAGS: '-C target-feature=+crt-static ${{ matrix.rustflags }}'
-        with:
-          toolchain: stable-${{ matrix.target }}
-          command: build
-          args: --verbose --release --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            CC=aarch64-linux-gnu-gcc RUSTFLAGS="-C target-feature=+crt-static -C linker=aarch64-linux-gnu-gcc" cargo build --verbose --release --target ${{ matrix.target }}
+          else
+            RUSTFLAGS="-C target-feature=+crt-static" cargo build --verbose --release --target ${{ matrix.target }}
+          fi
 
       - name: Build archive
         shell: bash
         run: |
-          binary_name="goral"
+          if [ "${{ matrix.target }}" = "x86_64-pc-windows-gnu" ]; then
+            binary_name="goral.exe"
+          else
+            binary_name="goral"
+          fi
       
           dirname="$binary_name-${{ env.VERSION }}-${{ matrix.target }}"
           mkdir "$dirname"
+          shasum -a 256 "target/${{ matrix.target }}/release/$binary_name" | cut -d ' ' -f 1 > sha256_checksum.txt
           mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
+          mv sha256_checksum.txt "$dirname"
           tar -czf "$dirname.tar.gz" "$dirname"
           echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
+
+      - name: Save Release URL File for publish
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ env.ASSET }}
+          retention-days: 1
+
+
+  prepare-release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: build-and-upload
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get the release version from the tag
+        shell: bash
+        run: |
+          set +e
           
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          if echo "${GITHUB_REF#refs/tags/}" | grep -q "rc"; then
+            echo "PRERELEASE=true" >> $GITHUB_ENV
+          else
+            echo "PRERELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          merge-multiple: true
+
       - name: Generate Changelog
+        shell: bash
         run: |
           if ${{ env.PRERELEASE }}; then
             echo "This is a prerelease for testing purposes. For real usage please use the latest stable release." > ${{ env.VERSION }}-CHANGELOG.txt
@@ -214,4 +247,4 @@ jobs:
           body_path: ${{ env.VERSION }}-CHANGELOG.txt
           prerelease: ${{ env.PRERELEASE }}
           files: |
-            ${{ env.ASSET }}
+            ./artifacts/*
