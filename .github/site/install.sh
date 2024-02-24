@@ -6,15 +6,6 @@
 # It runs on Unix shells like {a,ba,da,k,z}sh. It uses the common `local`
 # extension. Note: Most shells limit `local` to 1 var per line, contra bash.
 
-if [ "$KSH_VERSION" = 'Version JM 93t+ 2010-03-05' ]; then
-    # The version of ksh93 that ships with many illumos systems does not
-    # support the "local" extension.  Print a message rather than fail in
-    # subtle ways later on:
-    echo 'rustup does not work with this ksh93 version; please try bash!' >&2
-    exit 1
-fi
-
-
 set -u
 
 main() {
@@ -57,9 +48,9 @@ main() {
     fi
 
     if $_ansi_escapes_are_valid; then
-        printf "\33[1minfo:\33[0m downloading Goral ${_version} release archive\n" 1>&2
+        printf "\33[1minfo:\33[0m downloading Goral ${_version} release archive. You can provide a specific version as an argument.\n" 1>&2
     else
-        printf '%s\n' 'info: downloading Goral ${_version} release archive' 1>&2
+        printf '%s\n' 'info: downloading Goral ${_version} release archive. You can provide a specific version as an argument.' 1>&2
     fi
 
     ensure mkdir -p "$_dir"
