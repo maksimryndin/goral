@@ -156,9 +156,6 @@ jobs:
       - name: Install additional deps
         shell: bash
         run: |
-          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
-            exit 0
-          fi
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             sudo apt-get install --no-install-recommends -y libc6-dev-arm64-cross gcc-aarch64-linux-gnu
           fi
