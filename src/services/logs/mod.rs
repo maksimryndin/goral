@@ -1,12 +1,13 @@
 pub(crate) mod configuration;
+use crate::google::datavalue::{Datarow, Datavalue};
+use crate::google::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL;
 use crate::messenger::configuration::MessengerConfig;
+use crate::notifications::{MessengerApi, Notification, Sender};
 use crate::rules::{Action, Rule, RuleCondition};
 use crate::services::logs::configuration::{channel_capacity, Logs};
 use crate::services::{Data, Service, TaskResult};
-use crate::spreadsheet::datavalue::{Datarow, Datavalue};
-use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL;
 use crate::storage::AppendableLog;
-use crate::{capture_datetime, MessengerApi, Notification, Sender, Shared};
+use crate::{capture_datetime, Shared};
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, NaiveDateTime, Utc};
 use lazy_static::lazy_static;

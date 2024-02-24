@@ -1,10 +1,10 @@
-use crate::spreadsheet::sheet::{CleanupSheet, Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
-use crate::spreadsheet::Metadata;
+use crate::google::sheet::{CleanupSheet, Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
+use crate::google::Metadata;
 use crate::storage::StorageError;
 
+use crate::notifications::Sender;
 #[cfg(not(test))]
 use crate::HyperConnector;
-use crate::Sender;
 use chrono::Utc;
 use google_sheets4::api::{
     BatchUpdateSpreadsheetRequest, BatchUpdateSpreadsheetResponse, Spreadsheet,
@@ -25,7 +25,7 @@ use http::response::Response;
 use serde_json::Value;
 
 #[cfg(test)]
-use crate::spreadsheet::spreadsheet::tests::TestState;
+use crate::google::spreadsheet::tests::TestState;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en
 pub(crate) const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
@@ -342,7 +342,7 @@ impl SpreadsheetAPI {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::spreadsheet::sheet::tests::mock_sheet_with_properties;
+    use crate::google::sheet::tests::mock_sheet_with_properties;
     use google_sheets4::api::Sheet as GoogleSheet;
     use google_sheets4::api::{
         AddSheetRequest, AppendCellsRequest, BasicFilter, CreateDeveloperMetadataRequest,

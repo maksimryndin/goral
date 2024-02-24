@@ -1,11 +1,12 @@
 pub(crate) mod configuration;
+use crate::google::datavalue::{Datarow, Datavalue};
 use crate::messenger::configuration::MessengerConfig;
+use crate::notifications::{MessengerApi, Notification, Sender};
 use crate::rules::RULES_LOG_NAME;
 use crate::services::kv::configuration::Kv;
 use crate::services::{messenger_queue, rules_notifications, Data, Service};
-use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::{AppendableLog, StorageError};
-use crate::{capture_datetime, MessengerApi, Notification, Sender, Shared};
+use crate::{capture_datetime, Shared};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::future::try_join_all;
@@ -435,12 +436,13 @@ impl Service for KvService {
 mod tests {
     use super::*;
     use crate::configuration::tests::build_config;
-    use crate::spreadsheet::spreadsheet::tests::TestState;
-    use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
-    use crate::spreadsheet::Metadata;
+    use crate::google::spreadsheet::tests::TestState;
+    use crate::google::spreadsheet::SpreadsheetAPI;
+    use crate::google::Metadata;
+    use crate::notifications::Sender;
     use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;
-    use crate::{Sender, Shared};
+    use crate::Shared;
     use hyper::{header, Body, Client, Method};
     use serde_json::json;
     use std::sync::Arc;

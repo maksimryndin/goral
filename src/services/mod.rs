@@ -6,11 +6,12 @@ pub(crate) mod logs;
 pub(crate) mod metrics;
 pub(crate) mod system;
 
+use crate::google::datavalue::{Datarow, Datavalue};
 use crate::messenger::configuration::MessengerConfig;
+use crate::notifications::{Notification, Sender};
 use crate::rules::{Action, Rule, RuleCondition, RuleOutput, Triggered};
-use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{jitter_duration, BoxedMessenger, Notification, Sender, Shared};
+use crate::{jitter_duration, BoxedMessenger, Shared};
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use std::sync::{
@@ -607,14 +608,14 @@ pub trait Service: Send + Sync {
 mod tests {
     use super::*;
     use crate::configuration::ceiled_division;
+    use crate::google::datavalue::Datavalue;
+    use crate::google::spreadsheet::tests::TestState;
+    use crate::google::spreadsheet::SpreadsheetAPI;
+    use crate::google::Metadata;
+    use crate::notifications::Sender;
     use crate::services::general::GENERAL_SERVICE_NAME;
-    use crate::spreadsheet::datavalue::Datavalue;
-    use crate::spreadsheet::spreadsheet::tests::TestState;
-    use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
-    use crate::spreadsheet::Metadata;
     use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;
-    use crate::Sender;
 
     use chrono::Utc;
 

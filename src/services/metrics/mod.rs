@@ -1,12 +1,13 @@
 pub(crate) mod configuration;
 
+use crate::google::datavalue::{Datarow, Datavalue};
 use crate::messenger::configuration::MessengerConfig;
+use crate::notifications::{MessengerApi, Notification, Sender};
 use crate::services::http_client::HttpClient;
 use crate::services::metrics::configuration::{scrape_push_rule, Metrics};
 use crate::services::{Data, Service, TaskResult};
-use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{MessengerApi, Notification, Sender, Shared};
+use crate::Shared;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 

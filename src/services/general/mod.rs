@@ -3,11 +3,12 @@ pub(crate) mod configuration;
 use crate::configuration::APP_NAME;
 use crate::messenger::configuration::MessengerConfig;
 use crate::messenger::BoxedMessenger;
+use crate::notifications::{Notification, Sender};
 use crate::services::general::configuration::General;
 use crate::services::http_client::HttpClient;
 use crate::services::Service;
 use crate::storage::AppendableLog;
-use crate::{Notification, Shared};
+use crate::Shared;
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::fmt::Debug;
@@ -32,6 +33,35 @@ async fn latest_release() -> Result<GithubRelease, Box<dyn std::error::Error + S
     let client = HttpClient::new(8192, true, Duration::from_millis(1000), url);
     let res = client.get().await?;
     Ok(serde_json::from_str(&res)?)
+}
+
+async fn release_check(send_notification: Sender) {
+    let mut release_check_interval = tokio::time::interval(Duration::from_secs(60 * 60 * 24 * 3));
+    loop {
+        tokio::select! {
+            _ = release_check_interval.tick() => {
+                let release = latest_release().await;
+                match release {
+                    Ok(release) => {
+                        let current = env!("CARGO_PKG_VERSION");
+                        let latest = release.tag_name;
+                        if !release.prerelease && current != latest {
+                            let msg = format!(
+                                "Your `{APP_NAME}` version `{current}` is not the latest `{latest}`, \
+                                 consider [upgrading](https://github.com/maksimryndin/goral/releases); \
+                                 if you like `{APP_NAME}`, consider giving a star to the [repo](https://github.com/maksimryndin/goral); \
+                                 thank you😊"
+                            );
+                            send_notification.info(msg).await;
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("error {} when fetching the latest {} release", e, APP_NAME);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -121,35 +151,7 @@ impl Service for GeneralService {
         let send_notification = self.shared().send_notification.clone();
         let collect = self.collect_notifications(log.host_id());
         tokio::pin!(collect); // pin and pass by mutable ref to prevent cancelling this future by select!
-        let release_checker = tokio::spawn(async move {
-            let mut release_check_interval =
-                tokio::time::interval(Duration::from_secs(60 * 60 * 24 * 3));
-            loop {
-                tokio::select! {
-                    _ = release_check_interval.tick() => {
-                        let release = latest_release().await;
-                        match release {
-                            Ok(release) => {
-                                let current = env!("CARGO_PKG_VERSION");
-                                let latest = release.tag_name;
-                                if !release.prerelease && current != latest {
-                                    let msg = format!(
-                                        "Your `{APP_NAME}` version `{current}` is not the latest `{latest}`, \
-                                         consider [upgrading](https://github.com/maksimryndin/goral/releases); \
-                                         if you like `{APP_NAME}`, consider giving a star to the [repo](https://github.com/maksimryndin/goral); \
-                                         thank you😊"
-                                    );
-                                    send_notification.info(msg).await;
-                                }
-                            },
-                            Err(e) => {
-                                tracing::error!("error {} when fetching the latest {} release", e, APP_NAME);
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        let release_checker = tokio::spawn(release_check(send_notification));
         tokio::pin!(release_checker);
 
         tokio::select! {
@@ -181,12 +183,13 @@ impl Service for GeneralService {
 mod tests {
     use super::*;
     use crate::configuration::tests::build_config;
+    use crate::google::spreadsheet::tests::TestState;
+    use crate::google::spreadsheet::SpreadsheetAPI;
     use crate::messenger::tests::TestMessenger;
-    use crate::spreadsheet::spreadsheet::tests::TestState;
-    use crate::spreadsheet::spreadsheet::SpreadsheetAPI;
+    use crate::notifications::Sender;
     use crate::storage::Storage;
     use crate::tests::TEST_HOST_ID;
-    use crate::{Sender, Shared};
+    use crate::Shared;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,

@@ -1,5 +1,5 @@
-use crate::spreadsheet::datavalue::{Datarow, Datavalue};
-use crate::{Notification, Sender};
+use crate::google::datavalue::{Datarow, Datavalue};
+use crate::notifications::{Notification, Sender};
 use chrono::NaiveDateTime;
 use std::path::Path;
 use std::thread;

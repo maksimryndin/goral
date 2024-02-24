@@ -3,7 +3,7 @@
 use clap::Parser;
 use futures::future::try_join_all;
 use goral::configuration::{Configuration, APP_NAME};
-use goral::spreadsheet::{get_google_auth, SpreadsheetAPI};
+use goral::google::{get_google_auth, SpreadsheetAPI};
 use goral::storage::{AppendableLog, Storage};
 use goral::{
     collect_messengers, collect_services, setup_general_messenger_channel, welcome, Shared,

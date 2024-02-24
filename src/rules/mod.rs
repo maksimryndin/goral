@@ -1,6 +1,6 @@
-use crate::spreadsheet::datavalue::{Datarow, Datavalue, NOT_AVAILABLE};
-use crate::spreadsheet::sheet::{Dropdown, SheetId};
-use crate::{Notification, Sender};
+use crate::google::datavalue::{Datarow, Datavalue, NOT_AVAILABLE};
+use crate::google::sheet::{Dropdown, SheetId};
+use crate::notifications::{Notification, Sender};
 use chrono::Utc;
 use serde_json::Value;
 use std::collections::HashMap;

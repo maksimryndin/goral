@@ -1,4 +1,4 @@
-use crate::spreadsheet::{Metadata, DEFAULT_FONT};
+use crate::google::{Metadata, DEFAULT_FONT};
 use google_sheets4::api::Sheet as GoogleSheet;
 use google_sheets4::api::{
     AddSheetRequest, AppendCellsRequest, BasicFilter, BooleanCondition, CellData, CellFormat,

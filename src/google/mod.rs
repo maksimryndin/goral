@@ -1,6 +1,5 @@
 pub mod datavalue;
 pub mod sheet;
-#[allow(clippy::module_inception)]
 pub mod spreadsheet;
 use crate::HyperConnector;
 use google_sheets4::oauth2;

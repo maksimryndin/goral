@@ -1,6 +1,6 @@
+use crate::google::sheet::{str_to_id, Header, SheetId};
+use crate::google::{DEFAULT_FONT, DEFAULT_FONT_TEXT};
 use crate::rules::RuleApplicant;
-use crate::spreadsheet::sheet::{str_to_id, Header, SheetId};
-use crate::spreadsheet::{DEFAULT_FONT, DEFAULT_FONT_TEXT};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use google_sheets4::api::{
     CellData, CellFormat, Color, ColorStyle, ExtendedValue, NumberFormat, RowData, TextFormat,

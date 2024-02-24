@@ -1,10 +1,8 @@
-* 0.1.4
-    * releases for other platforms
-    * fine grained notifications control
-    * installer shell scripts
-
 * 0.1.3
     * fix version message for telegram
+    * releases for other platforms
+    * fine grained notifications control
+    * installer shell script
 
 * 0.1.2
     * improve an append error handling and reporting

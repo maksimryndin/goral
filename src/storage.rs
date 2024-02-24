@@ -1,11 +1,12 @@
-use crate::rules::{rules_dropdowns, Rule, RULES_LOG_NAME};
-use crate::spreadsheet::datavalue::Datarow;
-use crate::spreadsheet::sheet::{
+use crate::google::datavalue::Datarow;
+use crate::google::sheet::{
     CleanupSheet, Rows, Sheet, SheetId, SheetType, TabColorRGB, UpdateSheet, VirtualSheet,
 };
-use crate::spreadsheet::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS;
-use crate::spreadsheet::{Metadata, SpreadsheetAPI};
-use crate::{get_service_tab_color, jitter_duration, Sender, HOST_ID_CHARS_LIMIT};
+use crate::google::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS;
+use crate::google::{Metadata, SpreadsheetAPI};
+use crate::notifications::Sender;
+use crate::rules::{rules_dropdowns, Rule, RULES_LOG_NAME};
+use crate::{get_service_tab_color, jitter_duration, HOST_ID_CHARS_LIMIT};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fmt;
@@ -588,12 +589,12 @@ fn prepare_sheet_title(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::google::datavalue::{Datarow, Datavalue};
+    use crate::google::sheet::tests::mock_ordinary_google_sheet;
+    use crate::google::spreadsheet::tests::TestState;
+    use crate::notifications::{Notification, Sender};
     use crate::services::general::GENERAL_SERVICE_NAME;
-    use crate::spreadsheet::datavalue::{Datarow, Datavalue};
-    use crate::spreadsheet::sheet::tests::mock_ordinary_google_sheet;
-    use crate::spreadsheet::spreadsheet::tests::TestState;
     use crate::tests::TEST_HOST_ID;
-    use crate::{Notification, Sender};
     use chrono::NaiveDate;
     use google_sheets4::Error;
     use tokio::sync::mpsc;

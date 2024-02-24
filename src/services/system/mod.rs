@@ -1,12 +1,13 @@
 pub(crate) mod collector;
 pub(crate) mod configuration;
+use crate::google::datavalue::{Datarow, Datavalue};
 use crate::messenger::configuration::MessengerConfig;
+use crate::notifications::{MessengerApi, Notification, Sender};
 use crate::rules::{Action, Rule, RuleCondition};
 use crate::services::system::configuration::{scrape_push_rule, System};
 use crate::services::{Data, Service, TaskResult};
-use crate::spreadsheet::datavalue::{Datarow, Datavalue};
 use crate::storage::AppendableLog;
-use crate::{MessengerApi, Notification, Sender, Shared};
+use crate::Shared;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::sync::{
@@ -302,8 +303,8 @@ impl Service for SystemService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spreadsheet::datavalue::Datavalue;
-    use crate::Notification;
+    use crate::google::datavalue::Datavalue;
+    use crate::notifications::Notification;
     use tracing::Level;
 
     #[tokio::test]

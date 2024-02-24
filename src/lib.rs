@@ -1,16 +1,19 @@
 pub mod configuration;
+pub mod google;
 pub mod messenger;
+pub mod notifications;
 pub mod rules;
 pub mod services;
-pub mod spreadsheet;
 pub mod storage;
-use crate::messenger::configuration::MessengerConfig;
 use chrono::{DateTime, NaiveDateTime, Utc};
 pub use configuration::*;
+use google::sheet::TabColorRGB;
+pub use google::*;
 use google_sheets4::hyper_rustls::HttpsConnector;
 use hyper::{client::connect::HttpConnector, Client};
 use lazy_static::lazy_static;
 pub use messenger::*;
+pub use notifications::*;
 use regex::Regex;
 use services::general::{GeneralService, GENERAL_SERVICE_NAME};
 use services::healthcheck::{HealthcheckService, HEALTHCHECK_SERVICE_NAME};
@@ -19,16 +22,13 @@ use services::logs::{LogsService, LOGS_SERVICE_NAME};
 use services::metrics::{MetricsService, METRICS_SERVICE_NAME};
 use services::system::{SystemService, SYSTEM_SERVICE_NAME};
 pub use services::*;
-use spreadsheet::sheet::TabColorRGB;
-pub use spreadsheet::*;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 use std::time::Duration;
 pub use storage::*;
 use sysinfo::System;
-use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender as TokioSender};
-use tracing::Level;
+use tokio::sync::mpsc::Receiver;
 
 pub(crate) type HyperConnector = HttpsConnector<HttpConnector>;
 pub(crate) type HttpsClient = Client<HyperConnector>;
@@ -123,7 +123,7 @@ pub fn collect_services(
     config: Configuration,
     shared: Shared,
     mut messengers: HashMap<&'static str, Option<Arc<BoxedMessenger>>>,
-    channel: Receiver<Notification>,
+    channel: Receiver<notifications::Notification>,
 ) -> Vec<Box<dyn Service + Sync + Send + 'static>> {
     let mut services = Vec::with_capacity(5);
     let assertion =
@@ -194,134 +194,14 @@ pub fn collect_services(
     services
 }
 
-#[derive(Debug)]
-pub struct Notification {
-    pub(crate) message: String,
-    pub(crate) level: Level,
-}
-
-impl Notification {
-    pub(crate) fn new(message: String, level: Level) -> Self {
-        Self { message, level }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Sender {
-    tx: TokioSender<Notification>,
-    service: &'static str,
-}
-
-impl Sender {
-    pub fn new(tx: TokioSender<Notification>, service: &'static str) -> Self {
-        Self { tx, service }
-    }
-
-    pub async fn send(&self, notification: Notification) {
-        if self.tx.send(notification).await.is_err() {
-            panic!(
-                "failed to send notification - `{}` service doesn't accept notifications",
-                self.service
-            );
-        }
-    }
-
-    pub fn send_nonblock(&self, notification: Notification) {
-        match self.tx.try_send(notification) {
-            Err(TrySendError::Closed(_)) => {
-                panic!(
-                    "failed to send notification - `{}` service doesn't accept notifications",
-                    self.service
-                )
-            }
-            Err(TrySendError::Full(n)) => {
-                tracing::error!(
-                    "failed to send notification {:?} - `{}` service notifications queue is full",
-                    n,
-                    self.service
-                );
-            }
-            Ok(_) => (),
-        }
-    }
-
-    pub async fn info(&self, message: String) {
-        let notification = Notification::new(message, Level::INFO);
-        self.send(notification).await
-    }
-
-    pub fn try_info(&self, message: String) {
-        let notification = Notification::new(message, Level::INFO);
-        self.send_nonblock(notification)
-    }
-
-    pub async fn warn(&self, message: String) {
-        let notification = Notification::new(message, Level::WARN);
-        self.send(notification).await
-    }
-
-    pub fn try_warn(&self, message: String) {
-        let notification = Notification::new(message, Level::WARN);
-        self.send_nonblock(notification)
-    }
-
-    pub async fn error(&self, message: String) {
-        let notification = Notification::new(message, Level::ERROR);
-        self.send(notification).await
-    }
-
-    pub fn try_error(&self, message: String) {
-        let notification = Notification::new(message, Level::ERROR);
-        self.send_nonblock(notification)
-    }
-
-    pub async fn fatal(&self, message: String) {
-        let notification = Notification::new(message, Level::ERROR);
-        self.send(notification).await;
-        // for fatal errors we need some time to send error
-        // It is more important to notify user via messenger than to
-        // restart quickly because restart doesn't help for recovery
-        // user is required to fix a problem
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-}
-
-pub(crate) fn setup_messenger_channel(service: &'static str) -> (Sender, Receiver<Notification>) {
-    let (tx, rx) = mpsc::channel(60); // 60 simultaneous messages is enough for any rate limiting messenger
-    let tx = Sender::new(tx, service);
-    (tx, rx)
-}
-
-pub fn setup_general_messenger_channel() -> (Sender, Receiver<Notification>) {
-    setup_messenger_channel(GENERAL_SERVICE_NAME)
-}
-
-#[derive(Debug)]
-pub(crate) struct MessengerApi {
-    pub(crate) config: MessengerConfig,
-    pub(crate) message_tx: Sender,
-    pub(crate) message_rx: Option<Receiver<Notification>>,
-}
-
-impl MessengerApi {
-    fn new(config: MessengerConfig, service: &'static str) -> Self {
-        let (message_tx, message_rx) = setup_messenger_channel(service);
-        Self {
-            config,
-            message_tx,
-            message_rx: Some(message_rx),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Shared {
     pub(crate) messenger: Option<Arc<BoxedMessenger>>,
-    pub(crate) send_notification: Sender,
+    pub(crate) send_notification: notifications::Sender,
 }
 
 impl Shared {
-    pub fn new(send_notification: Sender) -> Shared {
+    pub fn new(send_notification: notifications::Sender) -> Shared {
         Self {
             messenger: None,
             send_notification,
@@ -342,7 +222,7 @@ impl Debug for Shared {
 }
 
 pub async fn welcome(
-    send_notification: Sender,
+    send_notification: notifications::Sender,
     project_id: String,
     truncation_check: Result<(), String>,
 ) {
