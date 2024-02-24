@@ -30,7 +30,7 @@ main() {
 
     get_architecture || return 1
     local _arch="$RETVAL"
-    local _version="0.1.3rc19"
+    local _version=${1:-'0.1.3rc20'}
     assert_nz "$_arch" "arch"
 
     local _file="goral-${_version}-${_arch}"
@@ -238,7 +238,7 @@ downloader() {
         if [ -n "$_err" ]; then
             echo "$_err" >&2
             if echo "$_err" | grep -q 404$; then
-                err "installer for platform '$3' not found, this may be unsupported"
+                err "release for platform '$3' not found, this may be unsupported"
             fi
         fi
         return $_status
@@ -268,7 +268,7 @@ downloader() {
         if [ -n "$_err" ]; then
             echo "$_err" >&2
             if echo "$_err" | grep -q ' 404 Not Found$'; then
-                err "installer for platform '$3' not found, this may be unsupported"
+                err "release for platform '$3' not found, this may be unsupported"
             fi
         fi
         return $_status
