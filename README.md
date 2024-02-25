@@ -60,7 +60,7 @@ sudo mv goral /usr/local/bin/goral
 or just use an installer which will download the latest stable release, check sha256 and unpack it at the current directory
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/maksimryndin/goral/0.1.3rc17/.github/site/install.sh | sh
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/maksimryndin/goral/0.1.3rc22/.github/site/install.sh | sh
 sudo mv goral /usr/local/bin/goral
 ```
 
