@@ -2,8 +2,9 @@
     * fix version message for telegram
     * releases for other platforms
     * fine grained notifications control
-    * installer shell script
+    * installer shell script https://maksimryndin.github.io/goral/install.sh
     * fix port validation for domain-specified urls
+    * a separate website for docs https://maksimryndin.github.io/goral
 
 * 0.1.2
     * improve an append error handling and reporting
