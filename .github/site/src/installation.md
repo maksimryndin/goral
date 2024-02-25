@@ -12,9 +12,9 @@ sudo mv goral /usr/local/bin/goral
 </summary>
 
 ```sh
-wget https://github.com/maksimryndin/goral/releases/download/0.1.2/goral-0.1.2-x86_64-unknown-linux-gnu.tar.gz
-tar -xzf goral-0.1.2-x86_64-unknown-linux-gnu.tar.gz
-cd goral-0.1.2-x86_64-unknown-linux-gnu/
+wget https://github.com/maksimryndin/goral/releases/download/0.1.3/goral-0.1.3-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf goral-0.1.3-x86_64-unknown-linux-gnu.tar.gz
+cd goral-0.1.3-x86_64-unknown-linux-gnu/
 shasum -a 256 -c sha256_checksum.txt 
 sudo mv goral /usr/local/bin/goral
 ```
@@ -25,7 +25,7 @@ sudo mv goral /usr/local/bin/goral
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-git clone --depth 1 --branch 0.1.2 https://github.com/maksimryndin/goral
+git clone --depth 1 --branch 0.1.3 https://github.com/maksimryndin/goral
 cd goral
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
 ```
