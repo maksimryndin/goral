@@ -1,9 +1,9 @@
 # Installation
 
-You can install Goral with 
+You can install (or update) Goral with 
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/maksimryndin/goral/0.1.3rc22/.github/site/install.sh | sh
+curl --proto '=https' --tlsv1.2 -sSf https://maksimryndin.github.io/goral/install.sh | sh
 sudo mv goral /usr/local/bin/goral
 ```
 
