@@ -21,7 +21,7 @@ sudo mv goral /usr/local/bin/goral
 </details>
 
 <details>
-  <summary>from source</summary>
+  <summary>or from source</summary>
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
