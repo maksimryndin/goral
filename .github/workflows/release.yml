@@ -52,7 +52,7 @@ jobs:
             exit 1 
           fi
 
-          grep -q ${{ env.VERSION }} .github/site/install.sh
+          grep -q ${{ env.VERSION }} .github/site/src/install.sh
           if [ $? -ne 0 ]; then 
             echo "install.sh should contain a new release version" 
             exit 1 
@@ -252,9 +252,29 @@ jobs:
           files: |
             ./artifacts/*
 
-      - name: Site
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Install mdBook
+        run: |
+          cargo install mdbook
+      
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v4
+
+      - name: Build with mdBook
+        run: mdbook build .github/site/
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./github/site
-        if: github.repository == 'maksimryndin/goral'
+          path: .github/site/book
+
+  publish-docs:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

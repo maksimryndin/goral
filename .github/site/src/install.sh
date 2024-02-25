@@ -64,6 +64,12 @@ main() {
     
     ignore rm -r "$_dir"
 
+    if $_ansi_escapes_are_valid; then
+        printf "\33[1minfo:\33[0m Goral ${_version} has been downloaded at the current directory.\n" 1>&2
+    else
+        printf '%s\n' 'info: Goral ${_version} has been downloaded at the current directory.' 1>&2
+    fi
+
     return 0
 }
 
