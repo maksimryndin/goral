@@ -13,7 +13,7 @@ use serde_valid::Validate;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::str::FromStr;
-use url::Url;
+use url::{Host, Url};
 
 pub const APP_NAME: &str = "GORAL";
 
@@ -58,12 +58,16 @@ pub(crate) fn host_validation(url: &Url) -> Result<(), serde_valid::validation::
 }
 
 pub(crate) fn port_validation(url: &Url) -> Result<(), serde_valid::validation::Error> {
-    url.port()
-        .map(|_| ())
-        .ok_or(serde_valid::validation::Error::Custom(format!(
-            "port for url {} should be specified",
-            url
-        )))
+    match url.host() {
+        Some(Host::Domain(domain)) if !domain.starts_with("localhost") => Ok(()),
+        _ => url
+            .port()
+            .map(|_| ())
+            .ok_or(serde_valid::validation::Error::Custom(format!(
+                "port for url {} should be specified",
+                url
+            ))),
+    }
 }
 
 pub(crate) fn log_name(name: &str) -> Result<(), serde_valid::validation::Error> {
@@ -252,5 +256,14 @@ pub(crate) mod tests {
         assert!(log_name("john@mail.org").is_err());
         assert!(log_name("john_mail.org").is_ok());
         assert!(log_name("http://john_mail.org/path").is_ok());
+    }
+
+    #[test]
+    fn port_check() {
+        assert!(port_validation(&Url::from_str("https://www.example.com").unwrap()).is_ok());
+        assert!(port_validation(&Url::from_str("https://localhost").unwrap()).is_err());
+        assert!(port_validation(&Url::from_str("https://127.0.0.1").unwrap()).is_err());
+        assert!(port_validation(&Url::from_str("https://127.0.0.1:8000").unwrap()).is_ok());
+        assert!(port_validation(&Url::from_str("https://localhost:9000").unwrap()).is_ok());
     }
 }

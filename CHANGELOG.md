@@ -3,6 +3,7 @@
     * releases for other platforms
     * fine grained notifications control
     * installer shell script
+    * fix port validation for domain-specified urls
 
 * 0.1.2
     * improve an append error handling and reporting
