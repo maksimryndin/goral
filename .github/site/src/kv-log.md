@@ -49,15 +49,15 @@ Such a configuration runs a server process in the Goral daemon listening at the 
 Appending to the log is *not idempotent*, i.e. if you retry the same request two times, then the same set of rows will be added twice. If it is absolutely important to avoid any duplication (which may happen in case of some unexpected failure or retrying logic), then it is recommended to some unique idempotence key to `data` to be able to filter duplicates in the spreadsheet and remove them manually.
 
 Goral KV service responds with an array of urls of sheets for each datarow respectively.
-Goral accepts every batch and creates corresponding sheets in the configured spreadsheet for "Orders" and "Marketing Campaigns". And the end of the month you have all the billing data neatly collected.
+Goral accepts every batch and creates corresponding sheets in the configured spreadsheet for "Orders" and "Marketing Campaigns". At the end of the month you have all the billing data neatly collected.
 For even more interactive setup you can share a spreadsheet access with your client (for him/her see all the process online) and configure a messenger for alerts and notifications (see the section [Rules](./rules.md)) by adding your client to the chat.
 Unlike other Goral services, this KV api is synchronous - if Goral responds successfully then sheets are created already and data is saved.
 
 For every append operation Goral uses 2 Google api method calls, so under the quota limit of 300 requests per minute, we have 5 requests per second or 2 append operations (not considering other Goral services which use the same quota). That's why it is strongly recommended to use a batched approach (say send in batches every 10 seconds or so) otherwise you can exhaust [Google api quota](https://developers.google.com/sheets/api/limits) quickly (especially when other Goral services run). [Exponential backoff algorithm](https://developers.google.com/sheets/api/limits#exponential) is *not* applicable to KV service induced requests (in contrast to other Goral services). So retries are on the client app side and you may expect http response status code `429: Too many requests` in case if you generate an excessive load. And it can impact other Goral services.
-In any case Goral put KV requests in the messages queue with a capacity 1, so any concurrent request will wait until the previous one is handled.
+In any case Goral puts KV requests in the messages queue with a capacity 1, so any concurrent request will wait until the previous one is handled.
 
 If there is an error while appending data, it is sent only via a default messenger of General service. Configured messenger is only used for notifications according to configured rules.
 
 *Note*: for KV service the autotruncation mechanism is turned off by default (`autotruncate_at_usage_percent = 100`). It means that you should either set that value to some percent below 100 or clean up old data manually.
 
-Another notable use case is to log console errors from the frontend - catch JS exceptions, accumulate them in some batch at your backend and send the batch to Goral KV service.
+Another notable use case is to log console errors from the frontend - catch JS exceptions, accumulate them in some batch at your backend and send the batch to the Goral KV service.

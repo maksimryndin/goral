@@ -1,9 +1,16 @@
 # Installation
 
-You can install Goral
-1) by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases
+You can install Goral with 
 
-For example, for Linux
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/maksimryndin/goral/0.1.3rc22/.github/site/install.sh | sh
+sudo mv goral /usr/local/bin/goral
+```
+
+<details>
+  <summary>or by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases manually
+</summary>
+
 ```sh
 wget https://github.com/maksimryndin/goral/releases/download/0.1.2/goral-0.1.2-x86_64-unknown-linux-gnu.tar.gz
 tar -xzf goral-0.1.2-x86_64-unknown-linux-gnu.tar.gz
@@ -11,20 +18,18 @@ cd goral-0.1.2-x86_64-unknown-linux-gnu/
 shasum -a 256 -c sha256_checksum.txt 
 sudo mv goral /usr/local/bin/goral
 ```
+</details>
 
-or just use an installer which will download the latest stable release, check sha256 and unpack it at the current directory
+<details>
+  <summary>from source</summary>
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/maksimryndin/goral/0.1.3rc22/.github/site/install.sh | sh
-sudo mv goral /usr/local/bin/goral
-```
-
-2) from source (you need [Rust](https://www.rust-lang.org/tools/install)) with a command
-```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 git clone --depth 1 --branch 0.1.2 https://github.com/maksimryndin/goral
 cd goral
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
 ```
+</details>
 
 To run a binary
 ```sh

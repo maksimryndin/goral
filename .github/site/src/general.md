@@ -20,7 +20,7 @@ messenger.url = "<messenger api url for sending messages>"
 # log_level = "info"
 service_account_credentials_path = "/path/to/service_account.json"
 messenger.url = "<messenger api url for sending messages>"
-# graceful_timeout_secs = 10
+# graceful_timeout_secs = 5
 ```
 </details>
 
