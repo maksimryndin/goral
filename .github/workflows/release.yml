@@ -91,16 +91,15 @@ jobs:
         run: |
           cargo clippy -- -D warnings
 
-      # TODO uncomment when cargo deny will fix a dependency issue
-      # - name: Install audit
-      #   shell: bash
-      #   run: |
-      #     cargo install cargo-deny 
+      - name: Install audit
+        shell: bash
+        run: |
+          cargo install cargo-deny 
 
-      # - name: Security audit, licenses
-      #   shell: bash
-      #   run: |
-      #     cargo deny check licenses advisories sources
+      - name: Security audit, licenses
+        shell: bash
+        run: |
+          cargo deny check licenses advisories sources
 
       - name: Test
         shell: bash

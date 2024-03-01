@@ -1,3 +1,7 @@
+* 0.1.4
+    * minor improvements for notifications
+    * urls with specified domains do not require ports
+
 * 0.1.3
     * fix version message for telegram
     * releases for other platforms
