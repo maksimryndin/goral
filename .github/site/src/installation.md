@@ -4,11 +4,10 @@ You can install (or update) Goral with
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://maksimryndin.github.io/goral/install.sh | sh
-sudo mv goral /usr/local/bin/goral
 ```
 
 <details>
-  <summary>or by downloading a prebuilt binary from https://github.com/maksimryndin/goral/releases manually
+  <summary>or by downloading a prebuilt binary from <a href="https://github.com/maksimryndin/goral/releases" target="_blank">the releases page</a> manually
 </summary>
 
 ```sh
@@ -16,7 +15,6 @@ wget https://github.com/maksimryndin/goral/releases/download/0.1.3/goral-0.1.3-x
 tar -xzf goral-0.1.3-x86_64-unknown-linux-gnu.tar.gz
 cd goral-0.1.3-x86_64-unknown-linux-gnu/
 shasum -a 256 -c sha256_checksum.txt 
-sudo mv goral /usr/local/bin/goral
 ```
 </details>
 
@@ -41,11 +39,40 @@ where an example `config.toml` is
 ```toml
 [general]
 service_account_credentials_path = "/etc/goral_service_account.json"
-messenger.url = "https://discord.com/api/webhooks/123/zzz"
+messenger.specific.chat_id = "-000000000000"
+messenger.url = "https://api.telegram.org/bot12345678:XXXXXxxxxx-XXXddxxss-XXX/sendMessage"
+
+[healthcheck]
+spreadsheet_id = "<spreadsheet_id_1>"
+messenger.specific.chat_id = "-111111111111"
+messenger.url = "https://api.telegram.org/bot12345678:XXXXXxxxxx-XXXddxxss-XXX/sendMessage"
+autotruncate_at_usage_percent = 90
+[[healthcheck.liveness]]
+name = "backend"
+type = "Http"
+endpoint = "http://127.0.0.1:8080"
+
+[logs]
+spreadsheet_id = "<spreadsheet_id_2>"
+messenger.url = "https://discord.com/api/webhooks/123456789/xxxxx-XXXXX"
+autotruncate_at_usage_percent = 90
+
+[metrics]
+spreadsheet_id = "<spreadsheet_id_3>"
+messenger.specific.token = "xoxb-123-456-XXXXXX"
+messenger.specific.channel = "XXXXXXXX"
+messenger.url = "https://slack.com/api/chat.postMessage"
+autotruncate_at_usage_percent = 90
+[[target]]
+endpoint = "http://127.0.0.1:8080/metrics"
+name = "backend"
 
 [system]
-spreadsheet_id = "123XYZ"
-messenger.url = "https://discord.com/api/webhooks/123/zzz"
+spreadsheet_id = "<spreadsheet_id_4>"
+messenger.url = "https://discord.com/api/webhooks/101010101/xxxxx-XXXXX"
+autotruncate_at_usage_percent = 90
+mounts = ["/", "/var"]
+names = ["goral", "mybackend"]
 ```
 
 See also [Services](./services.md) and [Recommended deployment](./recommended-deployment.md).

@@ -1,5 +1,7 @@
 # Recommended deployment
 
+## Linux
+
 Goral follows a fail-fast approach - if something violates assumptions (marked with `assert:`), the safest thing is to panic and restart. It doesn't behave like that for recoverable errors, of course. For example, if Goral cannot send a message via messenger, it will try to message via General service notifications and its logs. And will continue working and collecting data. If it cannot connect to Google API, it will retry first. 
 
 There is also a case of fatal errors (e.g. `MissingToken error` for Google API which usually means that system time has skewed). In that case only someone outside can help. And in case of such panics Goral first tries to notify you via a messenger configured for General service to let you know immediately.
@@ -7,7 +9,11 @@ There is also a case of fatal errors (e.g. `MissingToken error` for Google API w
 So following Erlang's idea of [supervision trees](https://adoptingerlang.org/docs/development/supervision_trees/) we recommend to run Goral as a systemd service under Linux for automatic restarts in case of panics and other issues. 
 
 1. [Install](./installation.md) Goral
-2. An example systemd configuration (can be created with `sudo systemctl edit --force --full goral.service`):
+2. Make it system-wide available as an executable
+```sh
+sudo mv goral /usr/local/bin/goral
+```
+3. An example systemd configuration (can be created with `sudo systemctl edit --force --full goral.service`):
 ```
 [Unit]
 Description=Goral observability daemon
@@ -22,8 +28,8 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 ```
-3. Create a service account file (e.g. at `/etc/goral_service_account.json`) and a config file `/etc/goral.toml`
-4. Start the service `sudo systemctl start goral`
+4. Create a service account file (e.g. at `/etc/goral_service_account.json`) and a config file `/etc/goral.toml`
+5. Start the service `sudo systemctl start goral`
 
 Then to check errors in Goral's log (if any error is reported via a messenger):
 

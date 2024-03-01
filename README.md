@@ -4,6 +4,12 @@
 
 Observability toolkit for small projects. Easy-to-use and compatible with industry standards.
 
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://maksimryndin.github.io/goral/install.sh | sh
+```
+
+Also check out [setup](https://maksimryndin.github.io/goral/setup.html) and [recommended deployment](https://maksimryndin.github.io/goral/recommended-deployment.html).
+
 ## Overview
 
 Goral is a simple observability daemon developed with the following idea in mind: when you have your favorite application in its infantry, you usually don't need a full-blown observability toolkit (which requires much more setup, maintenance and resources) around as the amount of data is not so huge. It is especially true for pet projects when you just want to test an idea and deploy the app at some free-tier commodity VPS.
