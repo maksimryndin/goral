@@ -46,6 +46,7 @@ messenger.url = "https://api.telegram.org/bot12345678:XXXXXxxxxx-XXXddxxss-XXX/s
 spreadsheet_id = "<spreadsheet_id_1>"
 messenger.specific.chat_id = "-111111111111"
 messenger.url = "https://api.telegram.org/bot12345678:XXXXXxxxxx-XXXddxxss-XXX/sendMessage"
+messenger.send_google_append_error = false
 autotruncate_at_usage_percent = 90
 [[healthcheck.liveness]]
 name = "backend"

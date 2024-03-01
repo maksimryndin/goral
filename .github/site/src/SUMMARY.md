@@ -2,8 +2,8 @@
 
 - [Start](./start.md)
     - [System requirements](./system-requirements.md)
-    - [Setup](./setup.md)
     - [Installation](./installation.md)
+    - [Setup](./setup.md)
 - [Services](./services.md)
     - [General](./general.md)
     - [Healthcheck](./healthcheck.md)
