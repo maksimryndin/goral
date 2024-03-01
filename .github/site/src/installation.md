@@ -11,9 +11,9 @@ curl --proto '=https' --tlsv1.2 -sSf https://maksimryndin.github.io/goral/instal
 </summary>
 
 ```sh
-wget https://github.com/maksimryndin/goral/releases/download/0.1.3/goral-0.1.3-x86_64-unknown-linux-gnu.tar.gz
-tar -xzf goral-0.1.3-x86_64-unknown-linux-gnu.tar.gz
-cd goral-0.1.3-x86_64-unknown-linux-gnu/
+wget https://github.com/maksimryndin/goral/releases/download/0.1.4/goral-0.1.4-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf goral-0.1.4-x86_64-unknown-linux-gnu.tar.gz
+cd goral-0.1.4-x86_64-unknown-linux-gnu/
 shasum -a 256 -c sha256_checksum.txt 
 ```
 </details>
@@ -23,7 +23,7 @@ shasum -a 256 -c sha256_checksum.txt
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-git clone --depth 1 --branch 0.1.3 https://github.com/maksimryndin/goral
+git clone --depth 1 --branch 0.1.4 https://github.com/maksimryndin/goral
 cd goral
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
 ```
@@ -34,7 +34,7 @@ To run a binary
 goral -c config.toml --id myhost
 ```
 
-where an example `config.toml` is
+where an `myhost` is an identifier of the machine (no more than 8 chars) and an example `config.toml` can be
 
 ```toml
 [general]
