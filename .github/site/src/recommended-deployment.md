@@ -41,7 +41,8 @@ WantedBy=multi-user.target
 *Note*: `User=myuser` will limit `top_open_files` for [System](./system.md) to processes only under `myuser`. So if you monitor open file descriptors of some process, make sure to run both it and Goral under the same user.
 
 4. Create a service account file (e.g. at `/etc/goral_service_account.json`) and a config file `/etc/goral.toml`
-5. Start the service `sudo systemctl start goral`
+5. Enable for restart after boot `sudo systemctl enable goral`
+6. Start the service `sudo systemctl start goral`
 
 Then to check errors in Goral's log (if any error is reported via a messenger):
 
