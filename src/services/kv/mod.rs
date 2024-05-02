@@ -179,6 +179,7 @@ impl KvService {
                 let body = hyper::body::aggregate(req).await?;
                 let req_body: Request = match serde_json::from_reader(body.reader()) {
                     Err(e) => {
+                        tracing::warn!("invalid request to KV service: {e}");
                         return Ok(HyperResponse::builder()
                         .status(StatusCode::UNPROCESSABLE_ENTITY)
                         .header(header::CONTENT_TYPE, "application/json")
@@ -188,6 +189,7 @@ impl KvService {
                     Ok(b) => b,
                 };
                 if let Err(e) = req_body.validate() {
+                    tracing::warn!("invalid request to KV service: {e}");
                     return Ok(HyperResponse::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .header(header::CONTENT_TYPE, "application/json")
@@ -278,8 +280,8 @@ impl KvService {
         }));
 
         let server = server.with_graceful_shutdown(async move {
-            tracing::info!("KV server is shutting down");
             shutdown.recv().await.ok();
+            tracing::info!("KV server is shutting down");
         });
 
         let send_notification = self.shared.send_notification.clone();

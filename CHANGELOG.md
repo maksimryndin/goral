@@ -1,3 +1,7 @@
+* 0.1.5
+    * increase max body size for latest release check
+    * KV server shutdown message fix
+
 * 0.1.4
     * minor improvements for notifications
     * urls with specified domains do not require ports

@@ -27,7 +27,8 @@ port = <"port from the range 49152-65535">
 
 Such a configuration runs a server process in the Goral daemon listening at the specified port (localhost only for security reasons). From your app you periodically make a batch POST request to `localhost:<port>/api/kv` with a json body:
 ```json
-[
+{
+  "rows": [
     {
         "datetime": "2023-12-09T09:50:46.136945094Z", /* an RFC 3339 and ISO 8601 date and time string */
         "log_name": "orders", /* validated against regex ^[a-zA-Z_][a-zA-Z0-9_]*$ */
@@ -43,7 +44,8 @@ Such a configuration runs a server process in the Goral daemon listening at the 
         "log_name": "campaigns",
         "data": [["name", "10% discount for buying 3 donuts"], ["is active", true], ["credits", -6], ["datetime", "2023-12-11 09:19:32.827321506"]], /* datatypes for values are string, integer (unsigned 64-bits), boolean, float (64 bits) and datetime string (in common formats without tz) */
     }
-]
+  ]
+}
 ```
 
 Appending to the log is *not idempotent*, i.e. if you retry the same request two times, then the same set of rows will be added twice. If it is absolutely important to avoid any duplication (which may happen in case of some unexpected failure or retrying logic), then it is recommended to some unique idempotence key to `data` to be able to filter duplicates in the spreadsheet and remove them manually.

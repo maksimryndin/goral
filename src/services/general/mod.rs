@@ -30,7 +30,7 @@ async fn latest_release() -> Result<GithubRelease, Box<dyn std::error::Error + S
     let url = "https://api.github.com/repos/maksimryndin/goral/releases/latest"
         .parse()
         .expect("assert: latest release url is correct");
-    let client = HttpClient::new(8192, true, Duration::from_millis(1000), url);
+    let client = HttpClient::new(32768, true, Duration::from_millis(1000), url);
     let res = client.get().await?;
     Ok(serde_json::from_str(&res)?)
 }
