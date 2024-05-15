@@ -16,6 +16,7 @@ use std::str::FromStr;
 use url::{Host, Url};
 
 pub const APP_NAME: &str = "GORAL";
+pub const GOOGLE_SHEET_BASE: &str = "https://docs.google.com/spreadsheets/d/";
 
 pub(crate) fn ceiled_division(divisable: u16, divisor: u16) -> u16 {
     let quotient = divisable / divisor;
@@ -167,8 +168,8 @@ impl Configuration {
             if total > 100.0 {
                 write!(
                     &mut message,
-                    "current usage limits sum up to {}% for spreadsheet `{}`,",
-                    total, spreadsheet_id
+                    "current usage limits sum up to {}% for [spreadsheet]({}{}),",
+                    total, GOOGLE_SHEET_BASE, spreadsheet_id
                 )
                 .expect("assert: can write to string");
             }

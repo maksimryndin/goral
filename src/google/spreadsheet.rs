@@ -1,3 +1,4 @@
+use crate::configuration::GOOGLE_SHEET_BASE;
 use crate::google::sheet::{CleanupSheet, Rows, Sheet, SheetId, UpdateSheet, VirtualSheet};
 use crate::google::Metadata;
 use crate::storage::StorageError;
@@ -241,17 +242,11 @@ impl SpreadsheetAPI {
     }
 
     pub(crate) fn sheet_url(&self, spreadsheet_id: &str, sheet_id: SheetId) -> String {
-        format!(
-            "https://docs.google.com/spreadsheets/d/{}#gid={}",
-            spreadsheet_id, sheet_id
-        )
+        format!("{GOOGLE_SHEET_BASE}{spreadsheet_id}#gid={sheet_id}")
     }
 
     pub(crate) fn spreadsheet_baseurl(&self, spreadsheet_id: &str) -> String {
-        format!(
-            "https://docs.google.com/spreadsheets/d/{}#gid=",
-            spreadsheet_id
-        )
+        format!("{GOOGLE_SHEET_BASE}{spreadsheet_id}#gid=")
     }
 
     pub(crate) async fn sheets_filtered_by_metadata(
