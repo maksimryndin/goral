@@ -491,8 +491,8 @@ mod tests {
             None,
         );
         assert!(
-            rule.is_none(),
-            "test assert: `is` cannot be a condition for a text value"
+            rule.is_some(),
+            "test assert: `is` can be a condition for a text value"
         );
 
         let rule = Rule::try_from_values(
@@ -523,8 +523,8 @@ mod tests {
             None,
         );
         assert!(
-            rule.is_none(),
-            "test assert: `is not` cannot be a condition for a text value"
+            rule.is_some(),
+            "test assert: `is not` can be a condition for a text value"
         );
 
         let rule = Rule::try_from_values(
