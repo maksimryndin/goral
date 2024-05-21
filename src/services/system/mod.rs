@@ -18,6 +18,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::mpsc::{self};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 pub const SYSTEM_SERVICE_NAME: &str = "system";
@@ -84,12 +85,12 @@ impl SystemService {
             .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
             if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
                 if is_shutdown.load(Ordering::Relaxed) {
+                    tracing::info!("exiting system info scraping thread");
                     return;
                 }
                 panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
             }
         }
-        tracing::info!("exiting system info scraping thread");
     }
 
     async fn make_timed_scrape(
@@ -103,78 +104,18 @@ impl SystemService {
         }
     }
 
-    fn collect_sysinfo(
-        is_shutdown: Arc<AtomicBool>,
-        sender: mpsc::Sender<TaskResult>,
-        mut request_rx: mpsc::Receiver<DateTime<Utc>>,
-        mounts: Vec<String>,
-        names: Vec<String>,
-        messenger: Sender,
-    ) {
-        let mut sys = collector::initialize();
-        tracing::info!("started system info scraping thread");
-
-        while let Some(scrape_time) = request_rx.blocking_recv() {
-            let result = collector::collect(
-                &mut sys,
-                &mounts,
-                &names,
-                scrape_time.naive_utc(),
-                &messenger,
-            )
-            .map(Data::Many)
-            .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
-            if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
-                if is_shutdown.load(Ordering::Relaxed) {
-                    return;
-                }
-                panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
-            }
-        }
-        tracing::info!("exiting system info scraping thread");
-    }
-
-    #[allow(clippy::too_many_arguments)]
     async fn ssh_observer(
         is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
         messenger: Sender,
-        send_notification: Sender
     ) {
-        let (mut tx, rx) = mpsc::channel::<DateTime<Utc>>(1);
-        tracing::info!("starting system info scraping");
-        let cloned_sender = sender.clone();
-        let cloned_is_shutdown = is_shutdown.clone();
+        tracing::info!("starting ssh monitoring");
+        let (tx, rx) = oneshot::channel::<()>();
         std::thread::Builder::new()
             .name("ssh-observer".into())
-            .spawn(move || {
-                Self::collect_sysinfo(
-                    cloned_is_shutdown,
-                    cloned_sender,
-                    rx,
-                    mounts,
-                    names,
-                    messenger,
-                )
-            })
-            .expect("assert: can spawn sysinfo collecting thread");
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    let scrape_time = Utc::now();
-                    if let Err(e) = Self::make_timed_scrape(&mut tx, scrape_timeout, scrape_time).await {
-                        if is_shutdown.load(Ordering::Relaxed) {
-                            tracing::info!("finished sysinfo collection");
-                            return;
-                        }
-                        let msg = format!("error sending request for sysinfo `{}`", e);
-                        tracing::error!("{}", msg);
-                        send_notification.fatal(msg).await;
-                    }
-                }
-            }
-        }
+            .spawn(move || ssh::process_sshd_log(is_shutdown, sender, messenger, tx))
+            .expect("assert: can spawn ssh monitoring thread");
+        let _ = rx.await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -245,7 +186,19 @@ impl Service for SystemService {
     }
 
     fn get_example_rules(&self) -> Vec<Datarow> {
-        let mut rows = Vec::with_capacity(2 + self.mounts.len() + 2 * self.process_names.len());
+        let mut rows = Vec::with_capacity(3 + self.mounts.len() + 2 * self.process_names.len());
+        if cfg!(target_os = "linux") {
+            rows.push(
+                Rule {
+                    log_name: ssh::SSH_LOG.to_string(),
+                    key: ssh::SSH_LOG_STATUS.to_string(),
+                    condition: RuleCondition::Is,
+                    value: Datavalue::Text(ssh::SSH_LOG_STATUS_CONNECTED.to_string()),
+                    action: Action::Warn,
+                }
+                .into(),
+            );
+        }
         rows.push(
             Rule {
                 log_name: collector::BASIC_LOG.to_string(),
@@ -360,7 +313,24 @@ impl Service for SystemService {
         let names = self.process_names.clone();
         let scrape_interval = self.scrape_interval;
         let scrape_timeout = self.scrape_timeout;
-        vec![tokio::spawn(async move {
+
+        let mut tasks = if cfg!(target_os = "linux") {
+            let cloned_is_shutdown = is_shutdown.clone();
+            let cloned_sender = sender.clone();
+            let cloned_messenger = messenger.clone();
+            vec![tokio::spawn(async move {
+                Self::ssh_observer(
+                    cloned_is_shutdown,
+                    cloned_sender,
+                    cloned_messenger,
+                )
+                .await;
+            })]
+        } else {
+            vec![]
+        };
+
+        tasks.push(tokio::spawn(async move {
             Self::sys_observer(
                 is_shutdown,
                 scrape_interval,
@@ -372,18 +342,8 @@ impl Service for SystemService {
                 names,
             )
             .await;
-        }),
-        tokio::spawn(async move {
-            Self::ssh_observer(
-                is_shutdown,
-                sender,
-                messenger,
-                send_notification,
-                mounts,
-                names,
-            )
-            .await;
-        })]
+        }));
+        tasks
     }
 }
 
