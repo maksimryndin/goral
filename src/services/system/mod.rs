@@ -18,7 +18,6 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::mpsc::{self};
-use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 pub const SYSTEM_SERVICE_NAME: &str = "system";
@@ -104,13 +103,14 @@ impl SystemService {
         }
     }
 
+    #[cfg(target_os = "linux")]
     async fn ssh_observer(
         is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
         messenger: Sender,
     ) {
         tracing::info!("starting ssh monitoring");
-        let (tx, rx) = oneshot::channel::<()>();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         std::thread::Builder::new()
             .name("ssh-observer".into())
             .spawn(move || ssh::process_sshd_log(is_shutdown, sender, messenger, tx))
@@ -187,7 +187,8 @@ impl Service for SystemService {
 
     fn get_example_rules(&self) -> Vec<Datarow> {
         let mut rows = Vec::with_capacity(3 + self.mounts.len() + 2 * self.process_names.len());
-        if cfg!(target_os = "linux") {
+        #[cfg(target_os = "linux")]
+        {
             rows.push(
                 Rule {
                     log_name: ssh::SSH_LOG.to_string(),
@@ -314,16 +315,16 @@ impl Service for SystemService {
         let scrape_interval = self.scrape_interval;
         let scrape_timeout = self.scrape_timeout;
 
-        let mut tasks = if cfg!(target_os = "linux") {
+        let mut tasks = vec![];
+        #[cfg(target_os = "linux")]
+        {
             let cloned_is_shutdown = is_shutdown.clone();
             let cloned_sender = sender.clone();
             let cloned_messenger = messenger.clone();
-            vec![tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 Self::ssh_observer(cloned_is_shutdown, cloned_sender, cloned_messenger).await;
-            })]
-        } else {
-            vec![]
-        };
+            }));
+        }
 
         tasks.push(tokio::spawn(async move {
             Self::sys_observer(
