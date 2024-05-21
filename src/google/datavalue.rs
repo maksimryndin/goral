@@ -419,9 +419,7 @@ impl From<Datarow> for RuleApplicant {
                         Percent(p) | HeatmapPercent(p) => Number(p / 100.0),
                         Datetime(d) => Number(convert_datetime_to_spreadsheet_double(d)),
                         Bool(b) => Bool(b),
-                        Size(s) => Integer(u32::try_from(s).expect(
-                            "assert: rule cannot contain large (more than u32::MAX) integers",
-                        )),
+                        Size(s) => Number(s as f64), // Rounding errors are acceptable for Size datavalues
                         NotAvailable => NotAvailable,
                     };
                     (k, v)
