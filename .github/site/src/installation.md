@@ -11,9 +11,9 @@ curl --proto '=https' --tlsv1.2 -sSf https://maksimryndin.github.io/goral/instal
 </summary>
 
 ```sh
-wget https://github.com/maksimryndin/goral/releases/download/0.1.5/goral-0.1.5-x86_64-unknown-linux-gnu.tar.gz
-tar -xzf goral-0.1.5-x86_64-unknown-linux-gnu.tar.gz
-cd goral-0.1.5-x86_64-unknown-linux-gnu/
+wget https://github.com/maksimryndin/goral/releases/download/0.1.6/goral-0.1.6-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf goral-0.1.6-x86_64-unknown-linux-gnu.tar.gz
+cd goral-0.1.6-x86_64-unknown-linux-gnu/
 shasum -a 256 -c sha256_checksum.txt 
 ```
 </details>
@@ -23,7 +23,7 @@ shasum -a 256 -c sha256_checksum.txt
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-git clone --depth 1 --branch 0.1.5 https://github.com/maksimryndin/goral
+git clone --depth 1 --branch 0.1.6 https://github.com/maksimryndin/goral
 cd goral
 RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target <target triple>
 ```
