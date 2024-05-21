@@ -11,7 +11,7 @@ pub(super) fn channel_capacity(push_interval_secs: &u16) -> usize {
     // Estimate of append duration - 1 sec per row
     let append_duration = number_of_rows_in_batch;
     let number_of_queued_rows = append_duration * AVERAGE_DATAROWS_PER_SECOND;
-    number_of_queued_rows as usize
+    usize::from(number_of_queued_rows)
 }
 
 fn if_contains(

@@ -66,7 +66,7 @@ where
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 enum Value {
-    Integer(u64),
+    Integer(u32),
     Number(f64),
     Bool(bool),
     #[serde(deserialize_with = "deserialize_datetime")]

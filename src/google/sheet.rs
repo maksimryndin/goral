@@ -117,7 +117,7 @@ pub(crate) struct Sheet {
     pub(super) title: String,
     pub(super) hidden: bool,
     #[allow(unused)]
-    pub(super) index: u8,
+    pub(super) index: u32,
     pub(super) sheet_type: SheetType,
     // for Grid sheets - we use the same type (i32) as an upstream libs
     pub(super) frozen_row_count: Option<i32>,
@@ -183,9 +183,12 @@ impl From<GoogleSheet> for Sheet {
                 .title
                 .expect("assert: sheet title cannot be null"),
             hidden: properties.hidden.unwrap_or(false),
-            index: properties
-                .index
-                .expect("assert: sheet index cannot be null") as u8,
+            index: u32::try_from(
+                properties
+                    .index
+                    .expect("assert: sheet index cannot be null"),
+            )
+            .expect("assert: maximum number of sheets cannot exceed maximum number of cells"),
             sheet_type: properties
                 .sheet_type
                 .expect("assert: sheet type cannot be null")
@@ -338,8 +341,8 @@ impl VirtualSheet {
                     range: Some(GridRange {
                         sheet_id: Some(self.sheet.sheet_id),
                         start_row_index: Some(1),
-                        start_column_index: Some(column_index as i32),
-                        end_column_index: Some(column_index as i32 + 1),
+                        start_column_index: Some(i32::from(column_index)),
+                        end_column_index: Some(i32::from(column_index) + 1),
                         ..Default::default()
                     }),
                 }),
@@ -392,7 +395,9 @@ impl VirtualSheet {
             // for Grid sheets - we use the same type (i32) as an upstream libs
             frozen_row_count: Some(1),
             row_count: Some(2), // for headers and one row empty otherwise `You can't freeze all visible rows on the sheet`
-            column_count: Some(headers.len() as i32),
+            column_count: Some(
+                i32::try_from(headers.len()).expect("assert: number of headers fits i32::MAX"),
+            ),
             tab_color,
             metadata,
         };
@@ -429,16 +434,25 @@ impl VirtualSheet {
     }
 }
 
+// This method is not collision-free
+// id is required to be non-negative by
+// Google sheets API
+// The probability of collisions is determined
+// by the birthday problem and is approximately
+// q^2/i32::MAX where q is the number of objects to generate ids
+// For 50 sheets to be created in the same workbook this probability
+// is approximately 10^-6 which is acceptable for our purposes
+// See also the test below
 pub(crate) fn str_to_id(s: &str) -> i32 {
     let mut hasher = DefaultHasher::new();
     hasher.write(s.as_bytes());
     let bytes = hasher.finish().to_be_bytes();
-    (u32::from_be_bytes(
+    i32::from_be_bytes(
         bytes[4..8]
             .try_into()
-            .expect("assert: u32 is created from 4 bytes"),
-    ) as i32)
-        .abs()
+            .expect("assert: i32 is created from 4 bytes"),
+    )
+    .abs()
 }
 
 fn generate_metadata_id(key: &str, sheet_id: SheetId) -> i32 {
@@ -553,14 +567,14 @@ impl Rows {
     }
 
     pub(crate) fn new_rows_count(&self) -> i32 {
-        self.rows.len() as i32
+        i32::try_from(self.rows.len()).expect("assert: number of new rows fits i32::MAX")
     }
 
     pub(super) fn into_api_requests(self) -> Vec<Request> {
         let filter_range = GridRange {
             sheet_id: Some(self.sheet_id),
             start_row_index: Some(0),
-            end_row_index: Some(self.row_count + self.rows.len() as i32),
+            end_row_index: Some(self.row_count + self.new_rows_count()),
             start_column_index: Some(0),
             end_column_index: None,
         };
@@ -592,6 +606,8 @@ impl Rows {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use rand::{distributions::Alphanumeric, Rng};
+    use std::collections::HashSet;
 
     impl Sheet {
         pub(crate) fn title(&self) -> &str {
@@ -666,5 +682,46 @@ pub(crate) mod tests {
     fn id_generation() {
         let id = str_to_id("some text to generate id from");
         assert!(id > 0, "generated id should be positive");
+    }
+
+    #[test]
+    fn id_collision() {
+        let mut counts = HashMap::new();
+        let mut rng = rand::thread_rng();
+        //let total = crate::google::spreadsheet::GOOGLE_SPREADSHEET_MAXIMUM_CELLS; // a theoretical number of sheets
+        let total = 50; // a reasonable number of sheets
+        for _ in 0..total {
+            let n: usize = rng.gen_range(10..40);
+            let s: String = (&mut rng)
+                .sample_iter(&Alphanumeric)
+                .take(n)
+                .map(char::from)
+                .collect();
+            let id = str_to_id(&s);
+            *counts.entry(id).or_insert(0) += 1;
+        }
+        let mut collisions = HashSet::new();
+        let mut num_of_collisions = 0;
+        let mut num_of_dublicates = 0; // how many objects would be rejected
+        for (_, count) in counts {
+            if count == 1 {
+                continue;
+            }
+            num_of_collisions += count;
+            num_of_dublicates += count - 1;
+            collisions.insert(count);
+        }
+        // Example for 10_000_000 objects
+        // num_of_collisions 46771, 0.47%, num_of_dublicates: 23402
+        // collisions numbers {3, 4, 2}
+        let share = 100.0 * num_of_collisions as f64 / total as f64;
+        println!(
+            "num_of_collisions {}, {:.2}%, num_of_dublicates: {}\n{:?}",
+            num_of_collisions, share, num_of_dublicates, collisions
+        );
+        assert!(
+            share < 0.000001,
+            "collisions are highly unprobable for usual cases"
+        );
     }
 }

@@ -383,6 +383,7 @@ impl AppendableLog {
         limit: f32,
         rows_count: &mut HashMap<SheetId, i32>,
     ) -> Vec<CleanupSheet> {
+        let limit = limit as f64; // SAFE as limit is supposed to be a % so under 100.0
         for (sheet_id, rows) in data_to_append {
             *rows_count
                 .get_mut(sheet_id)
@@ -407,7 +408,7 @@ impl AppendableLog {
             })
             .sum();
         let usage =
-            100.0 * (cells_used_by_service as f32 / GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32);
+            100.0 * f64::from(cells_used_by_service) / f64::from(GOOGLE_SPREADSHEET_MAXIMUM_CELLS);
         tracing::debug!(
             "cells used by service `{}`: {}, usage: {}%",
             self.service,
@@ -428,7 +429,7 @@ impl AppendableLog {
         }
         // remove surplus and 30% of the limit
         let cells_to_delete =
-            (usage - 0.7 * limit) * GOOGLE_SPREADSHEET_MAXIMUM_CELLS as f32 / 100.0;
+            (usage - 0.7 * limit) * f64::from(GOOGLE_SPREADSHEET_MAXIMUM_CELLS) / 100.0;
 
         let message = format!(
             "sheets managed by service `{}` with usage `{usage:.2}%` are truncated",
@@ -472,7 +473,7 @@ impl AppendableLog {
                 let sheet_cells = sheet_usage.row_count * sheet_usage.column_count;
                 let stat = state.entry(log_name).or_insert((0, 0.0, vec![]));
                 stat.0 += sheet_cells;
-                stat.1 = stat.0 as f32 / cells_used_by_service as f32; // share of usage by the log name
+                stat.1 = f64::from(stat.0) / f64::from(cells_used_by_service); // share of usage by the log name
                 stat.2.push(sheet_usage);
                 state
             });
@@ -481,7 +482,7 @@ impl AppendableLog {
         let requests = usages
             .into_iter()
             .flat_map(|(_, (_, log_cells_usage, mut sheets))| {
-                let mut cells_to_delete_for_log = (log_cells_usage * cells_to_delete) as i32;
+                let mut cells_to_delete_for_log = (log_cells_usage * cells_to_delete) as i32; // SAFE as the upper bound for cells for Sheets is within i32::MAX
                 sheets.sort_unstable_by_key(|s| s.updated_at);
                 let mut requests = Vec::with_capacity(sheets.len());
                 for sheet in sheets {
@@ -561,6 +562,7 @@ struct SheetUsage {
 
 macro_rules! sheet_name_jitter {
     ($sheet_id:expr) => {
+        // we need 8 lowest significant bytes
         (*$sheet_id as u8) >> 3
     };
 }

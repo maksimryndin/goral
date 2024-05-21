@@ -1,3 +1,7 @@
+* 0.1.6
+    * safe numbers conversions
+    * ids collision tests
+
 * 0.1.5
     * increase max body size for latest release check
     * KV server shutdown message fix

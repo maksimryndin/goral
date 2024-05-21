@@ -29,7 +29,7 @@ use serde_json::Value;
 use crate::google::spreadsheet::tests::TestState;
 
 // https://support.google.com/docs/thread/181288162/whats-the-maximum-amount-of-rows-in-google-sheets?hl=en
-pub(crate) const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u64 = 10_000_000;
+pub(crate) const GOOGLE_SPREADSHEET_MAXIMUM_CELLS: u32 = 10_000_000;
 pub(crate) const GOOGLE_SPREADSHEET_MAXIMUM_CHARS_PER_CELL: usize = 50_000;
 
 async fn handle_error<T>(
@@ -518,7 +518,7 @@ pub(crate) mod tests {
                             )));
                         }
                         self.sheet_titles.insert(title.to_string());
-                        properties.index = Some(self.sheets.len() as i32);
+                        properties.index = Some(i32::try_from(self.sheets.len()).unwrap());
                         // goral creates GRID sheets
                         // we decrease row count here for correct counting
                         // for append cells requests
@@ -556,7 +556,8 @@ pub(crate) mod tests {
                                 .as_mut()
                                 .expect("assert: goral creates grid sheets with grid_properties");
                             if let Some(row_count) = grid_properties.row_count {
-                                grid_properties.row_count = Some(row_count + (rows.len() as i32));
+                                grid_properties.row_count =
+                                    Some(row_count + (i32::try_from(rows.len()).unwrap()));
                             } else {
                                 return Err(Self::bad_response(format!(
                                     "cannot append cells to a non-grid sheet!"

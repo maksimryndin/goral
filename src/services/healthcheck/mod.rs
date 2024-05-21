@@ -519,7 +519,7 @@ mod tests {
             .await;
         });
 
-        tokio::time::sleep(Duration::from_secs(NUM_OF_PROBES as u64)).await;
+        tokio::time::sleep(Duration::from_secs(u64::try_from(NUM_OF_PROBES).unwrap())).await;
         is_shutdown.store(true, Ordering::Release);
         data_receiver.close();
 
@@ -578,7 +578,7 @@ mod tests {
             .await;
         });
 
-        tokio::time::sleep(Duration::from_secs(NUM_OF_PROBES as u64)).await;
+        tokio::time::sleep(Duration::from_secs(u64::try_from(NUM_OF_PROBES).unwrap())).await;
         is_shutdown.store(true, Ordering::Release);
         data_receiver.close();
 
@@ -653,7 +653,7 @@ mod tests {
             .await;
         });
 
-        tokio::time::sleep(Duration::from_secs(NUM_OF_PROBES as u64)).await;
+        tokio::time::sleep(Duration::from_secs(u64::try_from(NUM_OF_PROBES).unwrap())).await;
         is_shutdown.store(true, Ordering::Release);
         data_receiver.close();
 

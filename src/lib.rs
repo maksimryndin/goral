@@ -36,7 +36,7 @@ pub(crate) type HttpsClient = Client<HyperConnector>;
 pub(crate) const HOST_ID_CHARS_LIMIT: usize = 8;
 
 fn get_service_tab_color(service_name: &str) -> TabColorRGB {
-    let rgb = match service_name {
+    let rgb: (u8, u8, u8) = match service_name {
         GENERAL_SERVICE_NAME => (0, 0, 0), // general service hasn't sheets
         HEALTHCHECK_SERVICE_NAME => (255, 0, 0), // red
         KV_SERVICE_NAME => (255, 153, 0),  // orange
@@ -46,9 +46,9 @@ fn get_service_tab_color(service_name: &str) -> TabColorRGB {
         _ => panic!("assert: every service has its tab color defined"),
     };
     (
-        rgb.0 as f32 / 255.0,
-        rgb.1 as f32 / 255.0,
-        rgb.2 as f32 / 255.0,
+        f32::from(rgb.0) / 255.0,
+        f32::from(rgb.1) / 255.0,
+        f32::from(rgb.2) / 255.0,
     )
 }
 
@@ -304,7 +304,7 @@ pub(crate) fn jitter_duration() -> Duration {
     getrandom::getrandom(&mut buf).expect("assert: can get random from the OS");
     let jitter = u16::from_be_bytes(buf);
     let jitter = jitter >> 2; // to limit values to 2^14 = 16384 or ~16 secs
-    Duration::from_millis(jitter as u64)
+    Duration::from_millis(u64::from(jitter))
 }
 
 #[cfg(test)]

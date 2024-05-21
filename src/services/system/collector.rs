@@ -42,7 +42,7 @@ struct ProcessInfo {
 }
 
 impl ProcessInfo {
-    fn from(sysinfo_process: &SysinfoProcess, total_memory: f32) -> Self {
+    fn from(sysinfo_process: &SysinfoProcess, total_memory: u64) -> Self {
         let name = if let Some(name) = sysinfo_process.exe() {
             name.file_name()
                 .expect("assert: if process has a binary, it has a filename")
@@ -66,7 +66,10 @@ impl ProcessInfo {
             cpu_percent: sysinfo_process.cpu_usage(),
             memory_used: sysinfo_process.memory(),
             virtual_memory: sysinfo_process.virtual_memory(),
-            memory_use: 100.0 * sysinfo_process.memory() as f32 / total_memory,
+            // SAFE: can cast f64 percent to f32
+            // Memory sizes can be casted from u64 to f64 with roundings errors
+            // which are acceptable here
+            memory_use: (100.0 * sysinfo_process.memory() as f64 / total_memory as f64) as f32,
             disk_read: sysinfo_process.disk_usage().read_bytes,
             disk_write: sysinfo_process.disk_usage().written_bytes,
             start_time: NaiveDateTime::from_timestamp_opt(
@@ -83,6 +86,7 @@ impl ProcessInfo {
 }
 
 fn top_cpu_process(processes: &mut [ProcessInfo]) -> &ProcessInfo {
+    // SAFE cast from f32 to u32 just for sorting purposes
     processes.sort_unstable_by_key(|p| (p.cpu_percent * 100.0) as u32);
     processes
         .last()
@@ -130,13 +134,17 @@ fn process_to_values(process: &ProcessInfo, users: &Users) -> Vec<(String, Datav
         .unwrap_or(Datavalue::NotAvailable);
     let open_files = process
         .open_files
-        .map(|open_files| Datavalue::Integer(open_files as u64))
+        .map(|open_files| {
+            Datavalue::Integer(
+                u32::try_from(open_files).expect("assert: number of opened files fits u32"),
+            )
+        })
         .unwrap_or(Datavalue::NotAvailable);
 
     vec![
         (
             "pid".to_string(),
-            Datavalue::IntegerID(process.pid.as_u32() as u64),
+            Datavalue::IntegerID(u32::from(process.pid.as_u32())),
         ),
         (
             "name".to_string(),
@@ -158,10 +166,12 @@ fn process_to_values(process: &ProcessInfo, users: &Users) -> Vec<(String, Datav
         ),
         (
             MEMORY_USE.to_string(),
+            // SAFE casting percentage from f32 to f64
             Datavalue::HeatmapPercent(process.memory_use as f64),
         ),
         (
             CPU.to_string(),
+            // SAFE casting percentage from f32 to f64
             Datavalue::HeatmapPercent(process.cpu_percent as f64),
         ),
         ("disk_read".to_string(), Datavalue::Size(process.disk_read)),
@@ -196,7 +206,7 @@ pub(super) fn collect(
     let total_memory = sys.total_memory();
     let mut processes_infos = Vec::with_capacity(sysinfo_processes.len());
     for (_, p) in sysinfo_processes.iter() {
-        processes_infos.push(ProcessInfo::from(p, total_memory as f32));
+        processes_infos.push(ProcessInfo::from(p, total_memory));
     }
 
     let boot_time = NaiveDateTime::from_timestamp_opt(
@@ -214,6 +224,7 @@ pub(super) fn collect(
         ),
         (
             MEMORY_USE.to_string(),
+            // SAFE for percentage calculation to cast from u64 to f64
             Datavalue::HeatmapPercent(100.0 * sys.used_memory() as f64 / total_memory as f64),
         ),
         (
@@ -222,16 +233,21 @@ pub(super) fn collect(
         ),
         (
             SWAP_USE.to_string(),
+            // SAFE for percentage calculation to cast from u64 to f64
             Datavalue::HeatmapPercent(100.0 * sys.used_swap() as f64 / sys.total_swap() as f64),
         ),
         (
             "num_of_processes".to_string(),
-            Datavalue::Integer(sysinfo_processes.len() as u64),
+            Datavalue::Integer(
+                u32::try_from(sysinfo_processes.len())
+                    .expect("assert: number of system processes fits u32"),
+            ),
         ),
     ];
     let cpus = sys.cpus().iter().enumerate().map(|(i, c)| {
         (
             format!("cpu{i}"),
+            // SAFE casting percentage from f32 to f64
             Datavalue::HeatmapPercent(c.cpu_usage() as f64),
         )
     });
@@ -352,6 +368,7 @@ fn disk_stat(
             vec![
                 (
                     DISK_USE.to_string(),
+                    // SAFE casting percentage from f32 to f64
                     Datavalue::HeatmapPercent(stat.percent() as f64),
                 ),
                 ("disk_free".to_string(), Datavalue::Size(stat.free())),
@@ -395,6 +412,7 @@ fn disk_stat(
             vec![
                 (
                     DISK_USE.to_string(),
+                    // SAFE for percentage calculation to cast from u64 to f64
                     Datavalue::HeatmapPercent(100.0 * (total - available) as f64 / total as f64),
                 ),
                 ("disk_free".to_string(), Datavalue::Size(available)),

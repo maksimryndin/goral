@@ -19,14 +19,16 @@ pub(super) fn scrape_push_rule(
         ));
     }
 
-    if *scrape_timeout_ms > (*scrape_interval_secs as u32) * 1000 / 2 {
+    if *scrape_timeout_ms > u32::from(*scrape_interval_secs) * 1000 / 2 {
         return Err(serde_valid::validation::Error::Custom(
             format!("Scrape timeout ({scrape_timeout_ms}ms) shouldn't be greater than half of scrape interval ({scrape_interval_secs}s)")
         ));
     }
 
     let number_of_metrics_endpoints_in_batch =
-        ceiled_division(*push_interval_secs, *scrape_interval_secs) * endpoints.len() as u16;
+        ceiled_division(*push_interval_secs, *scrape_interval_secs)
+            * u16::try_from(endpoints.len())
+                .expect("assert: number of endpoints is less than u16::MAX");
     const ENDPOINTS_LIMIT: u16 = 3;
     if number_of_metrics_endpoints_in_batch > ENDPOINTS_LIMIT {
         return Err(serde_valid::validation::Error::Custom(
@@ -38,9 +40,12 @@ pub(super) fn scrape_push_rule(
     // Estimate of append duration - 1 sec per row
     const ESTIMATED_ROWS_PER_METRICS_ENDPOINT: usize = 10;
     let append_duration =
-        number_of_metrics_endpoints_in_batch as usize * ESTIMATED_ROWS_PER_METRICS_ENDPOINT;
+        usize::from(number_of_metrics_endpoints_in_batch) * ESTIMATED_ROWS_PER_METRICS_ENDPOINT;
     let number_of_queued_rows = ESTIMATED_ROWS_PER_METRICS_ENDPOINT
-        * ceiled_division(append_duration as u16, *scrape_interval_secs) as usize
+        * usize::from(ceiled_division(
+            u16::try_from(append_duration).expect("assert: append duration cannot exceed u16::MAX"),
+            *scrape_interval_secs,
+        ))
         * endpoints.len();
     // we truncate output of probe to 1024 bytes - so estimated payload (without other fields) is around 20 KiB
     const ROWS_LIMIT: usize = 30;

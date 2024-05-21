@@ -38,8 +38,10 @@ pub(crate) enum Datavalue {
     OrangeText(String),
     GreenText(String),
     Number(f64),
-    Integer(u64),
-    IntegerID(u64),
+    // As Google accepts only f64 (https://developers.google.com/sheets/api/reference/rest/v4/spreadsheets/other#ExtendedValue)
+    // We use u32 for lossless casts
+    Integer(u32),
+    IntegerID(u32),
     Percent(f64),
     HeatmapPercent(f64),
     Datetime(NaiveDateTime),
@@ -266,7 +268,7 @@ impl From<Datarow> for RowData {
                     ),
                     Datavalue::Integer(i) => (
                         ExtendedValue {
-                            number_value: Some(i as f64),
+                            number_value: Some(f64::from(i)),
                             ..Default::default()
                         },
                         CellFormat {
@@ -283,7 +285,7 @@ impl From<Datarow> for RowData {
                     ),
                     Datavalue::IntegerID(i) => (
                         ExtendedValue {
-                            number_value: Some(i as f64),
+                            number_value: Some(f64::from(i)),
                             ..Default::default()
                         },
                         CellFormat {
@@ -347,6 +349,8 @@ impl From<Datarow> for RowData {
                     ),
                     Datavalue::Size(s) => (
                         ExtendedValue {
+                            // Size type allows some round errors
+                            // as it is used for system data
                             number_value: Some(s as f64),
                             ..Default::default()
                         },
@@ -401,26 +405,28 @@ impl From<Datarow> for RuleApplicant {
             "assert: sheet id should be initialized before the rule applicant transformation",
         );
         // convert datavalues into types supported by rules with O(1) access
-        let data = data
-            .into_iter()
-            .chain([(
-                DATETIME_COLUMN_NAME.to_string(),
-                Datavalue::Datetime(timestamp),
-            )])
-            .map(|(k, v)| {
-                let v = match v {
-                    Text(t) | RedText(t) | OrangeText(t) | GreenText(t) => Text(t),
-                    Number(n) => Number(n),
-                    Integer(i) | IntegerID(i) => Integer(i),
-                    Percent(p) | HeatmapPercent(p) => Number(p / 100.0),
-                    Datetime(d) => Number(convert_datetime_to_spreadsheet_double(d)),
-                    Bool(b) => Bool(b),
-                    Size(s) => Integer(s),
-                    NotAvailable => NotAvailable,
-                };
-                (k, v)
-            })
-            .collect();
+        let data =
+            data.into_iter()
+                .chain([(
+                    DATETIME_COLUMN_NAME.to_string(),
+                    Datavalue::Datetime(timestamp),
+                )])
+                .map(|(k, v)| {
+                    let v = match v {
+                        Text(t) | RedText(t) | OrangeText(t) | GreenText(t) => Text(t),
+                        Number(n) => Number(n),
+                        Integer(i) | IntegerID(i) => Integer(i),
+                        Percent(p) | HeatmapPercent(p) => Number(p / 100.0),
+                        Datetime(d) => Number(convert_datetime_to_spreadsheet_double(d)),
+                        Bool(b) => Bool(b),
+                        Size(s) => Integer(u32::try_from(s).expect(
+                            "assert: rule cannot contain large (more than u32::MAX) integers",
+                        )),
+                        NotAvailable => NotAvailable,
+                    };
+                    (k, v)
+                })
+                .collect();
         RuleApplicant {
             log_name,
             data,

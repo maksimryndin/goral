@@ -187,9 +187,13 @@ impl Rule {
 
         let value = match condition {
             RuleCondition::Is if value.is_boolean() => Datavalue::Bool(value.as_bool()?),
-            RuleCondition::Is if value.is_u64() => Datavalue::Integer(value.as_u64()?),
+            RuleCondition::Is if value.is_u64() => {
+                Datavalue::Integer(u32::try_from(value.as_u64()?).ok()?)
+            }
             RuleCondition::IsNot if value.is_boolean() => Datavalue::Bool(value.as_bool()?),
-            RuleCondition::IsNot if value.is_u64() => Datavalue::Integer(value.as_u64()?),
+            RuleCondition::IsNot if value.is_u64() => {
+                Datavalue::Integer(u32::try_from(value.as_u64()?).ok()?)
+            }
             RuleCondition::Less if value.is_number() => Datavalue::Number(value.as_f64()?),
             RuleCondition::Greater if value.is_number() => Datavalue::Number(value.as_f64()?),
             RuleCondition::Is if value.is_string() && value.as_str()? == NOT_AVAILABLE => {
@@ -243,19 +247,19 @@ impl Rule {
             (Datavalue::Number(c), Less, Datavalue::Number(v)) if c < v => {
                 format!("{self} triggered for value {c:.4}")
             }
-            (Datavalue::Number(c), Less, Datavalue::Integer(v)) if c < &(*v as f64) => {
+            (Datavalue::Number(c), Less, Datavalue::Integer(v)) if c < &(f64::from(*v)) => {
                 format!("{self} triggered for value {c:.4}")
             }
-            (Datavalue::Integer(c), Less, Datavalue::Number(v)) if &(*c as f64) < v => {
+            (Datavalue::Integer(c), Less, Datavalue::Number(v)) if &(f64::from(*c)) < v => {
                 format!("{self} triggered for value {c}")
             }
             (Datavalue::Number(c), Greater, Datavalue::Number(v)) if c > v => {
                 format!("{self} triggered for value {c:.4}")
             }
-            (Datavalue::Number(c), Greater, Datavalue::Integer(v)) if c > &(*v as f64) => {
+            (Datavalue::Number(c), Greater, Datavalue::Integer(v)) if c > &(f64::from(*v)) => {
                 format!("{self} triggered for value {c:.4}")
             }
-            (Datavalue::Integer(c), Greater, Datavalue::Number(v)) if &(*c as f64) > v => {
+            (Datavalue::Integer(c), Greater, Datavalue::Number(v)) if &(f64::from(*c)) > v => {
                 format!("{self} triggered for value {c}")
             }
             (Datavalue::Integer(c), Is, Datavalue::Integer(v)) if c == v => {

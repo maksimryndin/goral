@@ -32,7 +32,7 @@ pub(crate) fn scrape_timeout_interval_rule(
     scrape_interval_secs: &u16,
     scrape_timeout_ms: &u32,
 ) -> Result<(), serde_valid::validation::Error> {
-    let scrape_interval_ms = *scrape_interval_secs as u32 * 1000;
+    let scrape_interval_ms = u32::from(*scrape_interval_secs) * 1000;
     if scrape_timeout_ms > &scrape_interval_ms {
         return Err(serde_valid::validation::Error::Custom(
             "`scrape_timeout_ms` should be less than `scrape_interval_secs`".to_string(),

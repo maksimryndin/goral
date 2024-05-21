@@ -45,7 +45,7 @@ fn timeout_period_rule(
     period_secs: &u16,
     timeout_ms: &u32,
 ) -> Result<(), serde_valid::validation::Error> {
-    let period_ms = *period_secs as u32 * 1000;
+    let period_ms = u32::from(*period_secs) * 1000;
     if timeout_ms > &period_ms {
         return Err(serde_valid::validation::Error::Custom(
             "liveness `timeout_ms` should be less than `period_secs`".to_string(),
@@ -88,9 +88,9 @@ pub(super) fn scrape_push_rule(
     // it intuitively clear for the user in a typical case of one healthcheck with period 1 sec and push interval 20 secs
     let append_duration = number_of_rows_in_batch;
     let number_of_queued_rows = liveness.iter().fold(0, |acc, l| {
-        acc + ceiled_division(append_duration, l.period_secs)
-    }) as usize;
-    if number_of_queued_rows > LIMIT as usize {
+        acc + usize::from(ceiled_division(append_duration, l.period_secs))
+    });
+    if number_of_queued_rows > usize::from(LIMIT) {
         return Err(serde_valid::validation::Error::Custom(
             format!("push interval ({push_interval_secs}) is too big for current choices of liveness periods or liveness periods are too small - too much data ({number_of_queued_rows} rows vs limit of {LIMIT}) would be accumulated before saving to a spreadsheet")
         ));

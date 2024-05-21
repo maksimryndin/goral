@@ -54,4 +54,5 @@ psutil = { version = "3.2.2", default-features = false, features = ["disk"]}
 
 [dev-dependencies]
 prost = "0.12"
+rand = "0.8.5"
 tonic-build = "0.10.2"

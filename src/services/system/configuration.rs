@@ -17,7 +17,7 @@ pub(super) fn scrape_push_rule(
         ));
     }
 
-    if *scrape_timeout_ms > *scrape_interval_secs as u32 * 1000 {
+    if *scrape_timeout_ms > u32::from(*scrape_interval_secs) * 1000 {
         return Err(serde_valid::validation::Error::Custom(
             format!("Scrape timeout ({scrape_timeout_ms}ms) shouldn't be greater than scrape interval ({scrape_interval_secs}s)")
         ));
