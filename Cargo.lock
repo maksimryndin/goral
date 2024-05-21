@@ -680,6 +680,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_valid",
+ "staart",
  "sysinfo",
  "tokio",
  "tonic",
@@ -1817,6 +1818,12 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "staart"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6665bac89351f48be3298229418729256810b9aad71d12bccc0ee37450ad45d0"
 
 [[package]]
 name = "strsim"

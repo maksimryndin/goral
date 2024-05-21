@@ -54,7 +54,7 @@ pub(crate) enum Datavalue {
 pub struct Datarow {
     log_name: String,
     timestamp: NaiveDateTime,
-    data: Vec<(String, Datavalue)>,
+    pub(crate) data: Vec<(String, Datavalue)>,
     sheet_id: Option<SheetId>,
 }
 

@@ -1,5 +1,7 @@
 pub(crate) mod collector;
 pub(crate) mod configuration;
+#[cfg(target_os = "linux")]
+pub(crate) mod ssh;
 use crate::google::datavalue::{Datarow, Datavalue};
 use crate::messenger::configuration::MessengerConfig;
 use crate::notifications::{MessengerApi, Notification, Sender};
@@ -98,6 +100,80 @@ impl SystemService {
         tokio::select! {
             _ = tokio::time::sleep(scrape_timeout) => Err(format!("sysinfo scrape timeout {:?}", scrape_timeout)),
             res = request_tx.send(scrape_time) => res.map_err(|e| e.to_string())
+        }
+    }
+
+    fn collect_sysinfo(
+        is_shutdown: Arc<AtomicBool>,
+        sender: mpsc::Sender<TaskResult>,
+        mut request_rx: mpsc::Receiver<DateTime<Utc>>,
+        mounts: Vec<String>,
+        names: Vec<String>,
+        messenger: Sender,
+    ) {
+        let mut sys = collector::initialize();
+        tracing::info!("started system info scraping thread");
+
+        while let Some(scrape_time) = request_rx.blocking_recv() {
+            let result = collector::collect(
+                &mut sys,
+                &mounts,
+                &names,
+                scrape_time.naive_utc(),
+                &messenger,
+            )
+            .map(Data::Many)
+            .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
+            if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
+                if is_shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+                panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
+            }
+        }
+        tracing::info!("exiting system info scraping thread");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn ssh_observer(
+        is_shutdown: Arc<AtomicBool>,
+        sender: mpsc::Sender<TaskResult>,
+        messenger: Sender,
+        send_notification: Sender
+    ) {
+        let (mut tx, rx) = mpsc::channel::<DateTime<Utc>>(1);
+        tracing::info!("starting system info scraping");
+        let cloned_sender = sender.clone();
+        let cloned_is_shutdown = is_shutdown.clone();
+        std::thread::Builder::new()
+            .name("ssh-observer".into())
+            .spawn(move || {
+                Self::collect_sysinfo(
+                    cloned_is_shutdown,
+                    cloned_sender,
+                    rx,
+                    mounts,
+                    names,
+                    messenger,
+                )
+            })
+            .expect("assert: can spawn sysinfo collecting thread");
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let scrape_time = Utc::now();
+                    if let Err(e) = Self::make_timed_scrape(&mut tx, scrape_timeout, scrape_time).await {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("finished sysinfo collection");
+                            return;
+                        }
+                        let msg = format!("error sending request for sysinfo `{}`", e);
+                        tracing::error!("{}", msg);
+                        send_notification.fatal(msg).await;
+                    }
+                }
+            }
         }
     }
 
@@ -289,6 +365,17 @@ impl Service for SystemService {
                 is_shutdown,
                 scrape_interval,
                 scrape_timeout,
+                sender,
+                messenger,
+                send_notification,
+                mounts,
+                names,
+            )
+            .await;
+        }),
+        tokio::spawn(async move {
+            Self::ssh_observer(
+                is_shutdown,
                 sender,
                 messenger,
                 send_notification,
