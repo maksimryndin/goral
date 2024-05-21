@@ -24,7 +24,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::TcpSocket;
 use tokio::process::Command;
 use tokio::sync::mpsc::{self, error::TrySendError};
@@ -243,6 +243,7 @@ impl HealthcheckService {
     fn create_datarow(
         is_alive: bool,
         text: String,
+        latency: Duration,
         liveness: &Liveness,
         probe_time: DateTime<Utc>,
     ) -> Datarow {
@@ -251,6 +252,10 @@ impl HealthcheckService {
             probe_time.naive_utc(),
             vec![
                 ("is_alive".to_string(), Datavalue::Bool(is_alive)),
+                (
+                    "latency_ms".to_string(),
+                    Datavalue::Integer(latency.as_millis() as u32),
+                ), // SAFE: cap latency at u32::MAX
                 ("output".to_string(), Datavalue::Text(text)),
             ],
         )
@@ -270,11 +275,12 @@ impl HealthcheckService {
             tokio::select! {
                 _ = interval.tick() => {
                     let probe_time = Utc::now();
+                    let start = Instant::now();
                     let result = Self::is_alive(&liveness).await
-                        .map(|t| Data::Single(Self::create_datarow(true, t, &liveness, probe_time)))
+                        .map(|t| Data::Single(Self::create_datarow(true, t, start.elapsed(), &liveness, probe_time)))
                         .map_err(|t| {
                             tracing::debug!("liveness check for {:?} failed with output `{}`", liveness, t);
-                            Data::Single(Self::create_datarow(false, t, &liveness, probe_time))
+                            Data::Single(Self::create_datarow(false, t, start.elapsed(), &liveness, probe_time))
                         });
                     match sender.try_send(TaskResult{id: index, result}) {
                         Err(TrySendError::Full(res)) => {
@@ -666,6 +672,11 @@ mod tests {
                 datarow.keys_values().get("output"),
                 Some(&Datavalue::Text(HEALTHY_REPLY.to_string()))
             );
+            let Datavalue::Integer(latency) = *datarow.keys_values().get("latency_ms").unwrap()
+            else {
+                panic!("latency is an integer in ms")
+            };
+            assert!(latency < 100);
         } else {
             panic!("test assert: at least one successfull probe should be collected");
         }

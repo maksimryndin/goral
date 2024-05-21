@@ -1,6 +1,7 @@
 * 0.1.6
     * safe numbers conversions
     * ids collision tests
+    * latency measurements for healthchecks
 
 * 0.1.5
     * increase max body size for latest release check
