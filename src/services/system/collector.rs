@@ -144,7 +144,7 @@ fn process_to_values(process: &ProcessInfo, users: &Users) -> Vec<(String, Datav
     vec![
         (
             "pid".to_string(),
-            Datavalue::IntegerID(u32::from(process.pid.as_u32())),
+            Datavalue::IntegerID(process.pid.as_u32()),
         ),
         (
             "name".to_string(),
