@@ -1,6 +1,6 @@
 [package]
 name = "goral"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 author = "Maksim Ryndin"
 license = "Apache-2.0"
@@ -35,13 +35,13 @@ http = "0.2"
 hyper = { version = "0.14", features = ["http1", "http2", "client", "server"]} # using the same version as google-sheets4
 hyper-rustls = "0.24"
 lazy_static = "1.4"
+logwatcher2 = { git = "https://github.com/maksimryndin/logwatcher2.git" }
 prometheus-parse = "0.2.4"
 regex = { version = "1", features = ["std", "unicode"] } # use the same version as current crates
 serde = "^1.0"
 serde_derive = "^1.0"
 serde_json = "^1.0"
 serde_valid = { version = "0.16.3", features = ["toml"] }
-staart = "0.7.2"
 sysinfo = { version = "0.30", default_features = false }
 tokio = { version = "^1.0", features = ["sync", "signal", "io-std", "process", "net"] }
 tonic = { version = "^0.10", features = ["transport", "prost"]}

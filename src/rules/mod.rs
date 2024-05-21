@@ -1003,10 +1003,7 @@ mod tests {
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
-            vec![(
-                "key".to_string(),
-                Datavalue::Text("substring".to_string()),
-            )],
+            vec![("key".to_string(), Datavalue::Text("substring".to_string()))],
         );
         datarow.sheet_id(TEST_HOST_ID, "test");
         match rule.unwrap().apply(&datarow.into()) {
@@ -1030,10 +1027,7 @@ mod tests {
         let mut datarow = Datarow::new(
             "log_name1".to_string(),
             Utc::now().naive_utc(),
-            vec![(
-                "key".to_string(),
-                Datavalue::Text("second".to_string()),
-            )],
+            vec![("key".to_string(), Datavalue::Text("second".to_string()))],
         );
         datarow.sheet_id(TEST_HOST_ID, "test");
         match rule.unwrap().apply(&datarow.into()) {

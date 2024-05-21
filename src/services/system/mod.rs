@@ -290,7 +290,7 @@ impl Service for SystemService {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
                 tracing::error!("{}", msg);
-                self.send_error(format!("`{}` while scraping sysinfo", msg))
+                self.send_error(format!("`{}` while observing system", msg))
                     .await;
                 Data::Empty
             }
@@ -319,12 +319,7 @@ impl Service for SystemService {
             let cloned_sender = sender.clone();
             let cloned_messenger = messenger.clone();
             vec![tokio::spawn(async move {
-                Self::ssh_observer(
-                    cloned_is_shutdown,
-                    cloned_sender,
-                    cloned_messenger,
-                )
-                .await;
+                Self::ssh_observer(cloned_is_shutdown, cloned_sender, cloned_messenger).await;
             })]
         } else {
             vec![]

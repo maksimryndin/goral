@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "goral"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -671,6 +671,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "lazy_static",
+ "logwatcher2",
  "prometheus-parse",
  "prost",
  "psutil",
@@ -680,7 +681,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_valid",
- "staart",
  "sysinfo",
  "tokio",
  "tonic",
@@ -985,6 +985,11 @@ name = "log"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
+
+[[package]]
+name = "logwatcher2"
+version = "0.2.1"
+source = "git+https://github.com/maksimryndin/logwatcher2.git#e6c6511c92addc3ec2c51cb409f466f51d4126bb"
 
 [[package]]
 name = "matches"
@@ -1818,12 +1823,6 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
-
-[[package]]
-name = "staart"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6665bac89351f48be3298229418729256810b9aad71d12bccc0ee37450ad45d0"
 
 [[package]]
 name = "strsim"

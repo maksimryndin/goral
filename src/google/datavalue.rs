@@ -405,26 +405,26 @@ impl From<Datarow> for RuleApplicant {
             "assert: sheet id should be initialized before the rule applicant transformation",
         );
         // convert datavalues into types supported by rules with O(1) access
-        let data =
-            data.into_iter()
-                .chain([(
-                    DATETIME_COLUMN_NAME.to_string(),
-                    Datavalue::Datetime(timestamp),
-                )])
-                .map(|(k, v)| {
-                    let v = match v {
-                        Text(t) | RedText(t) | OrangeText(t) | GreenText(t) => Text(t),
-                        Number(n) => Number(n),
-                        Integer(i) | IntegerID(i) => Integer(i),
-                        Percent(p) | HeatmapPercent(p) => Number(p / 100.0),
-                        Datetime(d) => Number(convert_datetime_to_spreadsheet_double(d)),
-                        Bool(b) => Bool(b),
-                        Size(s) => Number(s as f64), // Rounding errors are acceptable for Size datavalues
-                        NotAvailable => NotAvailable,
-                    };
-                    (k, v)
-                })
-                .collect();
+        let data = data
+            .into_iter()
+            .chain([(
+                DATETIME_COLUMN_NAME.to_string(),
+                Datavalue::Datetime(timestamp),
+            )])
+            .map(|(k, v)| {
+                let v = match v {
+                    Text(t) | RedText(t) | OrangeText(t) | GreenText(t) => Text(t),
+                    Number(n) => Number(n),
+                    Integer(i) | IntegerID(i) => Integer(i),
+                    Percent(p) | HeatmapPercent(p) => Number(p / 100.0),
+                    Datetime(d) => Number(convert_datetime_to_spreadsheet_double(d)),
+                    Bool(b) => Bool(b),
+                    Size(s) => Number(s as f64), // Rounding errors are acceptable for Size datavalues
+                    NotAvailable => NotAvailable,
+                };
+                (k, v)
+            })
+            .collect();
         RuleApplicant {
             log_name,
             data,

@@ -3,8 +3,8 @@ use crate::notifications::{Notification, Sender};
 use crate::services::{Data, TaskResult};
 use chrono::{NaiveDateTime, Utc};
 use lazy_static::lazy_static;
+use logwatcher::{LogWatcher, LogWatcherAction, LogWatcherEvent};
 use regex::Regex;
-use staart::TailedFile;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -15,7 +15,7 @@ use tracing::Level;
 
 pub const SSH_LOG: &str = "ssh";
 pub const SSH_LOG_STATUS: &str = "status";
-pub const SSH_LOG_STATUS_CONNECTED: &str = "status";
+pub const SSH_LOG_STATUS_CONNECTED: &str = "connected";
 
 pub(super) fn process_sshd_log(
     is_shutdown: Arc<AtomicBool>,
@@ -25,8 +25,8 @@ pub(super) fn process_sshd_log(
 ) {
     tracing::info!("started ssh monitoring thread");
 
-    let mut f = match TailedFile::new("/var/log/auth.log")
-        .or_else(|_| TailedFile::new("/var/log/secure"))
+    let mut log_watcher = match LogWatcher::register("/var/log/auth.log")
+        .or_else(|_| LogWatcher::register("/var/log/secure"))
     {
         Ok(f) => f,
         Err(_) => {
@@ -39,26 +39,36 @@ pub(super) fn process_sshd_log(
         }
     };
 
-    loop {
-        f.read_and(|d| {
-            let result = match std::str::from_utf8(d).map(|s| parse(s)) {
-                Ok(Some(line)) => Ok(Data::Single(line)),
-                Ok(None) => {
-                    return;
+    log_watcher.watch(&mut move |result| {
+        let result = match result {
+            Ok(event) => match event {
+                LogWatcherEvent::Line(line) => match parse(&line) {
+                    Some(line) => Ok(Data::Single(line)),
+                    None => {
+                        return LogWatcherAction::None;
+                    }
                 },
-                Err(e) => Err(Data::Message(format!("ssh monitoring thread error {e}"))),
-            };
-            if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
-                if is_shutdown.load(Ordering::Relaxed) {
-                    return;
+                LogWatcherEvent::LogRotation => {
+                    tracing::info!("auth log file rotation");
+                    return LogWatcherAction::None;
                 }
-                panic!("assert: ssh monitoring messages queue shouldn't be closed before shutdown signal");
+            },
+            Err(err) => {
+                let message = format!("error watching ssh access log: {err}");
+                Err(Data::Message(message))
             }
-        });
-        if is_shutdown.load(Ordering::Relaxed) {
-            break;
+        };
+        if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
+            if is_shutdown.load(Ordering::Relaxed) {
+                return LogWatcherAction::Finish;
+            }
+            panic!(
+                "assert: ssh monitoring messages queue shouldn't be closed before shutdown signal"
+            );
         }
-    }
+        LogWatcherAction::None
+    });
+
     let _ = tx.send(());
     tracing::info!("exiting ssh monitoring thread");
 }
@@ -76,7 +86,7 @@ fn parse(line: &str) -> Option<Datarow> {
                 Disconnected\sfrom\s(authenticating|invalid)\suser\s(?P<username_rejected>\S+)|
                 Accepted\spublickey\sfor\s(?P<username_accepted>\S+)\sfrom|
                 pam_unix\(sshd:session\):\ssession\sclosed\sfor\suser\s(?P<username_terminated>\S+)|
-                fatal:\sTimeout\sbefore\sauthentication\sfor|
+                fatal:\sTimeout\sbefore\sauthentication\sfor
             )
             \s?
             ((?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\sport\s(?P<port>\d{2,5}))?
@@ -104,7 +114,10 @@ fn parse(line: &str) -> Option<Datarow> {
         let (username, status) = if let Some(username) = cap.name("username_rejected") {
             (Datavalue::Text(username.as_str().to_string()), "rejected")
         } else if let Some(username) = cap.name("username_accepted") {
-            (Datavalue::Text(username.as_str().to_string()), SSH_LOG_STATUS_CONNECTED)
+            (
+                Datavalue::Text(username.as_str().to_string()),
+                SSH_LOG_STATUS_CONNECTED,
+            )
         } else if let Some(username) = cap.name("username_terminated") {
             (Datavalue::Text(username.as_str().to_string()), "terminated")
         } else {
@@ -124,10 +137,13 @@ fn parse(line: &str) -> Option<Datarow> {
                 ),
                 (
                     "port".to_string(),
-                    port.map(|p| Datavalue::IntegerID(p))
+                    port.map(Datavalue::IntegerID)
                         .unwrap_or(Datavalue::NotAvailable),
                 ),
-                (SSH_LOG_STATUS.to_string(), Datavalue::Text(status.to_string())),
+                (
+                    SSH_LOG_STATUS.to_string(),
+                    Datavalue::Text(status.to_string()),
+                ),
                 (
                     "pubkey".to_string(),
                     key.map(|key| Datavalue::Text(key.to_string()))
@@ -218,5 +234,8 @@ mod tests {
         );
         assert_eq!(parsed.data[3].1, Datavalue::IntegerID(47014));
         assert_eq!(parsed.data[4].1, Datavalue::Text("timeout".to_string()));
+
+        let line = "May 21 19:26:17 server1 sshd[59895]: pam_unix(sshd:session): session opened for user los(uid=1000) by (uid=0)";
+        assert!(parse(line).is_none());
     }
 }
