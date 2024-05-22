@@ -35,7 +35,6 @@ http = "0.2"
 hyper = { version = "0.14", features = ["http1", "http2", "client", "server"]} # using the same version as google-sheets4
 hyper-rustls = "0.24"
 lazy_static = "1.4"
-logwatcher2 = { git = "https://github.com/maksimryndin/logwatcher2.git" }
 prometheus-parse = "0.2.4"
 regex = { version = "1", features = ["std", "unicode"] } # use the same version as current crates
 serde = "^1.0"
@@ -51,6 +50,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "json"] }
 url = { version = "2", features = ["serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+logwatcher2 = { git = "https://github.com/maksimryndin/logwatcher2.git" }
 psutil = { version = "3.2.2", default-features = false, features = ["disk"]}
 
 [dev-dependencies]
