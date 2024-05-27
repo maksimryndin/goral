@@ -15,9 +15,11 @@ body:
       label: Preliminary checks
       description: Please make sure that you verify each checkbox and follow the instructions for them.
       options:
-        - label: "Before opening a new issue, please search existing issues: https://github.com/maksimryndin/goral/issues. Perhaps, the bug has been already reported or solved"
+        - label: "This issue is a bug report. For a feature request or other question feel free to use a blank issue."
           required: true
-        - label: "This issue is not a feature request or other - for that just feel free to use a blank issue."
+        - label: "I've updated Goral to the latest version: https://github.com/maksimryndin/goral/releases and the bug still exists"
+          required: true
+        - label: "I've searched existing issues https://github.com/maksimryndin/goral/issues for the same bug and there is nothing similar"
           required: true
   - type: textarea
     attributes:
@@ -80,6 +82,7 @@ body:
       label: Which version of Goral do you run (`goral --version`)?
       multiple: false
       options:
+        - 0.1.7
         - 0.1.6
         - 0.1.5
         - 0.1.4
