@@ -418,7 +418,8 @@ impl AppendableLog {
 
         if usage < limit {
             if usage > 0.8 * limit && !self.truncate_warning_is_sent {
-                let message = format!("current spreadsheet usage `{usage:.2}%` for service `{}` is approaching a limit `{limit}%`, the data will be truncated, copy it if needed or consider using a separate spreadsheet for this service", self.service);
+                let url = self.spreadsheet_baseurl();
+                let message = format!("current [spreadsheet]({url}) usage `{usage:.2}%` for service `{}` is approaching a limit `{limit}%`, the data will be truncated, copy it if needed or consider using a separate spreadsheet for this service with a higher [storage quota](https://maksimryndin.github.io/goral/services.html#storage-quota)", self.service);
                 tracing::warn!("{}", message);
                 if let Some(messenger) = self.messenger.as_ref() {
                     messenger.try_warn(message);
@@ -1076,7 +1077,7 @@ mod tests {
         let messages = tokio::spawn(async move {
             let mut warn_count = 0;
             while let Some(msg) = rx.recv().await {
-                if msg.message.contains("current spreadsheet usage") {
+                if msg.message.contains("the data will be truncated") {
                     warn_count += 1;
                 }
                 println!("{msg:?}");
