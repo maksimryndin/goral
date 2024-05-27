@@ -46,7 +46,7 @@ tokio = { version = "^1.0", features = ["sync", "signal", "io-std", "process", "
 tonic = { version = "^0.10", features = ["transport", "prost"]}
 tonic-health = "0.10.2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "json"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "json", "env-filter"] }
 url = { version = "2", features = ["serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

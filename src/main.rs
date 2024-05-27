@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::broadcast;
-use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -75,6 +75,14 @@ async fn start() -> Result<(), String> {
     )?;
 
     let level = LevelFilter::from_level(config.general.log_level);
+    let filter = EnvFilter::new("")
+        .add_directive(level.into())
+        .add_directive(
+            "yup_oauth2=info"
+                .parse()
+                .expect("assert: tracing directive is properly set for yup_oauth2"),
+        );
+
     let (json, plain) = if args.json {
         (
             Some(tracing_subscriber::fmt::layer().with_target(true).json()),
@@ -85,7 +93,7 @@ async fn start() -> Result<(), String> {
     };
 
     tracing_subscriber::registry()
-        .with(level)
+        .with(filter)
         .with(json)
         .with(plain)
         .init();
