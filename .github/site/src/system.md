@@ -37,7 +37,13 @@ With this configuration System service will create the following sheets:
 * `top_open_files` (for Linux only) - among the processes with the same user as Goral (!) - process with the most opened files
 * for every process with name containing one of the substrings in `names` - a sheet with process info. Note: the first match (_case sensitive_) is used so plan accordingly a unique name for your binary.
 * for every mount in `mounts` - disk usage and free space.
-* `ssh` - for Linux systems ssh access log is monitored
+* `ssh` - for Linux systems ssh access log is monitored. There is a `status` field with the following values:
+  * `rejected` - ssh user is correct but the key or password is wrong. Also a catchall reason for other unsuccessful connections.
+  * `invalid_user` - an invalid ssh user (unexisting) was used.
+  * `timeout` - a timeout on ssh connection happened.
+  * `wrong_params` - no matching key exchange method found or an invalid format of the key
+  * `connected` - a successful ssh connection is established (by default there is a rule with a warning notification for this event)
+  * `terminated` - an ssh session (established earlier with `connected`) is terminated
 
 System service doesn't require root privileges to collect the telemetry.
 For a process a cpu usage percent may be [more than 100%](https://blog.guillaume-gomez.fr/articles/2021-09-06+sysinfo%3A+how+to+extract+systems%27+information) in a case of a multi-threaded process on several cores. `memory_used` by process is a [resident-set size](https://www.baeldung.com/linux/resident-set-vs-virtual-memory-size).

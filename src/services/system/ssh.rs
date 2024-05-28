@@ -155,10 +155,11 @@ fn parse(line: &str) -> Option<Datarow> {
             \s\S+\s
             sshd\[(?P<id>\d+)\]:\s
             (
-                Disconnected\sfrom\s(authenticating|invalid)\suser\s(?P<username_rejected>\S+)|
+                (Disconnected\sfrom|Disconnecting|Connection\sclosed\sby)\sauthenticating\suser\s(?P<username_rejected>\S+)|
+                (Disconnected\sfrom|Disconnecting|Connection\sclosed\sby)\sinvalid\suser\s(?P<username_invalid>\S+)|
                 Accepted\spublickey\sfor\s(?P<username_accepted>\S+)\sfrom|
                 pam_unix\(sshd:session\):\ssession\sclosed\sfor\suser\s(?P<username_terminated>\S+)|
-                fatal:\sTimeout\sbefore\sauthentication\sfor
+                (?P<other_reason>fatal:\sTimeout\sbefore\sauthentication\sfor|Unable\sto\snegotiate\swith|Connection\sclosed\sby|Connection\sreset\sby|banner\sexchange:\sConnection\sfrom)
             )
             \s?
             ((?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\sport\s(?P<port>\d{2,5}))?
@@ -185,6 +186,11 @@ fn parse(line: &str) -> Option<Datarow> {
 
         let (username, status) = if let Some(username) = cap.name("username_rejected") {
             (Datavalue::Text(username.as_str().to_string()), "rejected")
+        } else if let Some(username) = cap.name("username_invalid") {
+            (
+                Datavalue::Text(username.as_str().to_string()),
+                "invalid_user",
+            )
         } else if let Some(username) = cap.name("username_accepted") {
             (
                 Datavalue::Text(username.as_str().to_string()),
@@ -195,8 +201,21 @@ fn parse(line: &str) -> Option<Datarow> {
                 Datavalue::Text(username.as_str().to_string()),
                 SSH_LOG_STATUS_TERMINATED,
             )
+        } else if let Some(other_reason) = cap.name("other_reason") {
+            let other_reason = other_reason.as_str().to_lowercase();
+            let reason = if other_reason.contains("timeout") {
+                "timeout"
+            } else if other_reason.contains("reset") || other_reason.contains("closed") {
+                "rejected"
+            } else if other_reason.contains("negotiate") || other_reason.contains("banner") {
+                "wrong_params"
+            } else {
+                "rejected"
+            };
+
+            (Datavalue::NotAvailable, reason)
         } else {
-            (Datavalue::NotAvailable, "timeout")
+            (Datavalue::NotAvailable, "rejected")
         };
 
         Some(Datarow::new(
@@ -245,6 +264,18 @@ mod tests {
         assert_eq!(parsed.data[4].1, Datavalue::Text("rejected".to_string()));
         assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
 
+        let line = "May 25 19:08:00 household sshd[159380]: Disconnecting authenticating user ubuntu 122.224.37.86 port 53474: Too many authentication failures [preauth]";
+        let parsed = parse(line).unwrap();
+        assert_eq!(parsed.data[0].1, Datavalue::IntegerID(159380));
+        assert_eq!(parsed.data[1].1, Datavalue::Text("ubuntu".to_string()));
+        assert_eq!(
+            parsed.data[2].1,
+            Datavalue::Text("122.224.37.86".to_string())
+        );
+        assert_eq!(parsed.data[3].1, Datavalue::IntegerID(53474));
+        assert_eq!(parsed.data[4].1, Datavalue::Text("rejected".to_string()));
+        assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
+
         let line = "May 21 11:22:18 server1 sshd[136059]: Disconnected from invalid user jj 94.127.212.198 port 1122 [preauth]";
         let parsed = parse(line).unwrap();
         assert_eq!(parsed.data[0].1, Datavalue::IntegerID(136059));
@@ -254,7 +285,10 @@ mod tests {
             Datavalue::Text("94.127.212.198".to_string())
         );
         assert_eq!(parsed.data[3].1, Datavalue::IntegerID(1122));
-        assert_eq!(parsed.data[4].1, Datavalue::Text("rejected".to_string()));
+        assert_eq!(
+            parsed.data[4].1,
+            Datavalue::Text("invalid_user".to_string())
+        );
         assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
 
         let line = "May 21 11:22:18 server1 sshd[136063]: Accepted publickey for ubuntu from 77.222.27.80 port 17827 ssh2: RSA SHA256:D726XJ0DkstyhsyH2rAbfYuIaeBOa3Su2l2WWbyXnXs";
@@ -308,8 +342,90 @@ mod tests {
         assert_eq!(parsed.data[3].1, Datavalue::IntegerID(47014));
         assert_eq!(parsed.data[4].1, Datavalue::Text("timeout".to_string()));
 
+        let line = "May 25 17:44:08 household sshd[159150]: Connection closed by invalid user user 111.70.3.198 port 52445 [preauth]";
+        let parsed = parse(line).unwrap();
+        assert_eq!(parsed.data[0].1, Datavalue::IntegerID(159150));
+        assert_eq!(parsed.data[1].1, Datavalue::Text("user".to_string()));
+        assert_eq!(
+            parsed.data[2].1,
+            Datavalue::Text("111.70.3.198".to_string())
+        );
+        assert_eq!(parsed.data[3].1, Datavalue::IntegerID(52445));
+        assert_eq!(
+            parsed.data[4].1,
+            Datavalue::Text("invalid_user".to_string())
+        );
+        assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
+
+        let line = "May 25 17:43:57 household sshd[159147]: Connection closed by authenticating user nobody 213.230.65.20 port 47128 [preauth]";
+        let parsed = parse(line).unwrap();
+        assert_eq!(parsed.data[0].1, Datavalue::IntegerID(159147));
+        assert_eq!(parsed.data[1].1, Datavalue::Text("nobody".to_string()));
+        assert_eq!(
+            parsed.data[2].1,
+            Datavalue::Text("213.230.65.20".to_string())
+        );
+        assert_eq!(parsed.data[3].1, Datavalue::IntegerID(47128));
+        assert_eq!(parsed.data[4].1, Datavalue::Text("rejected".to_string()));
+        assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
+
+        let line =
+            "May 25 17:44:00 household sshd[159149]: Connection closed by 1.62.154.219 port 62293";
+        let parsed = parse(line).unwrap();
+        assert_eq!(parsed.data[0].1, Datavalue::IntegerID(159149));
+        assert_eq!(parsed.data[1].1, Datavalue::NotAvailable);
+        assert_eq!(
+            parsed.data[2].1,
+            Datavalue::Text("1.62.154.219".to_string())
+        );
+        assert_eq!(parsed.data[3].1, Datavalue::IntegerID(62293));
+        assert_eq!(parsed.data[4].1, Datavalue::Text("rejected".to_string()));
+        assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
+
+        let line = "May 25 16:03:47 household sshd[158910]: Connection reset by 104.248.136.93 port 6116 [preauth]";
+        let parsed = parse(line).unwrap();
+        assert_eq!(parsed.data[0].1, Datavalue::IntegerID(158910));
+        assert_eq!(parsed.data[1].1, Datavalue::NotAvailable);
+        assert_eq!(
+            parsed.data[2].1,
+            Datavalue::Text("104.248.136.93".to_string())
+        );
+        assert_eq!(parsed.data[3].1, Datavalue::IntegerID(6116));
+        assert_eq!(parsed.data[4].1, Datavalue::Text("rejected".to_string()));
+        assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
+
         let line = "May 21 19:26:17 server1 sshd[59895]: pam_unix(sshd:session): session opened for user los(uid=1000) by (uid=0)";
         assert!(parse(line).is_none());
+
+        let line = "May 25 17:45:41 household sshd[159154]: Unable to negotiate with 185.196.8.151 port 34228: no matching key exchange method found. Their offer: diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1 [preauth]";
+        let parsed = parse(line).unwrap();
+        assert_eq!(parsed.data[0].1, Datavalue::IntegerID(159154));
+        assert_eq!(parsed.data[1].1, Datavalue::NotAvailable);
+        assert_eq!(
+            parsed.data[2].1,
+            Datavalue::Text("185.196.8.151".to_string())
+        );
+        assert_eq!(parsed.data[3].1, Datavalue::IntegerID(34228));
+        assert_eq!(
+            parsed.data[4].1,
+            Datavalue::Text("wrong_params".to_string())
+        );
+        assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
+
+        let line = "May 25 15:33:34 household sshd[158862]: banner exchange: Connection from 162.243.135.24 port 53198: invalid format";
+        let parsed = parse(line).unwrap();
+        assert_eq!(parsed.data[0].1, Datavalue::IntegerID(158862));
+        assert_eq!(parsed.data[1].1, Datavalue::NotAvailable);
+        assert_eq!(
+            parsed.data[2].1,
+            Datavalue::Text("162.243.135.24".to_string())
+        );
+        assert_eq!(parsed.data[3].1, Datavalue::IntegerID(53198));
+        assert_eq!(
+            parsed.data[4].1,
+            Datavalue::Text("wrong_params".to_string())
+        );
+        assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
     }
 
     #[test]
