@@ -202,6 +202,12 @@ impl Rule {
             RuleCondition::IsNot if value.is_string() && value.as_str()? == NOT_AVAILABLE => {
                 Datavalue::NotAvailable
             }
+            RuleCondition::Is if value.is_string() && value.as_str()? != NOT_AVAILABLE => {
+                Datavalue::Text(value.as_str()?.to_string())
+            }
+            RuleCondition::IsNot if value.is_string() && value.as_str()? != NOT_AVAILABLE => {
+                Datavalue::Text(value.as_str()?.to_string())
+            }
             RuleCondition::Contains if value.is_string() && value.as_str()? != NOT_AVAILABLE => {
                 Datavalue::Text(value.as_str()?.to_string())
             }
@@ -283,6 +289,12 @@ impl Rule {
                 format!("{self} triggered for value {c}")
             }
             (Datavalue::Bool(c), IsNot, Datavalue::NotAvailable) => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Text(c), Is, Datavalue::Text(v)) if c == v => {
+                format!("{self} triggered for value {c}")
+            }
+            (Datavalue::Text(c), IsNot, Datavalue::Text(v)) if c != v => {
                 format!("{self} triggered for value {c}")
             }
             (Datavalue::Text(c), Contains, Datavalue::Text(v)) if c.contains(v) => {
@@ -479,8 +491,8 @@ mod tests {
             None,
         );
         assert!(
-            rule.is_none(),
-            "test assert: `is` cannot be a condition for a text value"
+            rule.is_some(),
+            "test assert: `is` can be a condition for a text value"
         );
 
         let rule = Rule::try_from_values(
@@ -511,8 +523,8 @@ mod tests {
             None,
         );
         assert!(
-            rule.is_none(),
-            "test assert: `is not` cannot be a condition for a text value"
+            rule.is_some(),
+            "test assert: `is not` can be a condition for a text value"
         );
 
         let rule = Rule::try_from_values(
@@ -968,6 +980,54 @@ mod tests {
                 "key".to_string(),
                 Datavalue::Text("34substring".to_string()),
             )],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_CONDITION),
+                json!("substring"),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Text("substring".to_string()))],
+        );
+        datarow.sheet_id(TEST_HOST_ID, "test");
+        match rule.unwrap().apply(&datarow.into()) {
+            RuleOutput::Process(Some(Triggered { action, .. })) => {
+                assert_eq!(action, Action::Info)
+            }
+            _ => panic!("test assert: rule should trigger"),
+        };
+
+        let rule = Rule::try_from_values(
+            vec![
+                json!(0.0),
+                json!("log_name1"),
+                json!("key"),
+                json!(IS_NOT_CONDITION),
+                json!("first"),
+                json!(INFO_ACTION),
+            ],
+            None,
+        );
+        let mut datarow = Datarow::new(
+            "log_name1".to_string(),
+            Utc::now().naive_utc(),
+            vec![("key".to_string(), Datavalue::Text("second".to_string()))],
         );
         datarow.sheet_id(TEST_HOST_ID, "test");
         match rule.unwrap().apply(&datarow.into()) {

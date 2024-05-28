@@ -1,5 +1,7 @@
 pub(crate) mod collector;
 pub(crate) mod configuration;
+#[cfg(target_os = "linux")]
+pub(crate) mod ssh;
 use crate::google::datavalue::{Datarow, Datavalue};
 use crate::messenger::configuration::MessengerConfig;
 use crate::notifications::{MessengerApi, Notification, Sender};
@@ -82,12 +84,12 @@ impl SystemService {
             .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
             if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
                 if is_shutdown.load(Ordering::Relaxed) {
+                    tracing::info!("exiting system info scraping thread");
                     return;
                 }
                 panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
             }
         }
-        tracing::info!("exiting system info scraping thread");
     }
 
     async fn make_timed_scrape(
@@ -99,6 +101,21 @@ impl SystemService {
             _ = tokio::time::sleep(scrape_timeout) => Err(format!("sysinfo scrape timeout {:?}", scrape_timeout)),
             res = request_tx.send(scrape_time) => res.map_err(|e| e.to_string())
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn ssh_observer(
+        is_shutdown: Arc<AtomicBool>,
+        sender: mpsc::Sender<TaskResult>,
+        messenger: Sender,
+    ) {
+        tracing::info!("starting ssh monitoring");
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        std::thread::Builder::new()
+            .name("ssh-observer".into())
+            .spawn(move || ssh::process_sshd_log(is_shutdown, sender, messenger, tx))
+            .expect("assert: can spawn ssh monitoring thread");
+        let _ = rx.await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -169,7 +186,20 @@ impl Service for SystemService {
     }
 
     fn get_example_rules(&self) -> Vec<Datarow> {
-        let mut rows = Vec::with_capacity(2 + self.mounts.len() + 2 * self.process_names.len());
+        let mut rows = Vec::with_capacity(3 + self.mounts.len() + 2 * self.process_names.len());
+        #[cfg(target_os = "linux")]
+        {
+            rows.push(
+                Rule {
+                    log_name: ssh::SSH_LOG.to_string(),
+                    key: ssh::SSH_LOG_STATUS.to_string(),
+                    condition: RuleCondition::Is,
+                    value: Datavalue::Text(ssh::SSH_LOG_STATUS_CONNECTED.to_string()),
+                    action: Action::Warn,
+                }
+                .into(),
+            );
+        }
         rows.push(
             Rule {
                 log_name: collector::BASIC_LOG.to_string(),
@@ -261,7 +291,7 @@ impl Service for SystemService {
             Ok(data) => data,
             Err(Data::Message(msg)) => {
                 tracing::error!("{}", msg);
-                self.send_error(format!("`{}` while scraping sysinfo", msg))
+                self.send_error(format!("`{}` while observing system", msg))
                     .await;
                 Data::Empty
             }
@@ -284,7 +314,19 @@ impl Service for SystemService {
         let names = self.process_names.clone();
         let scrape_interval = self.scrape_interval;
         let scrape_timeout = self.scrape_timeout;
-        vec![tokio::spawn(async move {
+
+        let mut tasks = vec![];
+        #[cfg(target_os = "linux")]
+        {
+            let cloned_is_shutdown = is_shutdown.clone();
+            let cloned_sender = sender.clone();
+            let cloned_messenger = messenger.clone();
+            tasks.push(tokio::spawn(async move {
+                Self::ssh_observer(cloned_is_shutdown, cloned_sender, cloned_messenger).await;
+            }));
+        }
+
+        tasks.push(tokio::spawn(async move {
             Self::sys_observer(
                 is_shutdown,
                 scrape_interval,
@@ -296,7 +338,8 @@ impl Service for SystemService {
                 names,
             )
             .await;
-        })]
+        }));
+        tasks
     }
 }
 

@@ -1,3 +1,9 @@
+* 0.1.7
+    * ssh log monitoring
+    * rules for text now support "is" and "is not" conditions
+    * more helpful message about usage limits
+    * remove access/refresh tokens for google oauth from logs at the debug level
+
 * 0.1.6
     * safe numbers conversions
     * ids collision tests

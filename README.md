@@ -18,7 +18,7 @@ So Goral provides the following features being deployed next to your app(s):
 * [Periodic healthchecks](https://maksimryndin.github.io/goral/healthcheck.html) (aka [liveness probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/))
 * [Metrics collection](https://maksimryndin.github.io/goral/metrics.html) (fully compatible with Prometheus to be easily replaced with more advanced stack as your project grows)
 * [Logs](https://maksimryndin.github.io/goral/logs.html) collection (importing logs from stdout/stderr of the target process)
-* [System telemetry](https://maksimryndin.github.io/goral/system.html) (CPU, Memory, Free/Busy storage space etc)
+* [System telemetry](https://maksimryndin.github.io/goral/system.html) (CPU, Memory, Free/Busy storage space, ssh access log etc)
 * A general key-value appendable log storage (see [the user case](https://maksimryndin.github.io/goral/kv-log.html))
 * Features are modular - all [services](https://maksimryndin.github.io/goral/services.html) are switched on/off in the configuration.
 * You can observe several instances of the same app or different apps on the same host with a single Goral daemon (except logs as logs are collected via stdin of Goral - see [Logs](https://maksimryndin.github.io/goral/logs.html))
