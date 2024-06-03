@@ -46,24 +46,29 @@ pub(super) fn process_sshd_log(
     log_watcher.watch(&mut move |result| {
         let result = match result {
             Ok(event) => match event {
-                LogWatcherEvent::Line(line) => match parse(&line) {
-                    Some(mut datarow) => {
-                        lookup_connection(&mut datarow, &mut connections);
-                        let Datavalue::Text(ref status) = datarow.data[4].1 else {
-                            panic!("assert: ssh status is parsed")
-                        };
-                        if status == SSH_LOG_STATUS_CONNECTED && connections.len() > 100 {
-                            let message =
-                                format!("there are {} active ssh connections", connections.len());
-                            tracing::warn!("{}", message);
-                            messenger.send_nonblock(Notification::new(message, Level::WARN));
+                LogWatcherEvent::Line(line) => {
+                    tracing::debug!("new auth log line: {line}");
+                    match parse(&line) {
+                        Some(mut datarow) => {
+                            lookup_connection(&mut datarow, &mut connections);
+                            let Datavalue::Text(ref status) = datarow.data[4].1 else {
+                                panic!("assert: ssh status is parsed")
+                            };
+                            if status == SSH_LOG_STATUS_CONNECTED && connections.len() > 100 {
+                                let message = format!(
+                                    "there are {} active ssh connections",
+                                    connections.len()
+                                );
+                                tracing::warn!("{}", message);
+                                messenger.send_nonblock(Notification::new(message, Level::WARN));
+                            }
+                            Ok(Data::Single(datarow))
                         }
-                        Ok(Data::Single(datarow))
+                        None => {
+                            return LogWatcherAction::None;
+                        }
                     }
-                    None => {
-                        return LogWatcherAction::None;
-                    }
-                },
+                }
                 LogWatcherEvent::LogRotation => {
                     tracing::info!("auth log file rotation");
                     return LogWatcherAction::None;
@@ -74,6 +79,7 @@ pub(super) fn process_sshd_log(
                 Err(Data::Message(message))
             }
         };
+        tracing::debug!("sending ssh result: {result:?}");
         if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
             if is_shutdown.load(Ordering::Relaxed) {
                 return LogWatcherAction::Finish;
@@ -82,6 +88,7 @@ pub(super) fn process_sshd_log(
                 "assert: ssh monitoring messages queue shouldn't be closed before shutdown signal"
             );
         }
+        tracing::debug!("sent ssh result");
 
         LogWatcherAction::None
     });
