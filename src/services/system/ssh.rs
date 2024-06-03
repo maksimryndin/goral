@@ -157,7 +157,7 @@ fn parse(line: &str) -> Option<Datarow> {
         static ref RE: Regex = Regex::new(
             r"(?x)
             (?P<datetime>
-                [A-Za-z]{3,9}\s\d{1,2}\s\d{2}:\d{2}:\d{2}
+                [A-Z][a-z]{2}(\s\d{2}|\s{2}\d)\s\d{2}:\d{2}:\d{2}
             )
             \s\S+\s
             sshd\[(?P<id>\d+)\]:\s
@@ -182,7 +182,7 @@ fn parse(line: &str) -> Option<Datarow> {
             .map(|datetime| {
                 let captured = datetime.as_str();
                 let captured = format!("{} {captured}", Utc::now().format("%Y"));
-                NaiveDateTime::parse_from_str(&captured, "%Y %b %d %H:%M:%S")
+                NaiveDateTime::parse_from_str(&captured, "%Y %b %e %H:%M:%S")
                     .expect("assert: can parse auth log datetime")
             })
             .expect("assert: can get auth log datetime");
@@ -431,6 +431,21 @@ mod tests {
         assert_eq!(
             parsed.data[4].1,
             Datavalue::Text("wrong_params".to_string())
+        );
+        assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
+
+        let line = "Jun  3 18:21:14 household sshd[219219]: Connection closed by invalid user dell 141.98.10.125 port 60878 [preauth]";
+        let parsed = parse(line).unwrap();
+        assert_eq!(parsed.data[0].1, Datavalue::IntegerID(219219));
+        assert_eq!(parsed.data[1].1, Datavalue::Text("dell".to_string()));
+        assert_eq!(
+            parsed.data[2].1,
+            Datavalue::Text("141.98.10.125".to_string())
+        );
+        assert_eq!(parsed.data[3].1, Datavalue::IntegerID(60878));
+        assert_eq!(
+            parsed.data[4].1,
+            Datavalue::Text("invalid_user".to_string())
         );
         assert_eq!(parsed.data[5].1, Datavalue::NotAvailable);
     }
