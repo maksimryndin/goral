@@ -1,3 +1,6 @@
+* 0.1.8
+    * fix ssh logs parsing
+
 * 0.1.7
     * ssh log monitoring
     * rules for text now support "is" and "is not" conditions

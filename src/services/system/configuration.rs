@@ -23,10 +23,17 @@ pub(super) fn scrape_push_rule(
         ));
     }
 
+    #[cfg(target_os = "linux")]
+    const AVERAGE_DATAROWS_PER_SCRAPE: u16 = 15; // see collector.rs, ssh.rs
+    #[cfg(target_os = "linux")]
+    const LIMIT: u16 = 45;
+    #[cfg(not(target_os = "linux"))]
     const AVERAGE_DATAROWS_PER_SCRAPE: u16 = 10; // see collector.rs
+    #[cfg(not(target_os = "linux"))]
+    const LIMIT: u16 = 20;
+
     let number_of_rows_in_batch =
         ceiled_division(*push_interval_secs, *scrape_interval_secs) * AVERAGE_DATAROWS_PER_SCRAPE;
-    const LIMIT: u16 = 20;
     if number_of_rows_in_batch > LIMIT {
         return Err(serde_valid::validation::Error::Custom(
             format!("push interval ({push_interval_secs}) is too big or scrape interval ({scrape_interval_secs}) is too small - too much data ({number_of_rows_in_batch} rows vs limit of {LIMIT}) would be accumulated before saving to a spreadsheet")

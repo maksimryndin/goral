@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "goral"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -989,7 +989,7 @@ checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
 [[package]]
 name = "logwatcher2"
 version = "0.2.1"
-source = "git+https://github.com/maksimryndin/logwatcher2.git#e6c6511c92addc3ec2c51cb409f466f51d4126bb"
+source = "git+https://github.com/maksimryndin/logwatcher2.git?rev=9124084dedf7cca548a7be01f0195b876683749a#9124084dedf7cca548a7be01f0195b876683749a"
 
 [[package]]
 name = "matchers"

@@ -1,6 +1,6 @@
 [package]
 name = "goral"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 author = "Maksim Ryndin"
 license = "Apache-2.0"
@@ -50,7 +50,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "json", "env-filter"]
 url = { version = "2", features = ["serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-logwatcher2 = { git = "https://github.com/maksimryndin/logwatcher2.git" }
+logwatcher2 = { git = "https://github.com/maksimryndin/logwatcher2.git", rev="9124084dedf7cca548a7be01f0195b876683749a" }
 psutil = { version = "3.2.2", default-features = false, features = ["disk"]}
 
 [dev-dependencies]
