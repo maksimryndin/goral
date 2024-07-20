@@ -210,7 +210,7 @@ impl SystemService {
                     }
                     match rx.await {
                         Ok(Ok(true)) => {
-                            let msg = "openssh version is outdated, update with `sudo apt update && sudo apt install openssh-server`".to_string();
+                            let msg = "openssh patch version is outdated, update with `sudo apt update && sudo apt install openssh-server`".to_string();
                             tracing::warn!("{}", msg);
                             send_notification.warn(msg).await;
                         },
@@ -236,6 +236,7 @@ impl SystemService {
         }
     }
 
+    #[cfg(target_os = "linux")]
     async fn fetch_os_name(
         is_shutdown: &Arc<AtomicBool>,
         sys_req_tx: &mut mpsc::Sender<SystemInfoRequest>,
@@ -457,12 +458,14 @@ impl Service for SystemService {
         let names = self.process_names.clone();
         let scrape_interval = self.scrape_interval;
         let scrape_timeout = self.scrape_timeout;
-        let (mut sys_req_tx, sys_req_rx) = mpsc::channel::<SystemInfoRequest>(2);
+        let (sys_req_tx, sys_req_rx) = mpsc::channel::<SystemInfoRequest>(2);
 
         let cloned_is_shutdown = is_shutdown.clone();
         let cloned_sys_req_tx = sys_req_tx.clone();
         let cloned_sender = sender.clone();
-        let mut tasks = vec![tokio::spawn(async move {
+        let mut tasks = Vec::with_capacity(3);
+        // a separate push to remove cargo clippy warning
+        tasks.push(tokio::spawn(async move {
             Self::sys_observer(
                 cloned_is_shutdown,
                 scrape_interval,
@@ -476,7 +479,7 @@ impl Service for SystemService {
                 cloned_sys_req_tx,
             )
             .await;
-        })];
+        }));
 
         #[cfg(target_os = "linux")]
         {
@@ -496,6 +499,7 @@ impl Service for SystemService {
                 .await;
             }));
             let send_notification = self.shared.send_notification.clone();
+            let mut sys_req_tx = sys_req_tx;
             let os_name =
                 Self::fetch_os_name(&is_shutdown, &mut sys_req_tx, &send_notification).await;
             if let Some(true) = os_name.map(|name| name.to_lowercase().contains("ubuntu")) {
