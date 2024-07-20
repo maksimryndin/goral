@@ -3,6 +3,7 @@ pub(crate) mod configuration;
 #[cfg(target_os = "linux")]
 pub(crate) mod ssh;
 use crate::google::datavalue::{Datarow, Datavalue};
+use crate::http_client::HttpClient;
 use crate::messenger::configuration::MessengerConfig;
 use crate::notifications::{MessengerApi, Notification, Sender};
 use crate::rules::{Action, Rule, RuleCondition};
@@ -17,10 +18,35 @@ use std::sync::{
     Arc,
 };
 use std::time::Duration;
-use tokio::sync::mpsc::{self};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 pub const SYSTEM_SERVICE_NAME: &str = "system";
+#[cfg(target_os = "linux")]
+const MAX_BYTES_SSH_VERSIONS_OUTPUT: usize = 2_usize.pow(16); // ~65 KiB
+
+#[cfg(target_os = "linux")]
+async fn ssh_versions() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let url = "http://changelogs.ubuntu.com/changelogs/pool/main/o/openssh/"
+        .parse()
+        .expect("assert: ssh versions url is correct");
+    let client = HttpClient::new(
+        MAX_BYTES_SSH_VERSIONS_OUTPUT,
+        true,
+        Duration::from_millis(1000),
+        url,
+    );
+    let res = client.get().await?;
+    Ok(res)
+}
+
+enum SystemInfoRequest {
+    Telemetry(DateTime<Utc>),
+    #[cfg(target_os = "linux")]
+    SshNeedUpdate(String, oneshot::Sender<Result<bool, String>>),
+    #[cfg(target_os = "linux")]
+    OSName(oneshot::Sender<Option<String>>),
+}
 
 pub(crate) struct SystemService {
     shared: Shared,
@@ -64,7 +90,7 @@ impl SystemService {
     fn collect_sysinfo(
         is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
-        mut request_rx: mpsc::Receiver<DateTime<Utc>>,
+        mut request_rx: mpsc::Receiver<SystemInfoRequest>,
         mounts: Vec<String>,
         names: Vec<String>,
         messenger: Sender,
@@ -72,50 +98,167 @@ impl SystemService {
         let mut sys = collector::initialize();
         tracing::info!("started system info scraping thread");
 
-        while let Some(scrape_time) = request_rx.blocking_recv() {
-            let result = collector::collect(
-                &mut sys,
-                &mounts,
-                &names,
-                scrape_time.naive_utc(),
-                &messenger,
-            )
-            .map(Data::Many)
-            .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
-            if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
-                if is_shutdown.load(Ordering::Relaxed) {
-                    tracing::info!("exiting system info scraping thread");
-                    return;
+        while let Some(request) = request_rx.blocking_recv() {
+            match request {
+                SystemInfoRequest::Telemetry(scrape_time) => {
+                    let result = collector::collect(
+                        &mut sys,
+                        &mounts,
+                        &names,
+                        scrape_time.naive_utc(),
+                        &messenger,
+                    )
+                    .map(Data::Many)
+                    .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
+                    if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("exiting system info scraping thread");
+                            return;
+                        }
+                        panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
+                    }
                 }
-                panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
+                #[cfg(target_os = "linux")]
+                SystemInfoRequest::SshNeedUpdate(changelog, reply_to) => {
+                    let response = ssh::check_is_ssh_needs_update(&changelog);
+                    if reply_to.send(response).is_err() {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("exiting system info scraping thread");
+                            return;
+                        }
+                        panic!(
+                            "assert: ssh update checker recepient shouldn't be closed before shutdown signal"
+                        );
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                SystemInfoRequest::OSName(reply_to) => {
+                    let collector::SystemInfo { name, .. } = collector::system_info();
+                    if reply_to.send(name).is_err() {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("exiting system info scraping thread");
+                            return;
+                        }
+                        panic!(
+                            "assert: os name recepient shouldn't be closed before shutdown signal"
+                        );
+                    }
+                }
             }
         }
     }
 
-    async fn make_timed_scrape(
-        request_tx: &mut mpsc::Sender<DateTime<Utc>>,
-        scrape_timeout: Duration,
-        scrape_time: DateTime<Utc>,
+    async fn make_system_request(
+        request_tx: &mut mpsc::Sender<SystemInfoRequest>,
+        timeout: Duration,
+        request: SystemInfoRequest,
     ) -> Result<(), String> {
         tokio::select! {
-            _ = tokio::time::sleep(scrape_timeout) => Err(format!("sysinfo scrape timeout {:?}", scrape_timeout)),
-            res = request_tx.send(scrape_time) => res.map_err(|e| e.to_string())
+            _ = tokio::time::sleep(timeout) => Err(format!("sysinfo request timeout {:?}", timeout)),
+            res = request_tx.send(request) => res.map_err(|e| e.to_string())
         }
     }
 
     #[cfg(target_os = "linux")]
-    async fn ssh_observer(
+    async fn ssh_access_observer(
         is_shutdown: Arc<AtomicBool>,
         sender: mpsc::Sender<TaskResult>,
+        send_notification: Sender,
         messenger: Sender,
     ) {
-        tracing::info!("starting ssh monitoring");
+        tracing::info!("starting ssh access monitoring");
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         std::thread::Builder::new()
-            .name("ssh-observer".into())
-            .spawn(move || ssh::process_sshd_log(is_shutdown, sender, messenger, tx))
-            .expect("assert: can spawn ssh monitoring thread");
+            .name("ssh-access-observer".into())
+            .spawn(move || {
+                ssh::process_sshd_log(is_shutdown, sender, send_notification, messenger, tx)
+            })
+            .expect("assert: can spawn ssh access monitoring thread");
         let _ = rx.await;
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn ssh_version_checker(
+        is_shutdown: Arc<AtomicBool>,
+        send_notification: Sender,
+        mut sys_req_tx: mpsc::Sender<SystemInfoRequest>,
+    ) {
+        let mut interval = tokio::time::interval(Duration::from_secs(4 * 60 * 60)); // 4 hours
+        let request_timeout = Duration::from_secs(5);
+        tracing::info!("starting ssh version checking");
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let source = match ssh_versions().await {
+                        Ok(source) => source,
+                        Err(e) => {
+                            let msg = format!("error sending ssh versions request `{}`", e);
+                            tracing::error!("{}", msg);
+                            send_notification.fatal(msg).await;
+                            continue;
+                        }
+                    };
+                    let (tx, rx) = oneshot::channel();
+                    if let Err(e) = Self::make_system_request(&mut sys_req_tx, request_timeout, SystemInfoRequest::SshNeedUpdate(source, tx)).await {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("finished ssh version checking");
+                            return;
+                        }
+                        let msg = format!("error making ssh version check request `{}`", e);
+                        tracing::error!("{}", msg);
+                        send_notification.fatal(msg).await;
+                    }
+                    match rx.await {
+                        Ok(Ok(true)) => {
+                            let msg = "openssh version is outdated, update with `sudo apt update && sudo apt install openssh-server`".to_string();
+                            tracing::warn!("{}", msg);
+                            send_notification.warn(msg).await;
+                        },
+                        Ok(Ok(false)) => continue,
+
+                        Ok(Err(message)) => {
+                            let msg = format!("error fetching ssh version update `{message}`");
+                            tracing::error!("{}", msg);
+                            send_notification.error(msg).await;
+                        }
+                        Err(e) => {
+                            if is_shutdown.load(Ordering::Relaxed) {
+                                tracing::info!("finished ssh version checking");
+                                return;
+                            }
+                            let msg = format!("error fetching ssh version update `{e}`");
+                            tracing::error!("{}", msg);
+                            send_notification.fatal(msg).await;
+                        }
+                    };
+                }
+            }
+        }
+    }
+
+    async fn fetch_os_name(
+        is_shutdown: &Arc<AtomicBool>,
+        sys_req_tx: &mut mpsc::Sender<SystemInfoRequest>,
+        send_notification: &Sender,
+    ) -> Option<String> {
+        let (tx, rx) = oneshot::channel();
+        if let Err(e) = Self::make_system_request(
+            sys_req_tx,
+            Duration::from_millis(500),
+            SystemInfoRequest::OSName(tx),
+        )
+        .await
+        {
+            if !is_shutdown.load(Ordering::Relaxed) {
+                let msg = format!("error requesting os name `{}`", e);
+                tracing::error!("{}", msg);
+                send_notification.fatal(msg).await;
+            }
+            None
+        } else {
+            rx.await
+                .expect("assert: os name sender shouldn't be dropped")
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -128,9 +271,10 @@ impl SystemService {
         send_notification: Sender,
         mounts: Vec<String>,
         names: Vec<String>,
+        sys_req_rx: mpsc::Receiver<SystemInfoRequest>,
+        mut sys_req_tx: mpsc::Sender<SystemInfoRequest>,
     ) {
         let mut interval = tokio::time::interval(scrape_interval);
-        let (mut tx, rx) = mpsc::channel::<DateTime<Utc>>(1);
         tracing::info!("starting system info scraping");
         let cloned_sender = sender.clone();
         let cloned_is_shutdown = is_shutdown.clone();
@@ -140,7 +284,7 @@ impl SystemService {
                 Self::collect_sysinfo(
                     cloned_is_shutdown,
                     cloned_sender,
-                    rx,
+                    sys_req_rx,
                     mounts,
                     names,
                     messenger,
@@ -152,7 +296,7 @@ impl SystemService {
             tokio::select! {
                 _ = interval.tick() => {
                     let scrape_time = Utc::now();
-                    if let Err(e) = Self::make_timed_scrape(&mut tx, scrape_timeout, scrape_time).await {
+                    if let Err(e) = Self::make_system_request(&mut sys_req_tx, scrape_timeout, SystemInfoRequest::Telemetry(scrape_time)).await {
                         if is_shutdown.load(Ordering::Relaxed) {
                             tracing::info!("finished sysinfo collection");
                             return;
@@ -305,7 +449,6 @@ impl Service for SystemService {
         sender: mpsc::Sender<TaskResult>,
     ) -> Vec<JoinHandle<()>> {
         let is_shutdown = is_shutdown.clone();
-        let sender = sender.clone();
         let send_notification = self.shared.send_notification.clone();
         let messenger = self
             .messenger()
@@ -314,31 +457,53 @@ impl Service for SystemService {
         let names = self.process_names.clone();
         let scrape_interval = self.scrape_interval;
         let scrape_timeout = self.scrape_timeout;
+        let (mut sys_req_tx, sys_req_rx) = mpsc::channel::<SystemInfoRequest>(2);
 
-        let mut tasks = vec![];
-        #[cfg(target_os = "linux")]
-        {
-            let cloned_is_shutdown = is_shutdown.clone();
-            let cloned_sender = sender.clone();
-            let cloned_messenger = messenger.clone();
-            tasks.push(tokio::spawn(async move {
-                Self::ssh_observer(cloned_is_shutdown, cloned_sender, cloned_messenger).await;
-            }));
-        }
-
-        tasks.push(tokio::spawn(async move {
+        let cloned_is_shutdown = is_shutdown.clone();
+        let cloned_sys_req_tx = sys_req_tx.clone();
+        let cloned_sender = sender.clone();
+        let mut tasks = vec![tokio::spawn(async move {
             Self::sys_observer(
-                is_shutdown,
+                cloned_is_shutdown,
                 scrape_interval,
                 scrape_timeout,
-                sender,
+                cloned_sender,
                 messenger,
                 send_notification,
                 mounts,
                 names,
+                sys_req_rx,
+                cloned_sys_req_tx,
             )
             .await;
-        }));
+        })];
+
+        #[cfg(target_os = "linux")]
+        {
+            let cloned_is_shutdown = is_shutdown.clone();
+            let cloned_sender = sender.clone();
+            let send_notification = self.shared.send_notification.clone();
+            let messenger = self
+                .messenger()
+                .unwrap_or(self.shared.send_notification.clone());
+            tasks.push(tokio::spawn(async move {
+                Self::ssh_access_observer(
+                    cloned_is_shutdown,
+                    cloned_sender,
+                    send_notification,
+                    messenger,
+                )
+                .await;
+            }));
+            let send_notification = self.shared.send_notification.clone();
+            let os_name =
+                Self::fetch_os_name(&is_shutdown, &mut sys_req_tx, &send_notification).await;
+            if let Some(true) = os_name.map(|name| name.to_lowercase().contains("ubuntu")) {
+                tasks.push(tokio::spawn(async move {
+                    Self::ssh_version_checker(is_shutdown, send_notification, sys_req_tx).await;
+                }));
+            }
+        }
         tasks
     }
 }
@@ -356,6 +521,7 @@ mod tests {
         let (send_notification, mut notifications_receiver) = mpsc::channel(1);
         let send_notification = Sender::new(send_notification, "test");
         let (data_sender, mut data_receiver) = mpsc::channel(NUM_OF_SCRAPES);
+        let (req_sender, req_receiver) = mpsc::channel(2);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 
         let notifications = tokio::spawn(async move {
@@ -375,6 +541,8 @@ mod tests {
                 send_notification,
                 vec![],
                 vec![],
+                req_receiver,
+                req_sender,
             )
             .await;
         });
@@ -411,6 +579,7 @@ mod tests {
         let (send_notification, mut notifications_receiver) = mpsc::channel(1);
         let send_notification = Sender::new(send_notification, SYSTEM_SERVICE_NAME);
         let (data_sender, mut data_receiver) = mpsc::channel(1);
+        let (req_sender, req_receiver) = mpsc::channel(2);
         let is_shutdown = Arc::new(AtomicBool::new(false));
 
         let notification = tokio::spawn(async move { notifications_receiver.recv().await });
@@ -426,16 +595,21 @@ mod tests {
                 send_notification,
                 vec![],
                 vec![],
+                req_receiver,
+                req_sender,
             )
             .await;
         });
         if let Some(Notification { message, level }) = notification.await.unwrap() {
-            assert!(message.contains("sysinfo scrape timeout"));
+            assert!(
+                message.contains("sysinfo request timeout"),
+                "received notification: {}",
+                message
+            );
             assert_eq!(level, Level::ERROR);
         } else {
             panic!("test assert: at least one timeout should be happen");
         }
-
         is_shutdown.store(true, Ordering::Release);
         data_receiver.close();
         scrape_handle.await.unwrap(); // scrape should finish as the data channel is closed

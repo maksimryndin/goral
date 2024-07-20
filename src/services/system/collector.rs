@@ -191,6 +191,25 @@ pub(super) fn initialize() -> System {
     sys
 }
 
+pub(crate) struct SystemInfo {
+    pub(crate) name: Option<String>,
+    pub(crate) long_os_version: Option<String>,
+    pub(crate) kernel_version: Option<String>,
+    pub(crate) host_name: Option<String>,
+    pub(crate) total_memory: u64,
+}
+
+pub(crate) fn system_info() -> SystemInfo {
+    let sys = initialize();
+    SystemInfo {
+        name: System::name(),
+        long_os_version: System::long_os_version(),
+        kernel_version: System::kernel_version(),
+        host_name: System::host_name(),
+        total_memory: sys.total_memory(),
+    }
+}
+
 pub(super) fn collect(
     sys: &mut System,
     mounts: &[String],

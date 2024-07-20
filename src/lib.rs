@@ -20,14 +20,13 @@ use services::healthcheck::{HealthcheckService, HEALTHCHECK_SERVICE_NAME};
 use services::kv::{KvService, KV_SERVICE_NAME};
 use services::logs::{LogsService, LOGS_SERVICE_NAME};
 use services::metrics::{MetricsService, METRICS_SERVICE_NAME};
-use services::system::{SystemService, SYSTEM_SERVICE_NAME};
+use services::system::{collector::system_info, SystemService, SYSTEM_SERVICE_NAME};
 pub use services::*;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 use std::time::Duration;
 pub use storage::*;
-use sysinfo::System;
 use tokio::sync::mpsc::Receiver;
 
 pub(crate) type HyperConnector = HttpsConnector<HttpConnector>;
@@ -227,19 +226,18 @@ pub async fn welcome(
     truncation_check: Result<(), String>,
 ) {
     let sys = tokio::task::spawn_blocking(|| {
-        sysinfo::set_open_files_limit(0);
-        let sys = System::new_all();
-        let mem = sys.total_memory() / 1000 / 1000;
+        let sys = system_info();
+        let mem = sys.total_memory / 1000 / 1000;
         let mem = if mem > 1000 {
             format!("{}G", mem / 1000)
         } else {
             format!("{mem}M")
         };
         match (
-            System::name(),
-            System::long_os_version(),
-            System::kernel_version(),
-            System::host_name(),
+            sys.name.as_ref(),
+            sys.long_os_version.as_ref(),
+            sys.kernel_version.as_ref(),
+            sys.host_name.as_ref(),
         ) {
             (Some(name), Some(os_version), Some(kernel_version), Some(host_name)) => format!(
                 "{name} {os_version}(kernel {kernel_version}); hostname: {host_name}, RAM {mem}"

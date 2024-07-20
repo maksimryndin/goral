@@ -4,8 +4,9 @@ use crate::services::{Data, TaskResult};
 use chrono::{NaiveDateTime, Utc};
 use lazy_static::lazy_static;
 use logwatcher::{LogWatcher, LogWatcherAction, LogWatcherEvent};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use std::collections::HashMap;
+use std::process::Command;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -22,6 +23,7 @@ pub const SSH_LOG_STATUS_TERMINATED: &str = "terminated";
 pub(super) fn process_sshd_log(
     is_shutdown: Arc<AtomicBool>,
     sender: mpsc::Sender<TaskResult>,
+    send_notification: Sender,
     messenger: Sender,
     tx: TokioSender<()>,
 ) {
@@ -33,10 +35,10 @@ pub(super) fn process_sshd_log(
         Ok(f) => f,
         Err(_) => {
             let message =
-                "cannot open auth log file, tried paths /var/log/auth.log and /var/log/secure"
+                "cannot open auth log file, tried paths `/var/log/auth.log` and `/var/log/secure`"
                     .to_string();
             tracing::error!("{}, exiting ssh monitoring thread", message);
-            messenger.send_nonblock(Notification::new(message, Level::ERROR));
+            send_notification.send_nonblock(Notification::new(message, Level::ERROR));
             return;
         }
     };
@@ -251,6 +253,67 @@ fn parse(line: &str) -> Option<Datarow> {
             ],
         ))
     })
+}
+
+// Ubuntu
+fn get_latest_ssh_version_and_patch<'a, 'b>(
+    changelog: &'a str,
+    current_version: &'b str,
+    current_patch: &'b str,
+) -> Option<(&'a str, &'a str)> {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(r#"href="openssh_(\d+\.\d+p\d+)-([^/]+)/""#)
+            .expect("assert: ssh versions changelog regex is properly constructed");
+    }
+
+    RE.captures_iter(changelog)
+        .map(|c| {
+            let (_, [v, p]) = c.extract();
+            (v, p)
+        })
+        .skip_while(|(v, p)| *v != current_version && *p != current_patch)
+        .reduce(|(_, latest_patch), (v, p)| {
+            if v == current_version {
+                (v, p)
+            } else {
+                (v, latest_patch)
+            }
+        })
+}
+
+fn get_system_ssh_version_and_patch() -> Result<String, String> {
+    match Command::new("ssh").arg("-V").output() {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stderr).to_string())
+        }
+        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).to_string()),
+        Err(e) => Err(format!(
+            "failed to execute ssh version command with error {e}"
+        )),
+    }
+}
+
+// Ubuntu
+fn parse_ssh_version_and_patch(command_output: &str) -> Option<(&str, &str)> {
+    lazy_static! {
+        static ref RE: Regex = RegexBuilder::new(r#"openssh_(\d+\.\d+p\d+) ubuntu-([^,]+),"#)
+            .case_insensitive(true)
+            .build()
+            .expect("assert: ssh version command regex is properly constructed");
+    }
+    RE.captures(command_output).map(|capture| {
+        let (_, [version, patch]) = capture.extract();
+        (version, patch)
+    })
+}
+
+pub(super) fn check_is_ssh_needs_update(changelog: &str) -> Result<bool, String> {
+    let output = get_system_ssh_version_and_patch()?;
+    let (version, patch) = parse_ssh_version_and_patch(&output)
+        .ok_or_else(|| "failed to parse ssh version command output".to_string())?;
+    let (_, latest_patch) = get_latest_ssh_version_and_patch(changelog, version, patch)
+        .ok_or_else(|| "failed to parse ssh changelog".to_string())?;
+    Ok(latest_patch != patch)
 }
 
 #[cfg(test)]
@@ -475,6 +538,30 @@ mod tests {
         assert_eq!(
             parsed.data[5].1,
             Datavalue::Text("RSA SHA256:D726XJ0DkstyhsyH2rAbfYuIaeBOa3Su2l2WWbyXnXs".to_string())
+        );
+    }
+
+    #[test]
+    fn ssh_versions_response_parse() {
+        let response = r#"""
+        href="openssh_8.7p1-4/"
+        href="openssh_8.9p1-3ubuntu0.3/"
+        href="openssh_8.9p1-3ubuntu0.10/"
+        href="openssh_9.0p1-1ubuntu8.4/"
+        
+        """#;
+        assert_eq!(
+            Some(("9.0p1", "3ubuntu0.10")),
+            get_latest_ssh_version_and_patch(response, "8.9p1", "3ubuntu0.3")
+        );
+    }
+
+    #[test]
+    fn ssh_version_command_parse() {
+        let output = "OpenSSH_8.9p1 Ubuntu-3ubuntu0.10, OpenSSL 3.0.2 15 Mar 2022";
+        assert_eq!(
+            Some(("8.9p1", "3ubuntu0.10")),
+            parse_ssh_version_and_patch(output)
         );
     }
 }
