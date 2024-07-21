@@ -104,7 +104,7 @@ impl SystemService {
             match request {
                 #[cfg(target_os = "linux")]
                 SystemInfoRequest::SshNeedUpdate(changelog, reply_to) => {
-                    let response = ssh::check_is_ssh_needs_update(&changelog);
+                    let response = ssh::check_ssh_needs_update(&changelog);
                     if reply_to.send(response).is_err() {
                         if is_shutdown.load(Ordering::Relaxed) {
                             tracing::info!("exiting system info scraping thread");

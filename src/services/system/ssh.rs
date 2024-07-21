@@ -307,7 +307,7 @@ fn parse_ssh_version_and_patch(command_output: &str) -> Option<(&str, &str)> {
     })
 }
 
-pub(super) fn check_is_ssh_needs_update(changelog: &str) -> Result<bool, String> {
+pub(super) fn check_ssh_needs_update(changelog: &str) -> Result<bool, String> {
     let output = get_system_ssh_version_and_patch()?;
     let (version, patch) = parse_ssh_version_and_patch(&output)
         .ok_or_else(|| "failed to parse ssh version command output".to_string())?;
@@ -336,7 +336,7 @@ fn parse_lts_end(command_output: &str) -> Option<DateTime<Utc>> {
         static ref RE: Regex = RegexBuilder::new(r#"(january|february|march|april|may|june|july|august|september|october|november|december)\s(\d{4})"#)
             .case_insensitive(true)
             .build()
-            .expect("assert: ssh version command regex is properly constructed");
+            .expect("assert: system end of support command regex is properly constructed");
     }
     let (month, year) = RE.captures(command_output).map(|capture| {
         let (_, [month, year]) = capture.extract();
