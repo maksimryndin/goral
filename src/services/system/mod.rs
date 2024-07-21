@@ -46,6 +46,8 @@ enum SystemInfoRequest {
     SshNeedUpdate(String, oneshot::Sender<Result<bool, String>>),
     #[cfg(target_os = "linux")]
     OSName(oneshot::Sender<Option<String>>),
+    #[cfg(target_os = "linux")]
+    IsSupported(oneshot::Sender<Result<bool, String>>),
 }
 
 pub(crate) struct SystemService {
@@ -100,24 +102,6 @@ impl SystemService {
 
         while let Some(request) = request_rx.blocking_recv() {
             match request {
-                SystemInfoRequest::Telemetry(scrape_time) => {
-                    let result = collector::collect(
-                        &mut sys,
-                        &mounts,
-                        &names,
-                        scrape_time.naive_utc(),
-                        &messenger,
-                    )
-                    .map(Data::Many)
-                    .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
-                    if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
-                        if is_shutdown.load(Ordering::Relaxed) {
-                            tracing::info!("exiting system info scraping thread");
-                            return;
-                        }
-                        panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
-                    }
-                }
                 #[cfg(target_os = "linux")]
                 SystemInfoRequest::SshNeedUpdate(changelog, reply_to) => {
                     let response = ssh::check_is_ssh_needs_update(&changelog);
@@ -142,6 +126,37 @@ impl SystemService {
                         panic!(
                             "assert: os name recepient shouldn't be closed before shutdown signal"
                         );
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                SystemInfoRequest::IsSupported(reply_to) => {
+                    let response = ssh::is_system_still_supported();
+                    if reply_to.send(response).is_err() {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("exiting system info scraping thread");
+                            return;
+                        }
+                        panic!(
+                            "assert: system support check recepient shouldn't be closed before shutdown signal"
+                        );
+                    }
+                }
+                SystemInfoRequest::Telemetry(scrape_time) => {
+                    let result = collector::collect(
+                        &mut sys,
+                        &mounts,
+                        &names,
+                        scrape_time.naive_utc(),
+                        &messenger,
+                    )
+                    .map(Data::Many)
+                    .map_err(|e| Data::Message(format!("sysinfo scraping error {e}")));
+                    if sender.blocking_send(TaskResult { id: 0, result }).is_err() {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("exiting system info scraping thread");
+                            return;
+                        }
+                        panic!("assert: sysinfo messages queue shouldn't be closed before shutdown signal");
                     }
                 }
             }
@@ -178,14 +193,14 @@ impl SystemService {
     }
 
     #[cfg(target_os = "linux")]
-    async fn ssh_version_checker(
+    async fn system_checker(
         is_shutdown: Arc<AtomicBool>,
         send_notification: Sender,
         mut sys_req_tx: mpsc::Sender<SystemInfoRequest>,
     ) {
         let mut interval = tokio::time::interval(Duration::from_secs(4 * 60 * 60)); // 4 hours
         let request_timeout = Duration::from_secs(5);
-        tracing::info!("starting ssh version checking");
+        tracing::info!("starting system updates checking");
         loop {
             tokio::select! {
                 _ = interval.tick() => {
@@ -201,7 +216,7 @@ impl SystemService {
                     let (tx, rx) = oneshot::channel();
                     if let Err(e) = Self::make_system_request(&mut sys_req_tx, request_timeout, SystemInfoRequest::SshNeedUpdate(source, tx)).await {
                         if is_shutdown.load(Ordering::Relaxed) {
-                            tracing::info!("finished ssh version checking");
+                            tracing::info!("finished system updates checking");
                             return;
                         }
                         let msg = format!("error making ssh version check request `{}`", e);
@@ -223,10 +238,42 @@ impl SystemService {
                         }
                         Err(e) => {
                             if is_shutdown.load(Ordering::Relaxed) {
-                                tracing::info!("finished ssh version checking");
+                                tracing::info!("finished system updates checking");
                                 return;
                             }
                             let msg = format!("error fetching ssh version update `{e}`");
+                            tracing::error!("{}", msg);
+                            send_notification.fatal(msg).await;
+                        }
+                    };
+                    let (tx, rx) = oneshot::channel();
+                    if let Err(e) = Self::make_system_request(&mut sys_req_tx, request_timeout, SystemInfoRequest::IsSupported(tx)).await {
+                        if is_shutdown.load(Ordering::Relaxed) {
+                            tracing::info!("finished system updates checking");
+                            return;
+                        }
+                        let msg = format!("error making system support check request `{}`", e);
+                        tracing::error!("{}", msg);
+                        send_notification.fatal(msg).await;
+                    }
+                    match rx.await {
+                        Ok(Ok(false)) => {
+                            let msg = "the system seems to be [no longer supported](https://wiki.ubuntu.com/Releases)".to_string();
+                            tracing::warn!("{}", msg);
+                            send_notification.warn(msg).await;
+                        },
+                        Ok(Ok(true)) => continue,
+
+                        Ok(Err(message)) => {
+                            let msg = format!("error fetching system support check `{message}`");
+                            tracing::error!("{}", msg);
+                        }
+                        Err(e) => {
+                            if is_shutdown.load(Ordering::Relaxed) {
+                                tracing::info!("finished system updates checking");
+                                return;
+                            }
+                            let msg = format!("error fetching system updates `{e}`");
                             tracing::error!("{}", msg);
                             send_notification.fatal(msg).await;
                         }
@@ -504,7 +551,7 @@ impl Service for SystemService {
                 Self::fetch_os_name(&is_shutdown, &mut sys_req_tx, &send_notification).await;
             if let Some(true) = os_name.map(|name| name.to_lowercase().contains("ubuntu")) {
                 tasks.push(tokio::spawn(async move {
-                    Self::ssh_version_checker(is_shutdown, send_notification, sys_req_tx).await;
+                    Self::system_checker(is_shutdown, send_notification, sys_req_tx).await;
                 }));
             }
         }

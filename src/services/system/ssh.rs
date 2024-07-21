@@ -1,7 +1,7 @@
 use crate::google::datavalue::{Datarow, Datavalue};
 use crate::notifications::{Notification, Sender};
 use crate::services::{Data, TaskResult};
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use lazy_static::lazy_static;
 use logwatcher::{LogWatcher, LogWatcherAction, LogWatcherEvent};
 use regex::{Regex, RegexBuilder};
@@ -316,6 +316,63 @@ pub(super) fn check_is_ssh_needs_update(changelog: &str) -> Result<bool, String>
     Ok(latest_patch != patch)
 }
 
+const MONTHS: [&str; 12] = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+];
+
+fn parse_lts_end(command_output: &str) -> Option<DateTime<Utc>> {
+    lazy_static! {
+        static ref RE: Regex = RegexBuilder::new(r#"(january|february|march|april|may|june|july|august|september|october|november|december)\s(\d{4})"#)
+            .case_insensitive(true)
+            .build()
+            .expect("assert: ssh version command regex is properly constructed");
+    }
+    let (month, year) = RE.captures(command_output).map(|capture| {
+        let (_, [month, year]) = capture.extract();
+        (month, year)
+    })?;
+    let month = month.to_lowercase();
+    let month: u32 = MONTHS
+        .into_iter()
+        .position(|m| m == month)?
+        .try_into()
+        .ok()?;
+    let next_month = (month + 2) % 12;
+    let mut year: i32 = year.parse().ok()?;
+    if next_month == 1 {
+        year += 1;
+    }
+    // should not fail
+    // https://docs.rs/chrono/latest/chrono/offset/type.MappedLocalTime.html#method.unwrap
+    Some(Utc.with_ymd_and_hms(year, next_month, 1, 0, 0, 0).unwrap())
+}
+
+pub(super) fn is_system_still_supported() -> Result<bool, String> {
+    let output = match Command::new("hwe-support-status").arg("--verbose").output() {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        }
+        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).to_string()),
+        Err(e) => Err(format!(
+            "failed to execute ssh version command with error {e}"
+        )),
+    }?;
+    let supported_till = parse_lts_end(&output)
+        .ok_or_else(|| format!("failed to parse hwe-support-status output {output}"))?;
+    Ok(Utc::now() < supported_till)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,6 +619,21 @@ mod tests {
         assert_eq!(
             Some(("8.9p1", "3ubuntu0.10")),
             parse_ssh_version_and_patch(output)
+        );
+    }
+
+    #[test]
+    fn parse_lts_support() {
+        let output = "You are not running a system with a Hardware Enablement Stack. Your system is supported until April 2027.";
+        assert_eq!(
+            Utc.with_ymd_and_hms(2027, 5, 1, 0, 0, 0).unwrap(),
+            parse_lts_end(output).unwrap()
+        );
+
+        let output = "You are not running a system with a Hardware Enablement Stack. Your system is supported until December 2027.";
+        assert_eq!(
+            Utc.with_ymd_and_hms(2028, 1, 1, 0, 0, 0).unwrap(),
+            parse_lts_end(output).unwrap()
         );
     }
 }
