@@ -196,20 +196,23 @@ impl SystemService {
     async fn system_checker(
         is_shutdown: Arc<AtomicBool>,
         send_notification: Sender,
+        messenger: Sender,
         mut sys_req_tx: mpsc::Sender<SystemInfoRequest>,
     ) {
-        let mut interval = tokio::time::interval(Duration::from_secs(4 * 60 * 60)); // 4 hours
+        let mut ssh_interval = tokio::time::interval(Duration::from_secs(4 * 60 * 60));
+        let mut system_support_interval =
+            tokio::time::interval(Duration::from_secs(60 * 60 * 24 * 3));
         let request_timeout = Duration::from_secs(5);
         tracing::info!("starting system updates checking");
         loop {
             tokio::select! {
-                _ = interval.tick() => {
+                _ = ssh_interval.tick() => {
                     let source = match ssh_versions().await {
                         Ok(source) => source,
                         Err(e) => {
                             let msg = format!("error sending ssh versions request `{}`", e);
                             tracing::error!("{}", msg);
-                            send_notification.fatal(msg).await;
+                            messenger.error(msg).await;
                             continue;
                         }
                     };
@@ -227,7 +230,7 @@ impl SystemService {
                         Ok(Ok(true)) => {
                             let msg = "openssh patch version is outdated, update with `sudo apt update && sudo apt install openssh-server`".to_string();
                             tracing::warn!("{}", msg);
-                            send_notification.warn(msg).await;
+                            messenger.warn(msg).await;
                         },
                         Ok(Ok(false)) => continue,
 
@@ -246,6 +249,8 @@ impl SystemService {
                             send_notification.fatal(msg).await;
                         }
                     };
+                }
+                _ = system_support_interval.tick() => {
                     let (tx, rx) = oneshot::channel();
                     if let Err(e) = Self::make_system_request(&mut sys_req_tx, request_timeout, SystemInfoRequest::IsSupported(tx)).await {
                         if is_shutdown.load(Ordering::Relaxed) {
@@ -260,7 +265,7 @@ impl SystemService {
                         Ok(Ok(false)) => {
                             let msg = "the system seems to be [no longer supported](https://wiki.ubuntu.com/Releases)".to_string();
                             tracing::warn!("{}", msg);
-                            send_notification.warn(msg).await;
+                            messenger.warn(msg).await;
                         },
                         Ok(Ok(true)) => continue,
 
@@ -550,8 +555,12 @@ impl Service for SystemService {
             let os_name =
                 Self::fetch_os_name(&is_shutdown, &mut sys_req_tx, &send_notification).await;
             if let Some(true) = os_name.map(|name| name.to_lowercase().contains("ubuntu")) {
+                let messenger = self
+                    .messenger()
+                    .unwrap_or(self.shared.send_notification.clone());
                 tasks.push(tokio::spawn(async move {
-                    Self::system_checker(is_shutdown, send_notification, sys_req_tx).await;
+                    Self::system_checker(is_shutdown, send_notification, messenger, sys_req_tx)
+                        .await;
                 }));
             }
         }
