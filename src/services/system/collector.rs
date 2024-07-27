@@ -191,6 +191,25 @@ pub(super) fn initialize() -> System {
     sys
 }
 
+pub(crate) struct SystemInfo {
+    pub(crate) name: Option<String>,
+    pub(crate) long_os_version: Option<String>,
+    pub(crate) kernel_version: Option<String>,
+    pub(crate) host_name: Option<String>,
+    pub(crate) total_memory: u64,
+}
+
+pub(crate) fn system_info() -> SystemInfo {
+    let sys = initialize();
+    SystemInfo {
+        name: System::name(),
+        long_os_version: System::long_os_version(),
+        kernel_version: System::kernel_version(),
+        host_name: System::host_name(),
+        total_memory: sys.total_memory(),
+    }
+}
+
 pub(super) fn collect(
     sys: &mut System,
     mounts: &[String],
@@ -217,24 +236,24 @@ pub(super) fn collect(
     )
     .expect("assert: system boot time timestamp should be valid");
     let basic = [
-        ("boot_time".to_string(), Datavalue::Datetime(boot_time)),
-        (
-            "memory_available".to_string(),
-            Datavalue::Size(sys.available_memory()),
-        ),
         (
             MEMORY_USE.to_string(),
             // SAFE for percentage calculation to cast from u64 to f64
             Datavalue::HeatmapPercent(100.0 * sys.used_memory() as f64 / total_memory as f64),
         ),
         (
-            "swap_available".to_string(),
-            Datavalue::Size(sys.free_swap()),
-        ),
-        (
             SWAP_USE.to_string(),
             // SAFE for percentage calculation to cast from u64 to f64
             Datavalue::HeatmapPercent(100.0 * sys.used_swap() as f64 / sys.total_swap() as f64),
+        ),
+        ("boot_time".to_string(), Datavalue::Datetime(boot_time)),
+        (
+            "memory_available".to_string(),
+            Datavalue::Size(sys.available_memory()),
+        ),
+        (
+            "swap_available".to_string(),
+            Datavalue::Size(sys.free_swap()),
         ),
         (
             "num_of_processes".to_string(),
@@ -252,7 +271,7 @@ pub(super) fn collect(
         )
     });
 
-    let basic_values: Vec<(String, Datavalue)> = basic.into_iter().chain(cpus).collect();
+    let basic_values: Vec<(String, Datavalue)> = cpus.into_iter().chain(basic).collect();
 
     // 1 for basic, 5 for top_ stats, 1 for network
     let mut datarows = Vec::with_capacity(1 + mounts.len() + 5 + names.len() + 1);

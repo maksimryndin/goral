@@ -1,3 +1,8 @@
+* 0.1.9
+    * reorder system logs fields for charts
+    * ssh versions checks (for ubuntu)
+    * system support check (for ubuntu)
+
 * 0.1.8
     * fix ssh logs parsing
 
