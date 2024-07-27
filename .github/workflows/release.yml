@@ -89,7 +89,7 @@ jobs:
       - name: Run clippy
         shell: bash
         run: |
-          cargo clippy -- -D warnings --no-deps
+          cargo clippy --no-deps -- -D warnings
 
       - name: Install audit
         shell: bash
