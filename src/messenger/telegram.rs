@@ -16,6 +16,7 @@ impl Telegram {
         let client: HttpsClient = hyper::Client::builder().build(
             hyper_rustls::HttpsConnectorBuilder::new()
                 .with_native_roots()
+                .expect("assert: can build telegram client with native root certs")
                 .https_only()
                 .enable_http1()
                 .build(),

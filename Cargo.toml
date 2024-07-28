@@ -33,7 +33,7 @@ getrandom = "0.2"
 google-sheets4 = "*"
 http = "0.2"
 hyper = { version = "0.14", features = ["http1", "http2", "client", "server"]} # using the same version as google-sheets4
-hyper-rustls = "0.24"
+hyper-rustls = "0.25"
 lazy_static = "1.4"
 prometheus-parse = "0.2.4"
 regex = { version = "1", features = ["std", "unicode"] } # use the same version as current crates

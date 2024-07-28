@@ -29,6 +29,7 @@ impl HttpClient {
             .build(
                 hyper_rustls::HttpsConnectorBuilder::new()
                     .with_native_roots()
+                    .expect("assert: can build http client with native root certs")
                     .https_or_http()
                     .enable_http1()
                     .build(),

@@ -1,6 +1,6 @@
 use crate::google::datavalue::{Datarow, Datavalue};
 use crate::notifications::{Notification, Sender};
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime};
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -72,14 +72,15 @@ impl ProcessInfo {
             memory_use: (100.0 * sysinfo_process.memory() as f64 / total_memory as f64) as f32,
             disk_read: sysinfo_process.disk_usage().read_bytes,
             disk_write: sysinfo_process.disk_usage().written_bytes,
-            start_time: NaiveDateTime::from_timestamp_opt(
+            start_time: DateTime::from_timestamp(
                 sysinfo_process
                     .start_time()
                     .try_into()
                     .expect("assert: it is possible to build datetime from process start time"),
                 0,
             )
-            .expect("assert: process start_time timestamp should be valid"),
+            .expect("assert: process start_time timestamp should be valid")
+            .naive_local(),
             open_files: open_files(sysinfo_process.pid()),
         }
     }
@@ -228,13 +229,14 @@ pub(super) fn collect(
         processes_infos.push(ProcessInfo::from(p, total_memory));
     }
 
-    let boot_time = NaiveDateTime::from_timestamp_opt(
+    let boot_time = DateTime::from_timestamp(
         System::boot_time()
             .try_into()
             .expect("assert: it is possible to build datetime from system boot time"),
         0,
     )
-    .expect("assert: system boot time timestamp should be valid");
+    .expect("assert: system boot time timestamp should be valid")
+    .naive_local();
     let basic = [
         (
             MEMORY_USE.to_string(),
